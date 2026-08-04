@@ -1,25 +1,3 @@
-#!/usr/bin/env python3
-"""
-GTArcExplorer – Lossless GT-ARC / GT-ZIP tool for Gran Turismo 1
-
-Extracts files EXACTLY as stored (only GT-ZIP decompression).
-Optional: also expand TIM Packs into individual .tim files.
-
-Supported containers:
-  • Standard GT-ARC  (COURSE.DAT, CAR.DAT, GAMEMENU.DAT, ARCADE.DAT, …)
-  • Compressed GT-ARC (CARINF.DAT style)
-  • Raw GT-ZIP       (GAMEFONT.DAT style)
-
-Detected native types → extensions:
-  @(#)GT-PS   → .gtps
-  @(#)GT-CAR  → .gtcar
-  @(#)GT-CTEX → .ctex
-  @(#)GT-SKY  → .gtsky
-  10 00 00 00 → .tim
-  TIM-pack    → .tpk   (optional expansion into individual .tim)
-  other       → .bin
-"""
-
 import struct
 import os
 import sys
@@ -31,11 +9,7 @@ from tkinter import (
 )
 from tkinter import ttk
 
-
-# ──────────────────────────────────────────────────────────────
 # GT-ZIP
-# ──────────────────────────────────────────────────────────────
-
 def gtzip_decompress(src: bytes, decomp_size: int) -> bytes:
     dst = bytearray()
     pos = 0
@@ -103,7 +77,6 @@ def gtzip_compress(data: bytes) -> bytes:
 
             if max_len >= 3:
                 h = hash3(i)
-                # search chain (limit depth for speed)
                 chain = 0
                 MAX_CHAIN = 64
                 j = head[h]
@@ -147,10 +120,7 @@ def gtzip_compress(data: bytes) -> bytes:
     return bytes(out)
 
 
-# ──────────────────────────────────────────────────────────────
 # TIM pack helpers (read-only parsing)
-# ──────────────────────────────────────────────────────────────
-
 def parse_tim_pack(data: bytes):
     """
     TIM pack layout (COURSE / BG style):
@@ -275,10 +245,7 @@ def detect_type(data: bytes) -> tuple:
     return ("Unknown", ".bin")
 
 
-# ──────────────────────────────────────────────────────────────
 # Archive
-# ──────────────────────────────────────────────────────────────
-
 class GTArc:
     def __init__(self):
         self.path = None
@@ -361,10 +328,9 @@ class GTArc:
             data = self.get_data(i)
             f = self.files[i]
             name = f"{f['label']}{f['ext']}"
-            (out / name).write_bytes(data)          # always write original bytes
+            (out / name).write_bytes(data)        
             manifest.append(name)
 
-            # optional expansion
             if expand_tim_packs and f["type"] == "TIM Pack":
                 tims = parse_tim_pack(data)
                 sub = out / f"{f['label']}_tims"
@@ -407,8 +373,6 @@ class GTArc:
 
         payloads = []
         for ni, name in enumerate(names):
-            # If this is a TIM pack and a matching *_tims folder exists,
-            # rebuild the pack from the individual .tim files so edits are kept.
             p = src / name
             stem = Path(name).stem  # e.g. "000" from "000.tpk"
             tims_dir = src / f"{stem}_tims"
@@ -452,10 +416,7 @@ class GTArc:
         return out_path
 
 
-# ──────────────────────────────────────────────────────────────
 # GUI
-# ──────────────────────────────────────────────────────────────
-
 class GTArcExplorer(Tk):
     def __init__(self):
         super().__init__()
