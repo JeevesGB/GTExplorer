@@ -1,0 +1,189 @@
+"""GTArc: load / extract / repack GT-ARC (.DAT) archives."""
+import struct
+from pathlib import Path
+
+from .gtzip import gtzip_decompress, gtzip_compress
+from .tim_pack import parse_tim_pack, build_tim_pack
+from .audio import expand_sample_bank
+from .detect import detect_type
+
+# Archive
+class GTArc:
+    def __init__(self):
+        self.path = None
+        self.kind = None
+        self.content_type = 0x8001
+        self.files = []
+        self.raw = b""
+
+    def load(self, path: str):
+        self.path = path
+        self.raw = Path(path).read_bytes()
+        self.files = []
+
+        if self.raw[:12] == b"@(#)GT-ARC\0\0":
+            self.kind = "gtarc"
+            self.content_type, nfiles = struct.unpack_from("<HH", self.raw, 12)
+            for i in range(nfiles):
+                off, csz, dsz = struct.unpack_from("<III", self.raw, 0x10 + i * 12)
+                self.files.append({
+                    "index": i, "offset": off, "comp_size": csz,
+                    "decomp_size": dsz, "data": None,
+                    "type": "…", "ext": ".bin", "label": f"{i:03d}"
+                })
+            return
+
+        if self.raw[1:8] == b"@(#)GT-" and b"RC" in self.raw[8:14]:
+            self.kind = "gtarc_compressed"
+            self.files.append({
+                "index": 0, "offset": 0, "comp_size": len(self.raw),
+                "decomp_size": 0, "data": None,
+                "type": "Compressed GT-ARC", "ext": ".bin",
+                "label": "000_compressed_arc"
+            })
+            return
+
+        self.kind = "gtzip_raw"
+        self.files.append({
+            "index": 0, "offset": 0, "comp_size": len(self.raw),
+            "decomp_size": 0x8000, "data": None,
+            "type": "Raw GT-ZIP", "ext": ".bin", "label": "000"
+        })
+
+    def get_data(self, idx: int) -> bytes:
+        f = self.files[idx]
+        if f["data"] is not None:
+            return f["data"]
+
+        if self.kind == "gtarc":
+            payload = self.raw[f["offset"]: f["offset"] + f["comp_size"]]
+            if self.content_type == 0x8001 and f["decomp_size"] > 0:
+                payload = gtzip_decompress(payload, f["decomp_size"])
+            f["data"] = payload
+        elif self.kind == "gtzip_raw":
+            try:
+                payload = gtzip_decompress(self.raw, f["decomp_size"] or 0x10000)
+            except Exception:
+                payload = self.raw
+            f["data"] = payload
+        else:
+            f["data"] = self.raw
+
+        tname, ext = detect_type(f["data"])
+        f["type"] = tname
+        f["ext"] = ext
+        f["label"] = f"{f['index']:03d}"
+        return f["data"]
+
+    def extract_all(self, out_dir: str, indices=None, expand_tim_packs=False,
+                    expand_inst_banks=False, progress_cb=None):
+        """
+        Lossless extract.
+        expand_tim_packs: also write individual .tim files from each TIM Pack.
+        expand_inst_banks: also decode INST/ENGN sample banks to WAV (+ raw ADPCM).
+        The original container file is always kept.
+        """
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        if indices is None:
+            indices = list(range(len(self.files)))
+
+        manifest = []
+        for n, i in enumerate(indices):
+            data = self.get_data(i)
+            f = self.files[i]
+            name = f"{f['label']}{f['ext']}"
+            (out / name).write_bytes(data)          # always write original bytes
+            manifest.append(name)
+
+            extra = ""
+            if expand_tim_packs and f["type"] == "TIM Pack":
+                tims = parse_tim_pack(data)
+                sub = out / f"{f['label']}_tims"
+                sub.mkdir(exist_ok=True)
+                for tname, tdata in tims:
+                    safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in tname)
+                    if not safe.lower().endswith(".tim"):
+                        safe += ".tim"
+                    (sub / safe).write_bytes(tdata)
+                extra += f" + {len(tims)} TIMs"
+
+            if expand_inst_banks and f["type"] in ("Sound Instrument", "Engine Sound"):
+                sub = out / f"{f['label']}_samples"
+                count = expand_sample_bank(data, sub)
+                extra += f" + {count} samples"
+
+            if progress_cb:
+                progress_cb(n + 1, len(indices), name + extra)
+
+        with open(out / "manifest.txt", "w", encoding="utf-8") as m:
+            m.write(f"kind={self.kind}\n")
+            m.write(f"content_type=0x{self.content_type:04x}\n")
+            m.write(f"nfiles={len(self.files)}\n")
+            for name in manifest:
+                m.write(name + "\n")
+        return out
+
+    @staticmethod
+    def pack_from_folder(src_dir: str, out_path: str, force_uncompressed=False, progress_cb=None):
+        src = Path(src_dir)
+        manifest = src / "manifest.txt"
+        if not manifest.exists():
+            raise FileNotFoundError("manifest.txt not found – extract first")
+
+        lines = [l.strip() for l in manifest.read_text(encoding="utf-8").splitlines() if l.strip()]
+        idx = 0
+        if lines[0].startswith("kind="):
+            idx = 1
+        content_type = int(lines[idx].split("=")[1], 0)
+        if force_uncompressed:
+            content_type = 0x0001
+        nfiles = int(lines[idx + 1].split("=")[1])
+        names = lines[idx + 2: idx + 2 + nfiles]
+
+        payloads = []
+        for ni, name in enumerate(names):
+            # If this is a TIM pack and a matching *_tims folder exists,
+            # rebuild the pack from the individual .tim files so edits are kept.
+            p = src / name
+            stem = Path(name).stem  # e.g. "000" from "000.tpk"
+            tims_dir = src / f"{stem}_tims"
+            if name.lower().endswith(".tpk") and tims_dir.is_dir():
+                if progress_cb:
+                    progress_cb(ni + 1, len(names), name, "rebuild-tpk")
+                tim_list = []
+                for tim_path in sorted(tims_dir.glob("*.tim")):
+                    tim_list.append((tim_path.name, tim_path.read_bytes()))
+                if not tim_list:
+                    raise FileNotFoundError(f"No .tim files in {tims_dir}")
+                raw = build_tim_pack(tim_list)
+                p.write_bytes(raw)
+            else:
+                raw = p.read_bytes()
+
+            if progress_cb:
+                action = "compress" if content_type == 0x8001 else "copy"
+                progress_cb(ni + 1, len(names), name, action)
+            if content_type == 0x8001:
+                comp = gtzip_compress(raw)
+                payloads.append((comp, len(raw)))
+            else:
+                payloads.append((raw, len(raw)))
+
+        header = bytearray()
+        header += b"@(#)GT-ARC\0\0"
+        header += struct.pack("<HH", content_type, nfiles)
+        data_start = 0x800
+        offset = data_start
+        for comp, decomp in payloads:
+            header += struct.pack("<III", offset, len(comp), decomp)
+            offset += len(comp)
+        header += b"\0" * (data_start - len(header))
+
+        with open(out_path, "wb") as f:
+            f.write(header)
+            for comp, _ in payloads:
+                f.write(comp)
+        return out_path
+
+
