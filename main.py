@@ -69,9 +69,26 @@ def gtzip_decompress(src: bytes, decomp_size: int) -> bytes:
 
 
 def gtzip_compress(data: bytes) -> bytes:
-    out = bytearray()
-    i = 0
+    """
+    Fast hash-based LZSS compressor compatible with GT-ZIP.
+    Much faster than naive O(n^2) search; still produces valid streams.
+    """
     n = len(data)
+    if n == 0:
+        return b""
+
+    out = bytearray()
+    # hash table: 16-bit hash of 3-byte sequences -> list of positions
+    HASH_SIZE = 0x10000
+    head = [-1] * HASH_SIZE
+    prev = [-1] * n
+
+    def hash3(pos):
+        if pos + 2 >= n:
+            return 0
+        return ((data[pos] << 8) ^ (data[pos + 1] << 4) ^ data[pos + 2]) & 0xFFFF
+
+    i = 0
     while i < n:
         flag_pos = len(out)
         out.append(0)
@@ -79,19 +96,30 @@ def gtzip_compress(data: bytes) -> bytes:
         for bit in range(8):
             if i >= n:
                 break
+
             best_len = 0
             best_disp = 0
             max_len = min(258, n - i)
-            window_start = max(0, i - 0x7FFF)
-            for j in range(window_start, i):
-                length = 0
-                while length < max_len and data[j + length] == data[i + length]:
-                    length += 1
-                if length > best_len:
-                    best_len = length
-                    best_disp = i - j - 1
-                    if best_len == max_len:
-                        break
+
+            if max_len >= 3:
+                h = hash3(i)
+                # search chain (limit depth for speed)
+                chain = 0
+                MAX_CHAIN = 64
+                j = head[h]
+                window_start = max(0, i - 0x7FFF)
+                while j >= window_start and chain < MAX_CHAIN:
+                    length = 0
+                    while length < max_len and data[j + length] == data[i + length]:
+                        length += 1
+                    if length > best_len:
+                        best_len = length
+                        best_disp = i - j - 1
+                        if best_len == max_len:
+                            break
+                    j = prev[j]
+                    chain += 1
+
             if best_len >= 3:
                 flags |= (1 << bit)
                 out.append(best_len - 3)
@@ -100,9 +128,20 @@ def gtzip_compress(data: bytes) -> bytes:
                 else:
                     out.append(0x80 | (best_disp >> 8))
                     out.append(best_disp & 0xFF)
-                i += best_len
+                # insert hashes for consumed bytes
+                end = i + best_len
+                while i < end and i < n:
+                    if i + 2 < n:
+                        h = hash3(i)
+                        prev[i] = head[h]
+                        head[h] = i
+                    i += 1
             else:
                 out.append(data[i])
+                if i + 2 < n:
+                    h = hash3(i)
+                    prev[i] = head[h]
+                    head[h] = i
                 i += 1
         out[flag_pos] = flags
     return bytes(out)
@@ -145,6 +184,40 @@ def parse_tim_pack(data: bytes):
         end = next_offs[0] if next_offs else len(data)
         result.append((name, data[offset:end]))
     return result
+
+
+
+def build_tim_pack(tim_files: list) -> bytes:
+    """
+    Rebuild a TIM pack from list of (name, bytes).
+    Layout matches parse_tim_pack (COURSE / BG style).
+    """
+    count = len(tim_files)
+    dir_size = 4 + count * 20
+    data_start = (dir_size + 15) & ~15
+
+    out = bytearray()
+    out += struct.pack("<I", count)
+
+    for name, _ in tim_files:
+        n = name.encode("ascii", errors="replace")[:15] + b"\0"
+        n = n.ljust(16, b"\0")
+        out += n + b"\0\0\0\0"  # placeholder offset
+
+    while len(out) < data_start:
+        out.append(0)
+
+    offsets = []
+    for _, tim in tim_files:
+        offsets.append(len(out))
+        out += tim
+        while len(out) & 3:
+            out.append(0)
+
+    for i, off in enumerate(offsets):
+        struct.pack_into("<I", out, 4 + i * 20 + 16, off)
+
+    return bytes(out)
 
 
 def detect_type(data: bytes) -> tuple:
@@ -316,7 +389,7 @@ class GTArc:
         return out
 
     @staticmethod
-    def pack_from_folder(src_dir: str, out_path: str, force_uncompressed=False):
+    def pack_from_folder(src_dir: str, out_path: str, force_uncompressed=False, progress_cb=None):
         src = Path(src_dir)
         manifest = src / "manifest.txt"
         if not manifest.exists():
@@ -333,8 +406,29 @@ class GTArc:
         names = lines[idx + 2: idx + 2 + nfiles]
 
         payloads = []
-        for name in names:
-            raw = (src / name).read_bytes()
+        for ni, name in enumerate(names):
+            # If this is a TIM pack and a matching *_tims folder exists,
+            # rebuild the pack from the individual .tim files so edits are kept.
+            p = src / name
+            stem = Path(name).stem  # e.g. "000" from "000.tpk"
+            tims_dir = src / f"{stem}_tims"
+            if name.lower().endswith(".tpk") and tims_dir.is_dir():
+                if progress_cb:
+                    progress_cb(ni + 1, len(names), name, "rebuild-tpk")
+                tim_list = []
+                for tim_path in sorted(tims_dir.glob("*.tim")):
+                    tim_list.append((tim_path.name, tim_path.read_bytes()))
+                if not tim_list:
+                    raise FileNotFoundError(f"No .tim files in {tims_dir}")
+                raw = build_tim_pack(tim_list)
+                # also refresh the .tpk on disk so it stays in sync
+                p.write_bytes(raw)
+            else:
+                raw = p.read_bytes()
+
+            if progress_cb:
+                action = "compress" if content_type == 0x8001 else "copy"
+                progress_cb(ni + 1, len(names), name, action)
             if content_type == 0x8001:
                 comp = gtzip_compress(raw)
                 payloads.append((comp, len(raw)))
@@ -602,19 +696,28 @@ class GTArcExplorer(Tk):
             "Yes = uncompressed\nNo = GT-ZIP compressed (original style)"
         )
         self.status_var.set("Repacking…")
-        self.progress.configure(mode="indeterminate")
-        self.progress.start()
+        self.progress.configure(mode="determinate", value=0, maximum=100)
 
         def work():
+            def cb(cur, total, name, action):
+                pct = int(cur * 100 / total) if total else 0
+                self.after(0, lambda: self.progress.configure(value=pct))
+                self.after(0, lambda: self.status_var.set(
+                    f"Repacking {cur}/{total} – {action} {name}"
+                ))
             try:
-                path = GTArc.pack_from_folder(self.extract_dir, out, force_uncompressed=force_unc)
-                self.after(0, lambda: self.status_var.set(f"Repacked → {path}"))
-                self.after(0, lambda: messagebox.showinfo("Done", f"Saved:\n{path}"))
+                result = GTArc.pack_from_folder(
+                    self.extract_dir, out,
+                    force_uncompressed=force_unc,
+                    progress_cb=cb
+                )
+                self.after(0, lambda: self.status_var.set(f"Repacked → {result}"))
+                self.after(0, lambda: self.progress.configure(value=100))
+                self.after(0, lambda: messagebox.showinfo("Done", f"Saved:\n{result}"))
             except Exception as e:
                 self.after(0, lambda: messagebox.showerror("Repack failed", str(e)))
             finally:
-                self.after(0, self.progress.stop)
-                self.after(0, lambda: self.progress.configure(mode="determinate", value=0))
+                self.after(0, lambda: self.progress.configure(value=0))
         threading.Thread(target=work, daemon=True).start()
 
     def open_extract_folder(self):
