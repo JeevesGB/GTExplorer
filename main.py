@@ -1,25 +1,3 @@
-#!/usr/bin/env python3
-"""
-GTArcExplorer – Lossless GT-ARC / GT-ZIP tool for Gran Turismo 1
-
-Extracts files EXACTLY as stored (only GT-ZIP decompression).
-Optional: also expand TIM Packs into individual .tim files.
-
-Supported containers:
-  • Standard GT-ARC  (COURSE.DAT, CAR.DAT, GAMEMENU.DAT, ARCADE.DAT, …)
-  • Compressed GT-ARC (CARINF.DAT style)
-  • Raw GT-ZIP       (GAMEFONT.DAT style)
-
-Detected native types → extensions:
-  @(#)GT-PS   → .gtps
-  @(#)GT-CAR  → .gtcar
-  @(#)GT-CTEX → .ctex
-  @(#)GT-SKY  → .gtsky
-  10 00 00 00 → .tim
-  TIM-pack    → .tpk   (optional expansion into individual .tim)
-  other       → .bin
-"""
-
 import struct
 import os
 import sys
@@ -37,10 +15,7 @@ except ImportError:
     HAS_PIL = False
 
 
-# ──────────────────────────────────────────────────────────────
 # GT-ZIP
-# ──────────────────────────────────────────────────────────────
-
 def gtzip_decompress(src: bytes, decomp_size: int) -> bytes:
     dst = bytearray()
     pos = 0
@@ -83,7 +58,6 @@ def gtzip_compress(data: bytes) -> bytes:
         return b""
 
     out = bytearray()
-    # hash table: 16-bit hash of 3-byte sequences -> list of positions
     HASH_SIZE = 0x10000
     head = [-1] * HASH_SIZE
     prev = [-1] * n
@@ -108,7 +82,6 @@ def gtzip_compress(data: bytes) -> bytes:
 
             if max_len >= 3:
                 h = hash3(i)
-                # search chain (limit depth for speed)
                 chain = 0
                 MAX_CHAIN = 64
                 j = head[h]
@@ -133,7 +106,6 @@ def gtzip_compress(data: bytes) -> bytes:
                 else:
                     out.append(0x80 | (best_disp >> 8))
                     out.append(best_disp & 0xFF)
-                # insert hashes for consumed bytes
                 end = i + best_len
                 while i < end and i < n:
                     if i + 2 < n:
@@ -152,10 +124,7 @@ def gtzip_compress(data: bytes) -> bytes:
     return bytes(out)
 
 
-# ──────────────────────────────────────────────────────────────
-# TIM pack helpers (read-only parsing)
-# ──────────────────────────────────────────────────────────────
-
+# TIM pack helpers
 def parse_tim_pack(data: bytes):
     """
     TIM pack layout (COURSE / BG style):
@@ -207,7 +176,7 @@ def build_tim_pack(tim_files: list) -> bytes:
     for name, _ in tim_files:
         n = name.encode("ascii", errors="replace")[:15] + b"\0"
         n = n.ljust(16, b"\0")
-        out += n + b"\0\0\0\0"  # placeholder offset
+        out += n + b"\0\0\0\0"  
 
     while len(out) < data_start:
         out.append(0)
@@ -227,7 +196,7 @@ def build_tim_pack(tim_files: list) -> bytes:
 
 
 
-# ── PSX SPU-ADPCM (INST / ENGN sample banks) ───────────────────
+# PSX SPU-ADPCM 
 
 _XA_TABLE = [(0, 0), (60, 0), (115, -52), (98, -55), (122, -60)]
 
@@ -356,19 +325,15 @@ def decode_tim(data: bytes):
             g = ((c >> 5) & 0x1F) << 3
             b = ((c >> 10) & 0x1F) << 3
             a = 0 if (c & 0x8000) == 0 and c == 0 else 255
-            # STP bit: if set, semi-transparent; treat as opaque for preview
             if c == 0:
                 a = 0
             palette.append((r, g, b, a))
-        # align to clut_len from start of clut block
-        # (some files pad; we already consumed 12 + ncolors*2)
 
     if pos + 12 > len(data):
         raise ValueError("Truncated image header")
     img_len, ix, iy, iw, ih = struct.unpack_from("<IHHHH", data, pos)
     pos += 12
 
-    # iw is in 16-bit units (words per row)
     if bpp == 0:   # 4-bit
         width = iw * 4
         bytes_per_row = iw * 2
@@ -444,7 +409,6 @@ def detect_type(data: bytes) -> tuple:
     if not data:
         return ("Empty", ".bin")
 
-    # Polyphony typed containers
     if data.startswith(b"@(#)GT-PS"):
         return ("GT-PS Model", ".gtps")
     if data.startswith(b"@(#)GT-CAR"):
@@ -460,17 +424,14 @@ def detect_type(data: bytes) -> tuple:
     if data.startswith(b"@(#)USEDCAR"):
         return ("Used Car Data", ".usedcar")
 
-    # Sound banks (SOUND.DAT)
     if data.startswith(b"INST"):
         return ("Sound Instrument", ".inst")
     if data.startswith(b"ENGN"):
         return ("Engine Sound", ".engn")
 
-    # Standard PlayStation TIM
     if len(data) >= 8 and data[0] == 0x10 and data[1] == 0x00 and data[2] == 0x00 and data[3] == 0x00:
         return ("TIM Texture", ".tim")
 
-    # TIM pack (COURSE / BG style): u32 count + 16-byte name ending in .tim
     if len(data) >= 24:
         count = struct.unpack_from("<I", data, 0)[0]
         if 1 <= count <= 512:
@@ -478,8 +439,6 @@ def detect_type(data: bytes) -> tuple:
             if b".tim" in name.lower():
                 return ("TIM Pack", ".tpk")
 
-    # Plain text / message tables (MESSAGES.DAT)
-    # Heuristic: mostly printable + nulls in the first 64 bytes
     sample = data[:64]
     printable = sum(1 for b in sample if (32 <= b < 127) or b in (0, 9, 10, 13))
     if len(sample) >= 16 and printable >= len(sample) * 0.85:
@@ -487,17 +446,13 @@ def detect_type(data: bytes) -> tuple:
         if b".tim" not in sample and b"@(#)" not in sample:
             return ("Text / Messages", ".txt")
 
-    # Filename lists (MENU_RAW style)
     if b".tim\n" in data[:200] or b".seq\n" in data[:200] or b".htm\n" in data[:200]:
         return ("Filename List", ".lst")
 
     return ("Unknown", ".bin")
 
 
-# ──────────────────────────────────────────────────────────────
 # Archive
-# ──────────────────────────────────────────────────────────────
-
 class GTArc:
     def __init__(self):
         self.path = None
@@ -587,7 +542,6 @@ class GTArc:
             manifest.append(name)
 
             extra = ""
-            # optional TIM pack expansion
             if expand_tim_packs and f["type"] == "TIM Pack":
                 tims = parse_tim_pack(data)
                 sub = out / f"{f['label']}_tims"
@@ -599,7 +553,6 @@ class GTArc:
                     (sub / safe).write_bytes(tdata)
                 extra += f" + {len(tims)} TIMs"
 
-            # optional INST/ENGN sample expansion
             if expand_inst_banks and f["type"] in ("Sound Instrument", "Engine Sound"):
                 sub = out / f"{f['label']}_samples"
                 count = expand_sample_bank(data, sub)
@@ -649,7 +602,6 @@ class GTArc:
                 if not tim_list:
                     raise FileNotFoundError(f"No .tim files in {tims_dir}")
                 raw = build_tim_pack(tim_list)
-                # also refresh the .tpk on disk so it stays in sync
                 p.write_bytes(raw)
             else:
                 raw = p.read_bytes()
@@ -680,9 +632,7 @@ class GTArc:
         return out_path
 
 
-# ──────────────────────────────────────────────────────────────
 # GUI
-# ──────────────────────────────────────────────────────────────
 
 class GTArcExplorer(Tk):
     def __init__(self):
@@ -769,7 +719,6 @@ class GTArcExplorer(Tk):
         sbs.pack(side=RIGHT, fill=Y)
         self.struct_tree.configure(yscrollcommand=sbs.set)
 
-        # --- Asset Viewer tab ---
         viewer = ttk.Frame(nb)
         nb.add(viewer, text="Asset Viewer")
         vtop = ttk.Frame(viewer)
@@ -784,7 +733,6 @@ class GTArcExplorer(Tk):
         vbody = ttk.Panedwindow(viewer, orient="horizontal")
         vbody.pack(fill=BOTH, expand=True, padx=4, pady=4)
 
-        # TIM list inside packs
         left_v = ttk.Frame(vbody)
         vbody.add(left_v, weight=1)
         ttk.Label(left_v, text="Textures in pack").pack(anchor=W)
@@ -799,7 +747,6 @@ class GTArcExplorer(Tk):
         self.tim_list.configure(yscrollcommand=sbt.set)
         self.tim_list.bind("<<TreeviewSelect>>", self.on_tim_list_select)
 
-        # Canvas for image
         right_v = ttk.Frame(vbody)
         vbody.add(right_v, weight=3)
         self.viewer_canvas = Canvas(right_v, bg="#2a2a2a", highlightthickness=0)
@@ -810,8 +757,8 @@ class GTArcExplorer(Tk):
         vsb.pack(side=RIGHT, fill=Y)
         self.viewer_canvas.configure(xscrollcommand=hsb.set, yscrollcommand=vsb.set)
 
-        self._viewer_image = None       # PIL Image
-        self._viewer_photo = None       # ImageTk
+        self._viewer_image = None       
+        self._viewer_photo = None       
         self._viewer_scale = 1.0
         self._pack_tims = []            # list of (name, bytes) for current pack
 
@@ -1041,8 +988,7 @@ class GTArcExplorer(Tk):
         else:
             messagebox.showinfo("No folder", "Extract first")
 
-    
-    # ── Asset Viewer ──────────────────────────────────────────
+
 
     def show_in_viewer(self, data: bytes, label: str = ""):
         """Decode TIM data and display it."""
