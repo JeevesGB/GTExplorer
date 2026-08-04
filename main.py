@@ -5,9 +5,15 @@ import threading
 from pathlib import Path
 from tkinter import (
     Tk, StringVar, BooleanVar, filedialog, messagebox, scrolledtext,
-    END, BOTH, LEFT, RIGHT, X, Y, TOP, BOTTOM, W
+    Canvas, END, BOTH, LEFT, RIGHT, X, Y, TOP, BOTTOM, W, NW
 )
 from tkinter import ttk
+try:
+    from PIL import Image, ImageTk
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
 
 # GT-ZIP
 def gtzip_decompress(src: bytes, decomp_size: int) -> bytes:
@@ -77,6 +83,7 @@ def gtzip_compress(data: bytes) -> bytes:
 
             if max_len >= 3:
                 h = hash3(i)
+                # search chain (limit depth for speed)
                 chain = 0
                 MAX_CHAIN = 64
                 j = head[h]
@@ -188,6 +195,123 @@ def build_tim_pack(tim_files: list) -> bytes:
         struct.pack_into("<I", out, 4 + i * 20 + 16, off)
 
     return bytes(out)
+
+
+
+def decode_tim(data: bytes):
+    """
+    Decode a PlayStation TIM into a PIL Image (RGBA).
+    Supports 4-bit, 8-bit (with CLUT) and 16-bit direct.
+    Returns (Image, info_dict) or raises ValueError.
+    """
+    from PIL import Image
+
+    if len(data) < 8 or data[0] != 0x10 or data[1] != 0x00:
+        raise ValueError("Not a TIM file")
+
+    flags = struct.unpack_from("<I", data, 4)[0]
+    bpp = flags & 7          # 0=4bit, 1=8bit, 2=16bit, 3=24bit
+    has_clut = bool(flags & 8)
+    pos = 8
+
+    palette = None
+    if has_clut:
+        if pos + 12 > len(data):
+            raise ValueError("Truncated CLUT header")
+        clut_len, cx, cy, cw, ch = struct.unpack_from("<IHHHH", data, pos)
+        pos += 12
+        ncolors = cw * ch
+        palette = []
+        for i in range(ncolors):
+            if pos + 2 > len(data):
+                break
+            c = struct.unpack_from("<H", data, pos)[0]
+            pos += 2
+            r = (c & 0x1F) << 3
+            g = ((c >> 5) & 0x1F) << 3
+            b = ((c >> 10) & 0x1F) << 3
+            a = 0 if (c & 0x8000) == 0 and c == 0 else 255
+            # STP bit: if set, semi-transparent; treat as opaque for preview
+            if c == 0:
+                a = 0
+            palette.append((r, g, b, a))
+        # align to clut_len from start of clut block
+        # (some files pad; we already consumed 12 + ncolors*2)
+
+    if pos + 12 > len(data):
+        raise ValueError("Truncated image header")
+    img_len, ix, iy, iw, ih = struct.unpack_from("<IHHHH", data, pos)
+    pos += 12
+
+    # iw is in 16-bit units (words per row)
+    if bpp == 0:   # 4-bit
+        width = iw * 4
+        bytes_per_row = iw * 2
+    elif bpp == 1:  # 8-bit
+        width = iw * 2
+        bytes_per_row = iw * 2
+    elif bpp == 2:  # 16-bit
+        width = iw
+        bytes_per_row = iw * 2
+    elif bpp == 3:  # 24-bit
+        width = (iw * 2) // 3
+        bytes_per_row = iw * 2
+    else:
+        raise ValueError(f"Unsupported BPP type {bpp}")
+
+    height = ih
+    pixels = []
+
+    for y in range(height):
+        row = data[pos:pos + bytes_per_row]
+        pos += bytes_per_row
+        if bpp == 0:  # 4-bit
+            for x in range(width):
+                byte = row[x // 2] if x // 2 < len(row) else 0
+                idx = (byte & 0x0F) if (x & 1) == 0 else (byte >> 4)
+                if palette and idx < len(palette):
+                    pixels.append(palette[idx])
+                else:
+                    v = idx * 17
+                    pixels.append((v, v, v, 255))
+        elif bpp == 1:  # 8-bit
+            for x in range(width):
+                idx = row[x] if x < len(row) else 0
+                if palette and idx < len(palette):
+                    pixels.append(palette[idx])
+                else:
+                    pixels.append((idx, idx, idx, 255))
+        elif bpp == 2:  # 16-bit
+            for x in range(width):
+                if x * 2 + 1 >= len(row):
+                    pixels.append((0, 0, 0, 0))
+                    continue
+                c = row[x * 2] | (row[x * 2 + 1] << 8)
+                r = (c & 0x1F) << 3
+                g = ((c >> 5) & 0x1F) << 3
+                b = ((c >> 10) & 0x1F) << 3
+                a = 0 if c == 0 else 255
+                pixels.append((r, g, b, a))
+        elif bpp == 3:  # 24-bit
+            for x in range(width):
+                o = x * 3
+                if o + 2 >= len(row):
+                    pixels.append((0, 0, 0, 255))
+                    continue
+                pixels.append((row[o], row[o + 1], row[o + 2], 255))
+
+    img = Image.new("RGBA", (width, height))
+    img.putdata(pixels)
+    info = {
+        "bpp": bpp,
+        "has_clut": has_clut,
+        "width": width,
+        "height": height,
+        "vram_x": ix,
+        "vram_y": iy,
+        "colors": len(palette) if palette else 0,
+    }
+    return img, info
 
 
 def detect_type(data: bytes) -> tuple:
@@ -328,9 +452,10 @@ class GTArc:
             data = self.get_data(i)
             f = self.files[i]
             name = f"{f['label']}{f['ext']}"
-            (out / name).write_bytes(data)        
+            (out / name).write_bytes(data)          # always write original bytes
             manifest.append(name)
 
+            # optional expansion
             if expand_tim_packs and f["type"] == "TIM Pack":
                 tims = parse_tim_pack(data)
                 sub = out / f"{f['label']}_tims"
@@ -373,6 +498,8 @@ class GTArc:
 
         payloads = []
         for ni, name in enumerate(names):
+            # If this is a TIM pack and a matching *_tims folder exists,
+            # rebuild the pack from the individual .tim files so edits are kept.
             p = src / name
             stem = Path(name).stem  # e.g. "000" from "000.tpk"
             tims_dir = src / f"{stem}_tims"
@@ -420,7 +547,7 @@ class GTArc:
 class GTArcExplorer(Tk):
     def __init__(self):
         super().__init__()
-        self.title("GTArcExplorer – Lossless Gran Turismo ARC Tool")
+        self.title("GTExplorer - GT1 .DAT Extractor / Repacker")
         self.geometry("1220x760")
         self.minsize(960, 620)
 
@@ -496,6 +623,52 @@ class GTArcExplorer(Tk):
         sbs.pack(side=RIGHT, fill=Y)
         self.struct_tree.configure(yscrollcommand=sbs.set)
 
+        # --- Asset Viewer tab ---
+        viewer = ttk.Frame(nb)
+        nb.add(viewer, text="Asset Viewer")
+        vtop = ttk.Frame(viewer)
+        vtop.pack(side=TOP, fill=X, padx=6, pady=4)
+        self.viewer_info = ttk.Label(vtop, text="Select a TIM / TIM Pack to preview")
+        self.viewer_info.pack(side=LEFT)
+        ttk.Button(vtop, text="Zoom +", command=lambda: self.viewer_zoom(1.25)).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="Zoom -", command=lambda: self.viewer_zoom(0.8)).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="Fit", command=self.viewer_fit).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="1:1", command=self.viewer_1to1).pack(side=RIGHT, padx=2)
+
+        vbody = ttk.Panedwindow(viewer, orient="horizontal")
+        vbody.pack(fill=BOTH, expand=True, padx=4, pady=4)
+
+        # TIM list inside packs
+        left_v = ttk.Frame(vbody)
+        vbody.add(left_v, weight=1)
+        ttk.Label(left_v, text="Textures in pack").pack(anchor=W)
+        self.tim_list = ttk.Treeview(left_v, columns=("size",), show="tree headings", selectmode="browse")
+        self.tim_list.heading("#0", text="Name")
+        self.tim_list.heading("size", text="Size")
+        self.tim_list.column("#0", width=140)
+        self.tim_list.column("size", width=70, anchor="e")
+        self.tim_list.pack(fill=BOTH, expand=True, side=LEFT)
+        sbt = ttk.Scrollbar(left_v, orient="vertical", command=self.tim_list.yview)
+        sbt.pack(side=RIGHT, fill=Y)
+        self.tim_list.configure(yscrollcommand=sbt.set)
+        self.tim_list.bind("<<TreeviewSelect>>", self.on_tim_list_select)
+
+        # Canvas for image
+        right_v = ttk.Frame(vbody)
+        vbody.add(right_v, weight=3)
+        self.viewer_canvas = Canvas(right_v, bg="#2a2a2a", highlightthickness=0)
+        self.viewer_canvas.pack(fill=BOTH, expand=True)
+        hsb = ttk.Scrollbar(right_v, orient="horizontal", command=self.viewer_canvas.xview)
+        hsb.pack(side=BOTTOM, fill=X)
+        vsb = ttk.Scrollbar(right_v, orient="vertical", command=self.viewer_canvas.yview)
+        vsb.pack(side=RIGHT, fill=Y)
+        self.viewer_canvas.configure(xscrollcommand=hsb.set, yscrollcommand=vsb.set)
+
+        self._viewer_image = None       # PIL Image
+        self._viewer_photo = None       # ImageTk
+        self._viewer_scale = 1.0
+        self._pack_tims = []            # list of (name, bytes) for current pack
+
         self.progress = ttk.Progressbar(self, mode="determinate")
         self.progress.pack(side=BOTTOM, fill=X, padx=6, pady=4)
 
@@ -568,6 +741,11 @@ class GTArcExplorer(Tk):
                 self.preview_text.insert(END, "-" * 34 + "\n")
                 for name, tim in tims:
                     self.preview_text.insert(END, f"{name:<20} {len(tim):>10,}\n")
+                self.show_pack_in_viewer(data)
+            elif f["type"] == "TIM Texture":
+                self.tim_list.delete(*self.tim_list.get_children())
+                self._pack_tims = []
+                self.show_in_viewer(data, f["label"] + f["ext"])
             else:
                 self.preview_text.insert(END, "=== Hex dump (first 256 bytes) ===\n")
                 chunk = data[:256]
@@ -691,6 +869,86 @@ class GTArcExplorer(Tk):
                 os.system(f'xdg-open "{self.extract_dir}"')
         else:
             messagebox.showinfo("No folder", "Extract first")
+
+
+    def show_in_viewer(self, data: bytes, label: str = ""):
+        """Decode TIM data and display it."""
+        if not HAS_PIL:
+            self.viewer_info.config(text="Pillow not installed – cannot display images")
+            return
+        try:
+            img, info = decode_tim(data)
+            self._viewer_image = img
+            self._viewer_scale = 1.0
+            bpp_names = {0: "4-bit", 1: "8-bit", 2: "16-bit", 3: "24-bit"}
+            self.viewer_info.config(
+                text=f"{label}  •  {info['width']}×{info['height']}  •  "
+                     f"{bpp_names.get(info['bpp'], '?')}  •  "
+                     f"CLUT={'yes' if info['has_clut'] else 'no'} ({info['colors']} colors)  •  "
+                     f"VRAM ({info['vram_x']},{info['vram_y']})"
+            )
+            self._render_viewer()
+        except Exception as e:
+            self.viewer_info.config(text=f"Cannot decode: {e}")
+            self.viewer_canvas.delete("all")
+            self._viewer_image = None
+
+    def show_pack_in_viewer(self, data: bytes):
+        """Populate TIM list from a pack and show the first texture."""
+        self.tim_list.delete(*self.tim_list.get_children())
+        self._pack_tims = parse_tim_pack(data)
+        for i, (name, tdata) in enumerate(self._pack_tims):
+            self.tim_list.insert("", END, iid=str(i), text=name,
+                                 values=(f"{len(tdata):,}",))
+        if self._pack_tims:
+            self.tim_list.selection_set("0")
+            self.tim_list.focus("0")
+            self.show_in_viewer(self._pack_tims[0][1], self._pack_tims[0][0])
+        else:
+            self.viewer_info.config(text="Empty TIM pack")
+            self.viewer_canvas.delete("all")
+
+    def on_tim_list_select(self, _event=None):
+        sel = self.tim_list.selection()
+        if not sel:
+            return
+        i = int(sel[0])
+        if 0 <= i < len(self._pack_tims):
+            name, tdata = self._pack_tims[i]
+            self.show_in_viewer(tdata, name)
+
+    def _render_viewer(self):
+        if self._viewer_image is None or not HAS_PIL:
+            return
+        img = self._viewer_image
+        scale = self._viewer_scale
+        w = max(1, int(img.width * scale))
+        h = max(1, int(img.height * scale))
+        resized = img.resize((w, h), Image.NEAREST)
+        self._viewer_photo = ImageTk.PhotoImage(resized)
+        self.viewer_canvas.delete("all")
+        self.viewer_canvas.create_image(0, 0, anchor=NW, image=self._viewer_photo)
+        self.viewer_canvas.configure(scrollregion=(0, 0, w, h))
+
+    def viewer_zoom(self, factor):
+        if self._viewer_image is None:
+            return
+        self._viewer_scale = max(0.1, min(16.0, self._viewer_scale * factor))
+        self._render_viewer()
+
+    def viewer_1to1(self):
+        self._viewer_scale = 1.0
+        self._render_viewer()
+
+    def viewer_fit(self):
+        if self._viewer_image is None:
+            return
+        cw = self.viewer_canvas.winfo_width() or 400
+        ch = self.viewer_canvas.winfo_height() or 300
+        sx = cw / self._viewer_image.width
+        sy = ch / self._viewer_image.height
+        self._viewer_scale = max(0.1, min(sx, sy) * 0.95)
+        self._render_viewer()
 
     def populate_struct_tree(self, root: Path):
         self.struct_tree.delete(*self.struct_tree.get_children())
