@@ -1,3 +1,25 @@
+#!/usr/bin/env python3
+"""
+GTArcExplorer – Lossless GT-ARC / GT-ZIP tool for Gran Turismo 1
+
+Extracts files EXACTLY as stored (only GT-ZIP decompression).
+Optional: also expand TIM Packs into individual .tim files.
+
+Supported containers:
+  • Standard GT-ARC  (COURSE.DAT, CAR.DAT, GAMEMENU.DAT, ARCADE.DAT, …)
+  • Compressed GT-ARC (CARINF.DAT style)
+  • Raw GT-ZIP       (GAMEFONT.DAT style)
+
+Detected native types → extensions:
+  @(#)GT-PS   → .gtps
+  @(#)GT-CAR  → .gtcar
+  @(#)GT-CTEX → .ctex
+  @(#)GT-SKY  → .gtsky
+  10 00 00 00 → .tim
+  TIM-pack    → .tpk   (optional expansion into individual .tim)
+  other       → .bin
+"""
+
 import struct
 import os
 import sys
@@ -15,7 +37,10 @@ except ImportError:
     HAS_PIL = False
 
 
+# ──────────────────────────────────────────────────────────────
 # GT-ZIP
+# ──────────────────────────────────────────────────────────────
+
 def gtzip_decompress(src: bytes, decomp_size: int) -> bytes:
     dst = bytearray()
     pos = 0
@@ -127,7 +152,10 @@ def gtzip_compress(data: bytes) -> bytes:
     return bytes(out)
 
 
+# ──────────────────────────────────────────────────────────────
 # TIM pack helpers (read-only parsing)
+# ──────────────────────────────────────────────────────────────
+
 def parse_tim_pack(data: bytes):
     """
     TIM pack layout (COURSE / BG style):
@@ -196,6 +224,103 @@ def build_tim_pack(tim_files: list) -> bytes:
 
     return bytes(out)
 
+
+
+
+# ── PSX SPU-ADPCM (INST / ENGN sample banks) ───────────────────
+
+_XA_TABLE = [(0, 0), (60, 0), (115, -52), (98, -55), (122, -60)]
+
+
+def decode_adpcm_frame(frame: bytes, s1: int, s2: int):
+    shift = frame[0] & 0x0F
+    filt = min((frame[0] >> 4) & 0x0F, 4)
+    f0, f1 = _XA_TABLE[filt]
+    out = []
+    for i in range(2, 16):
+        b = frame[i]
+        for nibble in (b & 0x0F, b >> 4):
+            if nibble & 8:
+                nibble -= 16
+            val = nibble << 12
+            val >>= shift if shift < 13 else 15
+            val = val + (s1 * f0 + s2 * f1) // 64
+            val = max(-32768, min(32767, val))
+            out.append(val)
+            s2, s1 = s1, val
+    return out, s1, s2
+
+
+def decode_adpcm(data: bytes) -> list:
+    pcm, s1, s2 = [], 0, 0
+    for off in range(0, len(data) - 15, 16):
+        samples, s1, s2 = decode_adpcm_frame(data[off:off + 16], s1, s2)
+        pcm.extend(samples)
+        if data[off + 1] & 1:
+            break
+    return pcm
+
+
+def write_wav(path, pcm, rate=22050):
+    import wave
+    with wave.open(str(path), "w") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(struct.pack("<h", s) for s in pcm))
+
+
+def parse_sample_bank(data: bytes):
+    """
+    Parse INST/ENGN bank → list of (start, end) sample offsets.
+    Returns (sample_start, samples_list) or ([], []) on failure.
+    """
+    if len(data) < 0x20 or data[:4] not in (b"INST", b"ENGN"):
+        return 0, []
+    meta_size = struct.unpack_from("<I", data, 0x08)[0]
+    hint = min(meta_size, len(data))
+
+    def plausible(off):
+        if off + 16 > len(data):
+            return False
+        fr = data[off:off + 16]
+        if fr[2:16] == b"\x00" * 14:
+            return False
+        shift, filt = fr[0] & 0x0F, (fr[0] >> 4) & 0x0F
+        return filt <= 4 and shift <= 12
+
+    sample_start = hint
+    for off in range(max(0x20, hint - 0x20), min(len(data) - 64, hint + 0x100), 16):
+        if sum(plausible(off + i * 16) for i in range(4)) >= 3:
+            sample_start = off
+            break
+
+    samples = []
+    cur = sample_start
+    pos = sample_start
+    while pos + 16 <= len(data):
+        flags = data[pos + 1]
+        pos += 16
+        if flags & 1:
+            if pos - cur >= 32:
+                samples.append((cur, pos))
+            cur = pos
+    if pos - cur >= 32 and cur < len(data):
+        samples.append((cur, len(data)))
+    return sample_start, samples
+
+
+def expand_sample_bank(data: bytes, out_dir, rate=22050) -> int:
+    """Write sample_XXX.wav (+ .adpcm) into out_dir. Returns count."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _, samples = parse_sample_bank(data)
+    for i, (s, e) in enumerate(samples):
+        blob = data[s:e]
+        pcm = decode_adpcm(blob)
+        write_wav(out_dir / f"sample_{i:03d}.wav", pcm, rate)
+        (out_dir / f"sample_{i:03d}.adpcm").write_bytes(blob)
+    return len(samples)
 
 
 def decode_tim(data: bytes):
@@ -369,7 +494,10 @@ def detect_type(data: bytes) -> tuple:
     return ("Unknown", ".bin")
 
 
+# ──────────────────────────────────────────────────────────────
 # Archive
+# ──────────────────────────────────────────────────────────────
+
 class GTArc:
     def __init__(self):
         self.path = None
@@ -437,10 +565,13 @@ class GTArc:
         f["label"] = f"{f['index']:03d}"
         return f["data"]
 
-    def extract_all(self, out_dir: str, indices=None, expand_tim_packs=False, progress_cb=None):
+    def extract_all(self, out_dir: str, indices=None, expand_tim_packs=False,
+                    expand_inst_banks=False, progress_cb=None):
         """
-        Lossless extract. If expand_tim_packs=True, also write individual
-        .tim files from each TIM Pack into a subfolder (pack itself is still kept).
+        Lossless extract.
+        expand_tim_packs: also write individual .tim files from each TIM Pack.
+        expand_inst_banks: also decode INST/ENGN sample banks to WAV (+ raw ADPCM).
+        The original container file is always kept.
         """
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -455,7 +586,8 @@ class GTArc:
             (out / name).write_bytes(data)          # always write original bytes
             manifest.append(name)
 
-            # optional expansion
+            extra = ""
+            # optional TIM pack expansion
             if expand_tim_packs and f["type"] == "TIM Pack":
                 tims = parse_tim_pack(data)
                 sub = out / f"{f['label']}_tims"
@@ -465,11 +597,16 @@ class GTArc:
                     if not safe.lower().endswith(".tim"):
                         safe += ".tim"
                     (sub / safe).write_bytes(tdata)
-                if progress_cb:
-                    progress_cb(n + 1, len(indices), f"{name} + {len(tims)} TIMs")
-            else:
-                if progress_cb:
-                    progress_cb(n + 1, len(indices), name)
+                extra += f" + {len(tims)} TIMs"
+
+            # optional INST/ENGN sample expansion
+            if expand_inst_banks and f["type"] in ("Sound Instrument", "Engine Sound"):
+                sub = out / f"{f['label']}_samples"
+                count = expand_sample_bank(data, sub)
+                extra += f" + {count} samples"
+
+            if progress_cb:
+                progress_cb(n + 1, len(indices), name + extra)
 
         with open(out / "manifest.txt", "w", encoding="utf-8") as m:
             m.write(f"kind={self.kind}\n")
@@ -543,17 +680,21 @@ class GTArc:
         return out_path
 
 
+# ──────────────────────────────────────────────────────────────
 # GUI
+# ──────────────────────────────────────────────────────────────
+
 class GTArcExplorer(Tk):
     def __init__(self):
         super().__init__()
-        self.title("GTExplorer - GT1 .DAT Extractor / Repacker")
+        self.title("GTArcExplorer – Lossless Gran Turismo ARC Tool")
         self.geometry("1220x760")
         self.minsize(960, 620)
 
         self.arc = GTArc()
         self.extract_dir = None
         self.expand_tims = BooleanVar(value=False)
+        self.expand_inst = BooleanVar(value=False)
 
         self._build_ui()
         self._setup_styles()
@@ -573,6 +714,11 @@ class GTArcExplorer(Tk):
             bar,
             text="Also extract TIMs from packs",
             variable=self.expand_tims
+        ).pack(side=LEFT, padx=4)
+        ttk.Checkbutton(
+            bar,
+            text="Also extract samples from INST/ENGN",
+            variable=self.expand_inst
         ).pack(side=LEFT, padx=4)
 
         ttk.Separator(bar, orient="vertical").pack(side=LEFT, fill=Y, padx=8)
@@ -746,6 +892,20 @@ class GTArcExplorer(Tk):
                 self.tim_list.delete(*self.tim_list.get_children())
                 self._pack_tims = []
                 self.show_in_viewer(data, f["label"] + f["ext"])
+            elif f["type"] in ("Sound Instrument", "Engine Sound"):
+                _, samples = parse_sample_bank(data)
+                self.preview_text.insert(END, f"{f['type']} – {len(samples)} ADPCM samples\n\n")
+                self.preview_text.insert(END, f"{'#':>4}  {'Offset':>10}  {'Size':>8}  {'Duration':>10}\n")
+                self.preview_text.insert(END, "-" * 40 + "\n")
+                for i, (s, e) in enumerate(samples):
+                    frames = (e - s) // 16
+                    dur = frames * 28 / 22050
+                    self.preview_text.insert(
+                        END, f"{i:4d}  0x{s:08x}  {e-s:8d}  {dur:9.3f}s\n"
+                    )
+                self.preview_text.insert(
+                    END, "\nEnable “Also extract samples from INST/ENGN” to write WAV files.\n"
+                )
             else:
                 self.preview_text.insert(END, "=== Hex dump (first 256 bytes) ===\n")
                 chunk = data[:256]
@@ -766,6 +926,7 @@ class GTArcExplorer(Tk):
         if not out:
             return
         expand = self.expand_tims.get()
+        expand_inst = self.expand_inst.get()
         self.progress["maximum"] = len(self.arc.files)
         self.progress["value"] = 0
 
@@ -775,11 +936,17 @@ class GTArcExplorer(Tk):
                 self.status_var.set(f"Extracting {cur}/{total} – {name}")
             try:
                 self.extract_dir = self.arc.extract_all(
-                    out, expand_tim_packs=expand, progress_cb=cb
+                    out, expand_tim_packs=expand,
+                    expand_inst_banks=expand_inst, progress_cb=cb
                 )
                 msg = f"Lossless extract → {self.extract_dir}"
+                extras = []
                 if expand:
-                    msg += "  (TIM packs expanded)"
+                    extras.append("TIM packs expanded")
+                if expand_inst:
+                    extras.append("INST/ENGN samples expanded")
+                if extras:
+                    msg += "  (" + ", ".join(extras) + ")"
                 self.status_var.set(msg)
                 self.after(0, lambda: self.populate_struct_tree(self.extract_dir))
                 extra = ""
@@ -806,8 +973,12 @@ class GTArcExplorer(Tk):
             return
         indices = [int(i) for i in sel]
         expand = self.expand_tims.get()
+        expand_inst = self.expand_inst.get()
         try:
-            self.arc.extract_all(out, indices=indices, expand_tim_packs=expand)
+            self.arc.extract_all(
+                out, indices=indices,
+                expand_tim_packs=expand, expand_inst_banks=expand_inst
+            )
             self.status_var.set(f"Extracted {len(indices)} file(s) → {out}")
             messagebox.showinfo("Done", f"Extracted {len(indices)} file(s) losslessly")
         except Exception as e:
@@ -870,6 +1041,8 @@ class GTArcExplorer(Tk):
         else:
             messagebox.showinfo("No folder", "Extract first")
 
+    
+    # ── Asset Viewer ──────────────────────────────────────────
 
     def show_in_viewer(self, data: bytes, label: str = ""):
         """Decode TIM data and display it."""
