@@ -1,6 +1,6 @@
 OPEN = "img/open.png"
 SAVE = "img/save.png"
-EXTRACT = "img/extract.png"
+EXTRACT = "img/open.png" # TO DO: add extract icon
 REPACK = "img/repck.png"
 FOLDER = "img/folder.png"
 TEXTURE = "img/texture.png"
