@@ -3,3 +3,5 @@ EXTRACTED-GT1
 PACKED-DAT
 old
 src-copy
+src/ui/
+src/main.py
