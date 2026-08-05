@@ -2,11 +2,13 @@ import os
 import sys
 import threading
 from pathlib import Path
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *          
+from ttkbootstrap.style import ThemeDefinition
 from tkinter import (
-    Tk, StringVar, BooleanVar, filedialog, messagebox, scrolledtext,
+    StringVar, BooleanVar, filedialog, messagebox, scrolledtext,
     Canvas, END, BOTH, LEFT, RIGHT, X, Y, TOP, BOTTOM, W, NW
 )
-from tkinter import ttk
 try:
     from PIL import Image, ImageTk
     HAS_PIL = True
@@ -23,14 +25,48 @@ from .ctex import decode_ctex, parse_ctex_header, ctex_palette_count
 from .spec import is_spec_type, parse_spec_table, format_spec_preview, colour_rows
 from .namelist import parse_name_list
 
+
+USER_THEMES = {
+    "gtviewer": {
+        "type": "dark",
+        "colors": {
+            "primary": "#4582ec",
+            "secondary": "#adb5bd",
+            "success": "#02b875",
+            "info": "#17a2b8",
+            "warning": "#f0ad4e",
+            "danger": "#d9534f",
+            "light": "#F8F9FA",
+            "dark": "#545e67",
+            "bg": "#313131",
+            "fg": "#85abaf",
+            "selectbg": "#a3abb6",
+            "selectfg": "#151515",
+            "border": "#bfbfbf",
+            "inputfg": "#a8fffd",
+            "inputbg": "#333333",
+            "active": "#e5e5e5"
+        }
+    }
+}
+
+
 # GUI
 
-class GTArcExplorer(Tk):
+class GTArcExplorer(ttk.Window):
     def __init__(self):
-        super().__init__()
+        super().__init__(themename="cosmo")
+        definition = ThemeDefinition(
+            name="gtviewer",
+            themetype=USER_THEMES["gtviewer"]["type"],
+            colors=USER_THEMES["gtviewer"]["colors"]
+        )
+        self.style.register_theme(definition)
+        self.style.theme_use("gtviewer")
         self.title("GTArcExplorer")
-        self.geometry("1220x760")
-        self.minsize(960, 620)
+        self.geometry("1500x920")
+        self.minsize(1080, 720)
+        self.maxsize(1920,1080)
 
         self.arc = GTArc()
         self.extract_dir = None
@@ -38,7 +74,7 @@ class GTArcExplorer(Tk):
         self.expand_inst = BooleanVar(value=False)
 
         self._build_ui()
-        self._setup_styles()
+        #self._setup_styles()
 
     def _build_ui(self):
         bar = ttk.Frame(self)
@@ -139,10 +175,10 @@ class GTArcExplorer(Tk):
         #ttk.Button(vtop, text="Pitch +", command=lambda: self.model_rotate(0, 10)).pack(side=RIGHT, padx=2)
         #ttk.Button(vtop, text="Pitch -", command=lambda: self.model_rotate(0, -10)).pack(side=RIGHT, padx=2)
         ttk.Separator(vtop, orient="vertical").pack(side=RIGHT, fill=Y, padx=4)
-        ttk.Button(vtop, text="CLUT +", command=lambda: self.ctex_shift_clut(1)).pack(side=RIGHT, padx=2)
-        ttk.Button(vtop, text="CLUT -", command=lambda: self.ctex_shift_clut(-1)).pack(side=RIGHT, padx=2)
-        ttk.Button(vtop, text="Pal +", command=lambda: self.ctex_shift_pal(1)).pack(side=RIGHT, padx=2)
-        ttk.Button(vtop, text="Pal -", command=lambda: self.ctex_shift_pal(-1)).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="Pal +", command=lambda: self.ctex_shift_clut(1)).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="Pal -", command=lambda: self.ctex_shift_clut(-1)).pack(side=RIGHT, padx=2)
+        #ttk.Button(vtop, text="Pal +", command=lambda: self.ctex_shift_pal(1)).pack(side=RIGHT, padx=2)
+        #ttk.Button(vtop, text="Pal -", command=lambda: self.ctex_shift_pal(-1)).pack(side=RIGHT, padx=2)
 
         vbody = ttk.Panedwindow(viewer, orient="horizontal")
         vbody.pack(fill=BOTH, expand=True, padx=4, pady=4)
@@ -154,7 +190,7 @@ class GTArcExplorer(Tk):
         self.tim_list.heading("#0", text="Name")
         self.tim_list.heading("size", text="Size")
         self.tim_list.column("#0", width=140)
-        self.tim_list.column("size", width=70, anchor="e")
+        self.tim_list.column("size", width=90, anchor="e")
         self.tim_list.pack(fill=BOTH, expand=True, side=LEFT)
         sbt = ttk.Scrollbar(left_v, orient="vertical", command=self.tim_list.yview)
         sbt.pack(side=RIGHT, fill=Y)
