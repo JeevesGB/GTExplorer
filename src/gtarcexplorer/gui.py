@@ -1,4 +1,3 @@
-"""Tkinter GUI for GTArcExplorer."""
 import os
 import sys
 import threading
@@ -256,46 +255,95 @@ class GTArcExplorer(Tk):
     def open_archive(self):
         path = filedialog.askopenfilename(
             title="Open GT archive",
-            filetypes=[("DAT / ARC", "*.dat *.DAT *.arc *.ARC"), ("All", "*.*")]
+            filetypes=[("DAT / ARC", "*.dat *.DAT *.arc *.ARC"), ("All", "*.*")],
         )
         if not path:
             return
-        try:
-            self.arc.load(path)
-            self._apply_filelist()
-            # If external list left most entries unnamed, try embedded list
-            named = sum(1 for f in self.arc.files if f.get("real_name"))
-            if named == 0:
-                if self.arc.try_embedded_names():
-                    named = sum(1 for f in self.arc.files if f.get("real_name"))
-            self.populate_tree()
-            self.status_var.set(
-                f"Loaded {Path(path).name}  •  {len(self.arc.files)} file(s)  •  "
-                f"{self.arc.kind}  •  {named} named"
-            )
-            self.preview_text.delete("1.0", END)
-            self.preview_info.config(text="Select a file to preview")
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
+
+        self.status_var.set(f"Reading {Path(path).name}… please wait")
+        self.progress.configure(mode="indeterminate")
+        self.progress.start(12)
+        self.config(cursor="watch")
+        self.update_idletasks()
+
+        def work():
+            try:
+                self.arc.load(path)
+                self.after(0, lambda: self.status_var.set(
+                    f"Applying names for {Path(path).name}…"
+                ))
+                self._apply_filelist()
+                named = sum(1 for f in self.arc.files if f.get("real_name"))
+                if named == 0:
+                    self.after(0, lambda: self.status_var.set(
+                        "Scanning for embedded filename lists…"
+                    ))
+                    if self.arc.try_embedded_names():
+                        named = sum(1 for f in self.arc.files if f.get("real_name"))
+
+                def finish():
+                    self.progress.stop()
+                    self.progress.configure(mode="determinate", value=0)
+                    self.config(cursor="")
+                    self.populate_tree()
+                    self.status_var.set(
+                        f"Loaded {Path(path).name}  •  {len(self.arc.files)} file(s)  •  "
+                        f"{self.arc.kind}  •  identifying types…"
+                    )
+                    self.preview_text.delete("1.0", END)
+                    self.preview_info.config(text="Select a file to preview")
+
+                self.after(0, finish)
+            except Exception as e:
+                def fail(err=e):
+                    self.progress.stop()
+                    self.progress.configure(mode="determinate", value=0)
+                    self.config(cursor="")
+                    self.status_var.set("Ready")
+                    messagebox.showerror("Error", str(err))
+                self.after(0, fail)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def populate_tree(self):
         self.tree.delete(*self.tree.get_children())
+        total = len(self.arc.files)
         for f in self.arc.files:
-            self.tree.insert("", END, iid=str(f["index"]),
-                             values=(f["index"], "…", "…", "", f["decomp_size"] or "?", f["comp_size"]))
+            self.tree.insert(
+                "", END, iid=str(f["index"]),
+                values=(f["index"], "…", "…", "", f["decomp_size"] or "?", f["comp_size"]),
+            )
+
+        self.progress.configure(mode="determinate", maximum=max(total, 1), value=0)
 
         def detect():
             for i, f in enumerate(self.arc.files):
                 try:
                     self.arc.get_data(i)
                     name = f.get("real_name") or f.get("label") or f"{i:03d}"
-                    self.tree.item(str(i), values=(
+                    vals = (
                         f["index"], name, f["type"], f["ext"],
                         len(f["data"]) if f["data"] else f["decomp_size"],
-                        f["comp_size"]
-                    ))
+                        f["comp_size"],
+                    )
+                    self.after(0, lambda i=i, v=vals: self.tree.item(str(i), values=v))
                 except Exception:
                     pass
+                cur = i + 1
+                self.after(0, lambda c=cur, t=total: (
+                    self.progress.configure(value=c),
+                    self.status_var.set(
+                        f"Identifying types {c}/{t}… large files can take a moment"
+                    ),
+                ))
+            def done():
+                named = sum(1 for f in self.arc.files if f.get("real_name"))
+                self.progress.configure(value=0)
+                self.status_var.set(
+                    f"Ready  •  {total} file(s)  •  {self.arc.kind}  •  {named} named"
+                )
+            self.after(0, done)
+
         threading.Thread(target=detect, daemon=True).start()
 
     def on_select(self, _event):
