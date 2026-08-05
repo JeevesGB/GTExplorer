@@ -1,3 +1,3 @@
 @echo off 
-python src/main - Copy.py 
+python src/oldmain.py 
 pause 
