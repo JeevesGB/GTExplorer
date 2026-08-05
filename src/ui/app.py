@@ -2,9 +2,9 @@ import os
 import sys
 import threading
 from pathlib import Path
-from tkinter import (
-    Tk, StringVar, BooleanVar, filedialog, messagebox, END
-)
+
+import TKinterModernThemes as TKMT
+from tkinter import StringVar, BooleanVar, filedialog, messagebox, END
 from tkinter import ttk
 
 try:
@@ -23,20 +23,24 @@ from gtarcexplorer.ctex import decode_ctex, parse_ctex_header, ctex_palette_coun
 from gtarcexplorer.spec import is_spec_type, parse_spec_table, format_spec_preview
 from gtarcexplorer.namelist import parse_name_list
 
-from .theme import apply_theme
-from .styles import setup_styles
 from .toolbar import Toolbar
 from .archive_panel import ArchivePanel
 from .preview_panel import PreviewPanel
 from .asset_viewer import AssetViewer
 
 
-class GTArcExplorer(Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("GTArcExplorer")
-        self.geometry("1280x800")
-        self.minsize(1000, 640)
+class GTArcExplorerApp(TKMT.ThemedTKinterFrame):
+    def __init__(self, theme="sun-valley", mode="dark"):
+        super().__init__(
+            "GTArcExplorer",
+            theme,
+            mode,
+            usecommandlineargs=True,
+            useconfigfile=True,
+        )
+
+        self.root.geometry("1280x800")
+        self.root.minsize(1000, 640)
 
         self.arc = GTArc()
         self.extract_dir = None
@@ -58,15 +62,15 @@ class GTArcExplorer(Tk):
         self._ctex_clut = 0
         self._viewer_mode = None
 
-        style = apply_theme(self)
-        setup_styles(style)
         self._build()
 
     def _build(self):
-        self.toolbar = Toolbar(self, self)
+        root = self.root
+
+        self.toolbar = Toolbar(root, self)
         self.toolbar.pack(side="top", fill="x")
 
-        paned = ttk.Panedwindow(self, orient="horizontal")
+        paned = ttk.Panedwindow(root, orient="horizontal")
         paned.pack(fill="both", expand=True, padx=6, pady=4)
 
         self.archive_panel = ArchivePanel(paned, self)
@@ -81,10 +85,10 @@ class GTArcExplorer(Tk):
         self.asset_viewer = AssetViewer(right, self)
         right.add(self.asset_viewer, text="Asset Viewer")
 
-        bottom = ttk.Frame(self)
+        bottom = ttk.Frame(root)
         bottom.pack(side="bottom", fill="x", padx=6, pady=4)
         self.status_var = StringVar(value="Ready – open a GT-ARC / GT-ZIP file")
-        ttk.Label(bottom, textvariable=self.status_var, style="Status.TLabel").pack(side="left")
+        ttk.Label(bottom, textvariable=self.status_var).pack(side="left")
         self.progress = ttk.Progressbar(bottom, mode="determinate")
         self.progress.pack(side="right", fill="x", expand=True, padx=(12, 0))
 
@@ -152,19 +156,19 @@ class GTArcExplorer(Tk):
         self.status_var.set(f"Reading {Path(path).name}… please wait")
         self.progress.configure(mode="indeterminate")
         self.progress.start(12)
-        self.config(cursor="watch")
-        self.update_idletasks()
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
 
         def work():
             try:
                 self.arc.load(path)
-                self.after(0, lambda: self.status_var.set(
+                self.root.after(0, lambda: self.status_var.set(
                     f"Applying names for {Path(path).name}…"
                 ))
                 self._apply_filelist()
                 named = sum(1 for f in self.arc.files if f.get("real_name"))
                 if named == 0:
-                    self.after(0, lambda: self.status_var.set(
+                    self.root.after(0, lambda: self.status_var.set(
                         "Scanning for embedded filename lists…"
                     ))
                     if self.arc.try_embedded_names():
@@ -173,7 +177,7 @@ class GTArcExplorer(Tk):
                 def finish():
                     self.progress.stop()
                     self.progress.configure(mode="determinate", value=0)
-                    self.config(cursor="")
+                    self.root.config(cursor="")
                     self._populate_tree_async()
                     self.preview_panel.clear()
                     self.status_var.set(
@@ -181,15 +185,15 @@ class GTArcExplorer(Tk):
                         f"{self.arc.kind}  •  identifying types…"
                     )
 
-                self.after(0, finish)
+                self.root.after(0, finish)
             except Exception as e:
                 def fail(err=e):
                     self.progress.stop()
                     self.progress.configure(mode="determinate", value=0)
-                    self.config(cursor="")
+                    self.root.config(cursor="")
                     self.status_var.set("Ready")
                     messagebox.showerror("Error", str(err))
-                self.after(0, fail)
+                self.root.after(0, fail)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -223,14 +227,14 @@ class GTArcExplorer(Tk):
                 except Exception:
                     pass
                 cur = i + 1
-                self.after(0, lambda c=cur, t=total: (
+                self.root.after(0, lambda c=cur, t=total: (
                     self.progress.configure(value=c),
                     self.status_var.set(
                         f"Identifying types {c}/{t}… large files can take a moment"
                     ),
                 ))
                 if cur % 8 == 0 or cur == total:
-                    self.after(0, self._refresh_tree)
+                    self.root.after(0, self._refresh_tree)
 
             def done():
                 named = sum(1 for f in self.arc.files if f.get("real_name"))
@@ -239,7 +243,7 @@ class GTArcExplorer(Tk):
                 self.status_var.set(
                     f"Ready  •  {total} file(s)  •  {self.arc.kind}  •  {named} named"
                 )
-            self.after(0, done)
+            self.root.after(0, done)
 
         threading.Thread(target=detect, daemon=True).start()
 
@@ -366,8 +370,8 @@ class GTArcExplorer(Tk):
 
         def work():
             def cb(cur, total, name):
-                self.after(0, lambda: self.progress.configure(value=cur))
-                self.after(0, lambda: self.status_var.set(
+                self.root.after(0, lambda: self.progress.configure(value=cur))
+                self.root.after(0, lambda: self.status_var.set(
                     f"Extracting {cur}/{total} – {name}"
                 ))
             try:
@@ -383,19 +387,19 @@ class GTArcExplorer(Tk):
                     extras.append("INST/ENGN samples expanded")
                 if extras:
                     msg += "  (" + ", ".join(extras) + ")"
-                self.after(0, lambda: self.status_var.set(msg))
+                self.root.after(0, lambda: self.status_var.set(msg))
                 extra = ""
                 if expand:
                     extra = "\n\nTIM Packs were also expanded into *_tims/ subfolders."
-                self.after(0, lambda: messagebox.showinfo(
+                self.root.after(0, lambda: messagebox.showinfo(
                     "Done",
                     f"Extracted {len(self.arc.files)} file(s) losslessly to:\n{self.extract_dir}"
                     f"{extra}"
                 ))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Extract failed", str(e)))
+                self.root.after(0, lambda: messagebox.showerror("Extract failed", str(e)))
             finally:
-                self.after(0, lambda: self.progress.configure(value=0))
+                self.root.after(0, lambda: self.progress.configure(value=0))
         threading.Thread(target=work, daemon=True).start()
 
     def extract_selected(self):
@@ -445,8 +449,8 @@ class GTArcExplorer(Tk):
         def work():
             def cb(cur, total, name, action):
                 pct = int(cur * 100 / total) if total else 0
-                self.after(0, lambda: self.progress.configure(value=pct))
-                self.after(0, lambda: self.status_var.set(
+                self.root.after(0, lambda: self.progress.configure(value=pct))
+                self.root.after(0, lambda: self.status_var.set(
                     f"Repacking {cur}/{total} – {action} {name}"
                 ))
             try:
@@ -455,13 +459,13 @@ class GTArcExplorer(Tk):
                     force_uncompressed=force_unc,
                     progress_cb=cb
                 )
-                self.after(0, lambda: self.status_var.set(f"Repacked → {result}"))
-                self.after(0, lambda: self.progress.configure(value=100))
-                self.after(0, lambda: messagebox.showinfo("Done", f"Saved:\n{result}"))
+                self.root.after(0, lambda: self.status_var.set(f"Repacked → {result}"))
+                self.root.after(0, lambda: self.progress.configure(value=100))
+                self.root.after(0, lambda: messagebox.showinfo("Done", f"Saved:\n{result}"))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Repack failed", str(e)))
+                self.root.after(0, lambda: messagebox.showerror("Repack failed", str(e)))
             finally:
-                self.after(0, lambda: self.progress.configure(value=0))
+                self.root.after(0, lambda: self.progress.configure(value=0))
         threading.Thread(target=work, daemon=True).start()
 
     def open_extract_folder(self):
@@ -499,7 +503,7 @@ class GTArcExplorer(Tk):
                 Palette=str(info.get("colors", 0)),
             )
             return photo
-        except Exception as e:
+        except Exception:
             self.asset_viewer.set_image(None)
             return None
 
@@ -573,7 +577,7 @@ class GTArcExplorer(Tk):
         if not self._model_verts:
             return
         self.asset_viewer.canvas.delete("all")
-        self.update_idletasks()
+        self.root.update_idletasks()
         w = max(self.asset_viewer.canvas.winfo_width(), 400)
         h = max(self.asset_viewer.canvas.winfo_height(), 300)
         step = max(1, len(self._model_verts) // 25000)
@@ -589,7 +593,6 @@ class GTArcExplorer(Tk):
             )
         self.asset_viewer.canvas.configure(scrollregion=(0, 0, w, h))
 
-    # viewer callbacks from AssetViewer
     def viewer_texture_selected(self, index: int):
         if 0 <= index < len(self._pack_tims):
             name, tdata = self._pack_tims[index]

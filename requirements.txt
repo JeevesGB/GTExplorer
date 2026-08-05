@@ -1,0 +1,2 @@
+TKinterModernThemes>=1.10
+Pillow>=9.0
