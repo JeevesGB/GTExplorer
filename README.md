@@ -1,4 +1,4 @@
-# GTArcExplorer
+# GTExplorer
 
 Extractor / repacker for **Gran Turismo 1** (PlayStation) archive files, with optional TIM-pack expansion and a built-in asset viewer for textures.
 
@@ -6,6 +6,7 @@ Files are written **exactly as stored** — only GT-ZIP decompression is applied
 
 ![](img/bg.png)
 ![](/img/course.png)
+![](/img/gif.gif)
 
 
 ---
