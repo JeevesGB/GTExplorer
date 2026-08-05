@@ -18,13 +18,18 @@ from .archive import GTArc
 from .tim_pack import parse_tim_pack
 from .audio import parse_sample_bank
 from .tim_image import decode_tim
+from .gtps import parse_gtps_header, extract_vertices, bounds, project_orthographic
+from .filelist import load_bundled, parse_filelist, bundled_lists
+from .ctex import decode_ctex, parse_ctex_header, ctex_palette_count
+from .spec import is_spec_type, parse_spec_table, format_spec_preview, colour_rows
+from .namelist import parse_name_list
 
 # GUI
 
 class GTArcExplorer(Tk):
     def __init__(self):
         super().__init__()
-        self.title("GTArcExplorer – Lossless Gran Turismo ARC Tool")
+        self.title("GTArcExplorer")
         self.geometry("1220x760")
         self.minsize(960, 620)
 
@@ -59,6 +64,17 @@ class GTArcExplorer(Tk):
         ).pack(side=LEFT, padx=4)
 
         ttk.Separator(bar, orient="vertical").pack(side=LEFT, fill=Y, padx=8)
+        ttk.Label(bar, text="Names:").pack(side=LEFT, padx=(4, 2))
+        self.filelist_var = StringVar(value="filelist_pal_retail.txt")
+        lists = bundled_lists() or ["(none)"]
+        self.filelist_combo = ttk.Combobox(
+            bar, textvariable=self.filelist_var, values=lists, width=22, state="readonly"
+        )
+        self.filelist_combo.pack(side=LEFT, padx=2)
+        self.filelist_combo.bind("<<ComboboxSelected>>", self.on_filelist_changed)
+        ttk.Button(bar, text="Load list…", command=self.load_custom_filelist).pack(side=LEFT, padx=2)
+
+        ttk.Separator(bar, orient="vertical").pack(side=LEFT, fill=Y, padx=8)
         self.status_var = StringVar(value="Ready – open a GT-ARC / GT-ZIP file")
         ttk.Label(bar, textvariable=self.status_var).pack(side=LEFT)
 
@@ -69,18 +85,20 @@ class GTArcExplorer(Tk):
         paned.add(left, weight=1)
 
         ttk.Label(left, text="Archive Contents (lossless)", font=("", 10, "bold")).pack(anchor=W)
-        cols = ("idx", "type", "ext", "decomp", "comp")
+        cols = ("idx", "name", "type", "ext", "decomp", "comp")
         self.tree = ttk.Treeview(left, columns=cols, show="headings", selectmode="extended")
         self.tree.heading("idx", text="#")
+        self.tree.heading("name", text="Name")
         self.tree.heading("type", text="Type")
         self.tree.heading("ext", text="Ext")
         self.tree.heading("decomp", text="Size")
         self.tree.heading("comp", text="Compressed")
         self.tree.column("idx", width=40, anchor="center")
-        self.tree.column("type", width=140)
-        self.tree.column("ext", width=60, anchor="center")
-        self.tree.column("decomp", width=80, anchor="e")
-        self.tree.column("comp", width=80, anchor="e")
+        self.tree.column("name", width=140)
+        self.tree.column("type", width=120)
+        self.tree.column("ext", width=55, anchor="center")
+        self.tree.column("decomp", width=75, anchor="e")
+        self.tree.column("comp", width=75, anchor="e")
         self.tree.pack(fill=BOTH, expand=True, side=LEFT)
         sb = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
         sb.pack(side=RIGHT, fill=Y)
@@ -110,12 +128,22 @@ class GTArcExplorer(Tk):
         nb.add(viewer, text="Asset Viewer")
         vtop = ttk.Frame(viewer)
         vtop.pack(side=TOP, fill=X, padx=6, pady=4)
-        self.viewer_info = ttk.Label(vtop, text="Select a TIM / TIM Pack to preview")
+        self.viewer_info = ttk.Label(vtop, text="Select a TIM, TIM Pack, or GT-PS model")
         self.viewer_info.pack(side=LEFT)
         ttk.Button(vtop, text="Zoom +", command=lambda: self.viewer_zoom(1.25)).pack(side=RIGHT, padx=2)
         ttk.Button(vtop, text="Zoom -", command=lambda: self.viewer_zoom(0.8)).pack(side=RIGHT, padx=2)
         ttk.Button(vtop, text="Fit", command=self.viewer_fit).pack(side=RIGHT, padx=2)
         ttk.Button(vtop, text="1:1", command=self.viewer_1to1).pack(side=RIGHT, padx=2)
+        ttk.Separator(vtop, orient="vertical").pack(side=RIGHT, fill=Y, padx=4)
+        ttk.Button(vtop, text="Yaw +", command=lambda: self.model_rotate(15, 0)).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="Yaw -", command=lambda: self.model_rotate(-15, 0)).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="Pitch +", command=lambda: self.model_rotate(0, 10)).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="Pitch -", command=lambda: self.model_rotate(0, -10)).pack(side=RIGHT, padx=2)
+        ttk.Separator(vtop, orient="vertical").pack(side=RIGHT, fill=Y, padx=4)
+        ttk.Button(vtop, text="CLUT +", command=lambda: self.ctex_shift_clut(1)).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="CLUT -", command=lambda: self.ctex_shift_clut(-1)).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="Pal +", command=lambda: self.ctex_shift_pal(1)).pack(side=RIGHT, padx=2)
+        ttk.Button(vtop, text="Pal -", command=lambda: self.ctex_shift_pal(-1)).pack(side=RIGHT, padx=2)
 
         vbody = ttk.Panedwindow(viewer, orient="horizontal")
         vbody.pack(fill=BOTH, expand=True, padx=4, pady=4)
@@ -144,10 +172,17 @@ class GTArcExplorer(Tk):
         vsb.pack(side=RIGHT, fill=Y)
         self.viewer_canvas.configure(xscrollcommand=hsb.set, yscrollcommand=vsb.set)
 
-        self._viewer_image = None       
-        self._viewer_photo = None       
+        self._viewer_image = None
+        self._viewer_photo = None
         self._viewer_scale = 1.0
-        self._pack_tims = []            # list of (name, bytes) for current pack
+        self._pack_tims = []
+        self._model_verts = []
+        self._model_yaw = 45.0
+        self._model_pitch = 35.0
+        self._ctex_data = None
+        self._ctex_pal = 0
+        self._ctex_clut = 0
+        self._viewer_mode = None
 
         self.progress = ttk.Progressbar(self, mode="determinate")
         self.progress.pack(side=BOTTOM, fill=X, padx=6, pady=4)
@@ -159,6 +194,65 @@ class GTArcExplorer(Tk):
                 style.theme_use(t)
                 break
 
+
+    def on_filelist_changed(self, _event=None):
+        self._custom_filelist_path = None
+        if self.arc.files:
+            self._apply_filelist()
+            self.populate_tree()
+            named = sum(1 for f in self.arc.files if f.get("real_name"))
+            self.status_var.set(
+                f"Names: {self.filelist_var.get()}  •  {named}/{len(self.arc.files)} named"
+            )
+
+    def _apply_filelist(self):
+        """Load selected / custom filelist onto the current archive."""
+        if not self.arc.files:
+            return
+        name = self.filelist_var.get()
+        try:
+            custom = getattr(self, "_custom_filelist_path", None)
+            if custom:
+                self.arc.name_map = parse_filelist(custom)
+            elif name and name != "(none)":
+                self.arc.name_map = load_bundled(name)
+            else:
+                self.arc.name_map = None
+        except Exception as e:
+            messagebox.showwarning("File list", f"Could not load names:\n{e}")
+            self.arc.name_map = None
+        from .filelist import lookup
+        from pathlib import Path as _P
+        for f in self.arc.files:
+            real = lookup(self.arc.name_map, self.arc.stem, f["index"])
+            if real:
+                f["label"] = _P(real).stem
+                if _P(real).suffix:
+                    f["ext"] = _P(real).suffix
+                f["real_name"] = real
+            else:
+                if f.get("data") is not None:
+                    # keep type-based label if already decoded without a list name
+                    f["label"] = f.get("label") or f"{f['index']:03d}"
+                else:
+                    f["label"] = f"{f['index']:03d}"
+                f["real_name"] = None
+
+    def load_custom_filelist(self):
+        path = filedialog.askopenfilename(
+            title="Open GT1 file list",
+            filetypes=[("Text", "*.txt"), ("All", "*.*")],
+        )
+        if not path:
+            return
+        self._custom_filelist_path = path
+        self.filelist_var.set(Path(path).name)
+        if self.arc.files:
+            self._apply_filelist()
+            self.populate_tree()
+            named = sum(1 for f in self.arc.files if f.get("real_name"))
+            self.status_var.set(f"Applied names from {Path(path).name}  •  {named} named")
+
     def open_archive(self):
         path = filedialog.askopenfilename(
             title="Open GT archive",
@@ -168,9 +262,16 @@ class GTArcExplorer(Tk):
             return
         try:
             self.arc.load(path)
+            self._apply_filelist()
+            # If external list left most entries unnamed, try embedded list
+            named = sum(1 for f in self.arc.files if f.get("real_name"))
+            if named == 0:
+                if self.arc.try_embedded_names():
+                    named = sum(1 for f in self.arc.files if f.get("real_name"))
             self.populate_tree()
             self.status_var.set(
-                f"Loaded {Path(path).name}  •  {len(self.arc.files)} file(s)  •  {self.arc.kind}"
+                f"Loaded {Path(path).name}  •  {len(self.arc.files)} file(s)  •  "
+                f"{self.arc.kind}  •  {named} named"
             )
             self.preview_text.delete("1.0", END)
             self.preview_info.config(text="Select a file to preview")
@@ -181,14 +282,15 @@ class GTArcExplorer(Tk):
         self.tree.delete(*self.tree.get_children())
         for f in self.arc.files:
             self.tree.insert("", END, iid=str(f["index"]),
-                             values=(f["index"], "…", "", f["decomp_size"] or "?", f["comp_size"]))
+                             values=(f["index"], "…", "…", "", f["decomp_size"] or "?", f["comp_size"]))
 
         def detect():
             for i, f in enumerate(self.arc.files):
                 try:
                     self.arc.get_data(i)
+                    name = f.get("real_name") or f.get("label") or f"{i:03d}"
                     self.tree.item(str(i), values=(
-                        f["index"], f["type"], f["ext"],
+                        f["index"], name, f["type"], f["ext"],
                         len(f["data"]) if f["data"] else f["decomp_size"],
                         f["comp_size"]
                     ))
@@ -223,9 +325,63 @@ class GTArcExplorer(Tk):
                     self.preview_text.insert(END, f"{name:<20} {len(tim):>10,}\n")
                 self.show_pack_in_viewer(data)
             elif f["type"] == "TIM Texture":
+                self._viewer_mode = "tim"
                 self.tim_list.delete(*self.tim_list.get_children())
                 self._pack_tims = []
+                self._model_verts = []
+                self._ctex_data = None
                 self.show_in_viewer(data, f["label"] + f["ext"])
+            elif f["type"] == "GT-CTEX Texture":
+                try:
+                    hdr = parse_ctex_header(data)
+                    self.preview_text.insert(
+                        END,
+                        f"GT-CTEX  name={hdr['name']!r}  "
+                        f"palettes={hdr['palette_count']}  "
+                        f"{hdr['width']}x{hdr['height']} 4bpp\n\n"
+                        "Open Asset Viewer. Use Pal ± / CLUT ± to switch colours.\n"
+                    )
+                except Exception as e:
+                    self.preview_text.insert(END, f"CTEX header: {e}\n")
+                self.show_ctex_in_viewer(data, f["label"] + f["ext"])
+            elif is_spec_type(f["type"]):
+                try:
+                    parsed = parse_spec_table(data)
+                    self.preview_text.insert(END, format_spec_preview(parsed))
+                except Exception as e:
+                    self.preview_text.insert(END, f"Spec parse error: {e}\n")
+                    chunk = data[:256]
+                    for i in range(0, len(chunk), 16):
+                        line = chunk[i:i+16]
+                        hx = " ".join(f"{b:02x}" for b in line)
+                        self.preview_text.insert(END, f"{i:04x}  {hx}\n")
+            elif f["type"] in ("Filename List", "Text / Messages"):
+                names = parse_name_list(data)
+                if names:
+                    self.preview_text.insert(END, f"Filename list – {len(names)} entries\n\n")
+                    for nm in names[:100]:
+                        self.preview_text.insert(END, nm + "\n")
+                    if len(names) > 100:
+                        self.preview_text.insert(END, f"... ({len(names)-100} more)\n")
+                else:
+                    try:
+                        self.preview_text.insert(END, data[:4000].decode("utf-8", errors="replace"))
+                    except Exception:
+                        self.preview_text.insert(END, repr(data[:200]))
+            elif f["type"] == "GT-PS Model":
+                self.preview_text.insert(END, "GT-PS course / track model\n\n")
+                try:
+                    hdr = parse_gtps_header(data)
+                    self.preview_text.insert(END, f"Size        : {hdr['size']:,} bytes\n")
+                    self.preview_text.insert(END, f"Field 0x1C  : {hdr['field_1c']}\n\n")
+                except Exception as e:
+                    self.preview_text.insert(END, f"Header: {e}\n\n")
+                self.preview_text.insert(
+                    END,
+                    "Open Asset Viewer for a 3D point-cloud preview.\n"
+                    "Use Yaw / Pitch buttons to rotate.\n"
+                )
+                self.show_model_in_viewer(data, f["label"] + f["ext"])
             elif f["type"] in ("Sound Instrument", "Engine Sound"):
                 _, samples = parse_sample_bank(data)
                 self.preview_text.insert(END, f"{f['type']} – {len(samples)} ADPCM samples\n\n")
@@ -401,6 +557,8 @@ class GTArcExplorer(Tk):
 
     def show_pack_in_viewer(self, data: bytes):
         """Populate TIM list from a pack and show the first texture."""
+        self._viewer_mode = "pack"
+        self._model_verts = []
         self.tim_list.delete(*self.tim_list.get_children())
         self._pack_tims = parse_tim_pack(data)
         for i, (name, tdata) in enumerate(self._pack_tims):
@@ -455,6 +613,102 @@ class GTArcExplorer(Tk):
         sy = ch / self._viewer_image.height
         self._viewer_scale = max(0.1, min(sx, sy) * 0.95)
         self._render_viewer()
+
+
+
+    def show_ctex_in_viewer(self, data: bytes, label: str = ""):
+        self._viewer_mode = "ctex"
+        self._ctex_data = data
+        self._ctex_pal = 0
+        self._ctex_clut = 0
+        self._pack_tims = []
+        self._model_verts = []
+        self.tim_list.delete(*self.tim_list.get_children())
+        self._render_ctex(label)
+
+    def ctex_shift_pal(self, delta: int):
+        if self._viewer_mode != "ctex" or not self._ctex_data:
+            return
+        n = ctex_palette_count(self._ctex_data)
+        self._ctex_pal = (self._ctex_pal + delta) % n
+        self._render_ctex()
+
+    def ctex_shift_clut(self, delta: int):
+        if self._viewer_mode != "ctex" or not self._ctex_data:
+            return
+        self._ctex_clut = (self._ctex_clut + delta) % 16
+        self._render_ctex()
+
+    def _render_ctex(self, label: str = ""):
+        if not HAS_PIL or not self._ctex_data:
+            self.viewer_info.config(text="Pillow required for CTEX preview")
+            return
+        try:
+            img, info = decode_ctex(
+                self._ctex_data,
+                palette_index=self._ctex_pal,
+                clut_index=self._ctex_clut,
+            )
+            self._viewer_image = img
+            self._viewer_scale = 1.0
+            self.viewer_info.config(
+                text=f"{label or info.get('name','ctex')}  •  "
+                     f"{info['width']}x{info['height']}  •  "
+                     f"pal {info['palette_index']+1}/{info['palette_count']}  •  "
+                     f"CLUT {info['clut_index']}"
+            )
+            self._render_viewer()
+        except Exception as e:
+            self.viewer_info.config(text=f"CTEX decode failed: {e}")
+            self.viewer_canvas.delete("all")
+
+    def show_model_in_viewer(self, data: bytes, label: str = ""):
+        self._viewer_mode = "model"
+        self._pack_tims = []
+        self.tim_list.delete(*self.tim_list.get_children())
+        self._model_verts = extract_vertices(data)
+        if not self._model_verts:
+            self.viewer_info.config(text=f"{label} – no vertices extracted")
+            self.viewer_canvas.delete("all")
+            return
+        xmin, xmax, ymin, ymax, zmin, zmax = bounds(self._model_verts)
+        self.viewer_info.config(
+            text=f"{label}  •  {len(self._model_verts):,} verts  •  "
+                 f"X[{xmin:.0f},{xmax:.0f}] Y[{ymin:.0f},{ymax:.0f}] Z[{zmin:.0f},{zmax:.0f}]  •  "
+                 f"yaw={self._model_yaw:.0f} pitch={self._model_pitch:.0f}"
+        )
+        self._render_model()
+
+    def model_rotate(self, dyaw: float, dpitch: float):
+        if self._viewer_mode != "model" or not self._model_verts:
+            return
+        self._model_yaw = (self._model_yaw + dyaw) % 360
+        self._model_pitch = max(-89.0, min(89.0, self._model_pitch + dpitch))
+        self._render_model()
+
+    def _render_model(self):
+        if not self._model_verts:
+            return
+        self.viewer_canvas.delete("all")
+        self.update_idletasks()
+        w = max(self.viewer_canvas.winfo_width(), 400)
+        h = max(self.viewer_canvas.winfo_height(), 300)
+        step = max(1, len(self._model_verts) // 25000)
+        verts = self._model_verts[::step]
+        pts = project_orthographic(
+            verts, w, h,
+            yaw_deg=self._model_yaw,
+            pitch_deg=self._model_pitch,
+        )
+        for x, y in pts:
+            self.viewer_canvas.create_rectangle(
+                x, y, x + 1, y + 1, outline="#7ec8e3", fill="#7ec8e3"
+            )
+        self.viewer_canvas.configure(scrollregion=(0, 0, w, h))
+        self.viewer_info.config(
+            text=self.viewer_info.cget("text").split("  •  yaw=")[0]
+            + f"  •  yaw={self._model_yaw:.0f} pitch={self._model_pitch:.0f}"
+        )
 
     def populate_struct_tree(self, root: Path):
         self.struct_tree.delete(*self.struct_tree.get_children())

@@ -1,33 +1,66 @@
 """File-type sniffing for entries pulled out of a GT-ARC container."""
 import struct
+
+# (magic_bytes, type_name, extension)
+# Order matters: longer / more specific magics first where needed.
+_PREFIX_MAGICS = [
+    # Core GT containers / models
+    (b"@(#)GT-ARC", "Nested GT-ARC", ".arc"),
+    (b"@(#)GT-PS", "GT-PS Model", ".ps"),
+    (b"@(#)GT-CAR", "GT-CAR Model", ".car"),
+    (b"@(#)GT-CTEX", "GT-CTEX Texture", ".tex"),
+    (b"@(#)GT-SKY", "GT-SKY Skybox", ".sky"),
+    (b"@(#)GT-ZIP", "GT-ZIP", ".gtzip"),
+    (b"@(#)USEDCAR", "Used Car Data", ".usedcar"),
+    (b"@(#)GTHTML", "GT HTML", ".gthtml"),
+    # Car / tuning part tables (CARINF-style)
+    (b"@(#)ADJUST", "Align Adjustment", ".adjust"),
+    (b"@(#)BALANCE", "Balance Weight", ".balance"),
+    (b"@(#)BRAKE", "Brake", ".brake"),
+    (b"@(#)BRKCTRL", "Brake Controller", ".brkctrl"),
+    (b"@(#)CLUTCH", "Clutch", ".clutch"),
+    (b"@(#)COLOR", "Car Color", ".color"),
+    (b"@(#)COMPRES", "Computer / ECU", ".compres"),
+    (b"@(#)COMPUTE", "Computer", ".compute"),
+    (b"@(#)DISPLAC", "Displacement", ".displac"),
+    (b"@(#)EQUIP", "Equipment", ".equip"),
+    (b"@(#)FLYWHEL", "Flywheel", ".flywhel"),
+    (b"@(#)GEAR", "Gearbox", ".gear"),
+    (b"@(#)INCOOL", "Intercooler", ".incool"),
+    (b"@(#)LWEIGHT", "Lightweight", ".lweight"),
+    (b"@(#)MUFFLER", "Muffler", ".muffler"),
+    (b"@(#)NATUNE", "NA Tune", ".natune"),
+    (b"@(#)POLISH", "Port Polish", ".polish"),
+    (b"@(#)PRPSHFT", "Prop Shaft", ".prpshft"),
+    (b"@(#)RACING", "Racing Modify", ".racing"),
+    (b"@(#)SPEC", "Car Spec", ".spec"),
+    (b"@(#)STABILZ", "Stabilizer", ".stabilz"),
+    (b"@(#)SUSPENS", "Suspension", ".suspens"),
+    (b"@(#)TIRECMP", "Tire Compound", ".tirecmp"),
+    (b"@(#)TIRESIZ", "Tire Size", ".tiresiz"),
+    (b"@(#)TIRE", "Tire", ".tire"),
+    (b"@(#)TURBINE", "Turbo / Turbine", ".turbine"),
+    # Sound / sequence (4-byte)
+    (b"INST", "Sound Instrument", ".ins"),
+    (b"ENGN", "Engine Sound", ".es"),
+    (b"SEQG", "Sequence", ".seq"),
+]
+
+
 def detect_type(data: bytes) -> tuple:
     """Return (type_name, extension). Data is never altered."""
     if not data:
         return ("Empty", ".bin")
 
-    if data.startswith(b"@(#)GT-PS"):
-        return ("GT-PS Model", ".gtps")
-    if data.startswith(b"@(#)GT-CAR"):
-        return ("GT-CAR Model", ".gtcar")
-    if data.startswith(b"@(#)GT-CTEX"):
-        return ("GT-CTEX Texture", ".ctex")
-    if data.startswith(b"@(#)GT-SKY"):
-        return ("GT-SKY Skybox", ".gtsky")
-    if data.startswith(b"@(#)GT-ZIP"):
-        return ("GT-ZIP", ".gtzip")
-    if data.startswith(b"@(#)GT-ARC"):
-        return ("Nested GT-ARC", ".arc")
-    if data.startswith(b"@(#)USEDCAR"):
-        return ("Used Car Data", ".usedcar")
+    for magic, name, ext in _PREFIX_MAGICS:
+        if data.startswith(magic):
+            return (name, ext)
 
-    if data.startswith(b"INST"):
-        return ("Sound Instrument", ".inst")
-    if data.startswith(b"ENGN"):
-        return ("Engine Sound", ".engn")
-
+    # PlayStation TIM (little-endian 0x00000010)
     if len(data) >= 8 and data[0] == 0x10 and data[1] == 0x00 and data[2] == 0x00 and data[3] == 0x00:
         return ("TIM Texture", ".tim")
 
+    # TIM pack: u32 count + 16-byte name containing ".tim"
     if len(data) >= 24:
         count = struct.unpack_from("<I", data, 0)[0]
         if 1 <= count <= 512:
@@ -35,10 +68,10 @@ def detect_type(data: bytes) -> tuple:
             if b".tim" in name.lower():
                 return ("TIM Pack", ".tpk")
 
+    # Mostly ASCII text
     sample = data[:64]
     printable = sum(1 for b in sample if (32 <= b < 127) or b in (0, 9, 10, 13))
     if len(sample) >= 16 and printable >= len(sample) * 0.85:
-        # avoid mis-detecting binary that happens to have some ASCII
         if b".tim" not in sample and b"@(#)" not in sample:
             return ("Text / Messages", ".txt")
 
@@ -46,4 +79,3 @@ def detect_type(data: bytes) -> tuple:
         return ("Filename List", ".lst")
 
     return ("Unknown", ".bin")
-

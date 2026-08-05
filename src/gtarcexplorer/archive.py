@@ -6,6 +6,8 @@ from .gtzip import gtzip_decompress, gtzip_compress
 from .tim_pack import parse_tim_pack, build_tim_pack
 from .audio import expand_sample_bank
 from .detect import detect_type
+from .filelist import lookup, safe_filename, archive_stem
+from .namelist import parse_name_list
 
 # Archive
 class GTArc:
@@ -15,9 +17,12 @@ class GTArc:
         self.content_type = 0x8001
         self.files = []
         self.raw = b""
+        self.name_map = None  # optional filelist NameMap
+        self.stem = ""
 
     def load(self, path: str):
         self.path = path
+        self.stem = archive_stem(path)
         self.raw = Path(path).read_bytes()
         self.files = []
 
@@ -50,6 +55,36 @@ class GTArc:
             "type": "Raw GT-ZIP", "ext": ".bin", "label": "000"
         })
 
+
+    def try_embedded_names(self):
+        """If an entry is a filename list whose length matches nfiles, use it as name_map."""
+        if self.kind != "gtarc" or not self.files:
+            return False
+        n = len(self.files)
+        for i in range(n):
+            try:
+                data = self.get_data(i)
+            except Exception:
+                continue
+            names = parse_name_list(data)
+            if len(names) == n:
+                # Build a temporary map for this stem
+                mapping = {}
+                for idx, name in enumerate(names):
+                    mapping[(self.stem, idx)] = name.lstrip("_")
+                self.name_map = mapping
+                # Refresh labels
+                for f in self.files:
+                    real = names[f["index"]].lstrip("_") if f["index"] < len(names) else None
+                    if real:
+                        from pathlib import Path as _P
+                        f["label"] = _P(real).stem
+                        if _P(real).suffix:
+                            f["ext"] = _P(real).suffix
+                        f["real_name"] = real
+                return True
+        return False
+
     def get_data(self, idx: int) -> bytes:
         f = self.files[idx]
         if f["data"] is not None:
@@ -72,7 +107,18 @@ class GTArc:
         tname, ext = detect_type(f["data"])
         f["type"] = tname
         f["ext"] = ext
-        f["label"] = f"{f['index']:03d}"
+        real = lookup(self.name_map, self.stem, f["index"])
+        if real:
+            # Prefer list basename; keep list extension if present
+            stem_part = Path(real).stem
+            list_ext = Path(real).suffix
+            f["label"] = stem_part
+            if list_ext:
+                f["ext"] = list_ext
+            f["real_name"] = real
+        else:
+            f["label"] = f"{f['index']:03d}"
+            f["real_name"] = None
         return f["data"]
 
     def extract_all(self, out_dir: str, indices=None, expand_tim_packs=False,
@@ -92,8 +138,16 @@ class GTArc:
         for n, i in enumerate(indices):
             data = self.get_data(i)
             f = self.files[i]
-            name = f"{f['label']}{f['ext']}"
-            (out / name).write_bytes(data)          # always write original bytes
+            if f.get("real_name"):
+                name = safe_filename(f["real_name"])
+            else:
+                name = f"{f['label']}{f['ext']}"
+            # Avoid collisions
+            dest = out / name
+            if dest.exists():
+                dest = out / f"{f['index']:03d}_{name}"
+                name = dest.name
+            dest.write_bytes(data)
             manifest.append(name)
 
             extra = ""
