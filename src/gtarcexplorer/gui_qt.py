@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QAction, QFont, QPixmap, QImage
+from PyQt6.QtGui import QAction, QFont, QPixmap, QImage, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTreeWidget, QTreeWidgetItem, QTabWidget,
@@ -41,6 +41,12 @@ class GTArcExplorer(QMainWindow):
         self.setWindowTitle("GTExplorer")
         self.resize(1500, 920)
         self.setMinimumSize(1080, 720)
+
+        icon_path = Path(__file__).resolve().parent.parent / "thm" / "icon.ico"
+        if not icon_path.exists():
+            icon_path = Path(__file__).resolve().parent / "thm" / "icon.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
 
         self.arc = GTArc()
         self.extract_dir: Path | None = None
@@ -84,7 +90,6 @@ class GTArcExplorer(QMainWindow):
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(4)
 
-        # Toolbar
         toolbar = QToolBar("Main")
         toolbar.setIconSize(QSize(18, 18))
         toolbar.setMovable(False)
@@ -120,11 +125,9 @@ class GTArcExplorer(QMainWindow):
         self.act_load_list = QAction("Load list…", self)
         toolbar.addAction(self.act_load_list)
 
-        # Main splitter
         splitter = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(splitter, stretch=1)
 
-        # Left – tree
         left = QWidget()
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 0, 0)
@@ -148,11 +151,9 @@ class GTArcExplorer(QMainWindow):
         left_lay.addWidget(self.tree)
         splitter.addWidget(left)
 
-        # Right – tabs
         self.tabs = QTabWidget()
         splitter.addWidget(self.tabs)
 
-        # Preview tab
         prev_page = QWidget()
         prev_lay = QVBoxLayout(prev_page)
         self.preview_info = QLabel("Select a file to preview")
@@ -165,7 +166,6 @@ class GTArcExplorer(QMainWindow):
         prev_lay.addWidget(self.preview_text)
         self.tabs.addTab(prev_page, "Preview")
 
-        # Structure tab
         struct_page = QWidget()
         struct_lay = QVBoxLayout(struct_page)
         struct_lay.addWidget(QLabel("Files after extraction"))
@@ -174,7 +174,6 @@ class GTArcExplorer(QMainWindow):
         struct_lay.addWidget(self.struct_tree)
         self.tabs.addTab(struct_page, "Extracted Structure")
 
-        # Asset Viewer tab
         viewer_page = QWidget()
         viewer_lay = QVBoxLayout(viewer_page)
 
@@ -222,7 +221,6 @@ class GTArcExplorer(QMainWindow):
 
         splitter.setSizes([480, 1000])
 
-        # Status bar
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status_label = QLabel("Ready – open a GT-ARC / GT-ZIP file")
@@ -252,7 +250,6 @@ class GTArcExplorer(QMainWindow):
         self.btn_pal_plus.clicked.connect(lambda: self.ctex_shift_clut(1))
         self.btn_pal_minus.clicked.connect(lambda: self.ctex_shift_clut(-1))
 
-    # Helpers
     def set_status(self, text: str):
         self.status_label.setText(text)
 
@@ -260,9 +257,6 @@ class GTArcExplorer(QMainWindow):
         self.progress.setMaximum(maximum)
         self.progress.setValue(value)
 
-    # ------------------------------------------------------------------
-    # File list
-    # ------------------------------------------------------------------
     def on_filelist_changed(self, _name=None):
         self._custom_filelist_path = None
         if self.arc.files:
@@ -315,7 +309,6 @@ class GTArcExplorer(QMainWindow):
             named = sum(1 for f in self.arc.files if f.get("real_name"))
             self.set_status(f"Applied names from {Path(path).name}  •  {named} named")
 
-    # Open archive
     def open_archive(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open GT archive",
@@ -381,7 +374,6 @@ class GTArcExplorer(QMainWindow):
         self.preview_text.clear()
         self.preview_info.setText("Select a file to preview")
 
-    # Tree
     def populate_tree(self):
         self.tree.clear()
         for f in self.arc.files:
@@ -406,7 +398,6 @@ class GTArcExplorer(QMainWindow):
             except ValueError:
                 pass
 
-    # Preview
     def show_preview(self, idx: int):
         try:
             data = self.arc.get_data(idx)
@@ -502,7 +493,6 @@ class GTArcExplorer(QMainWindow):
             asc = "".join(chr(b) if 32 <= b < 127 else "." for b in line)
             self.preview_text.append(f"{i:04x}  {hx:<48}  {asc}")
 
-    # Extract / Repack
     def extract_all(self):
         if not self.arc.files:
             QMessageBox.warning(self, "No archive", "Open a file first")
@@ -527,7 +517,6 @@ class GTArcExplorer(QMainWindow):
             except Exception as e:
                 self.finished_signal.emit(False, str(e))
 
-        # Temporarily reconnect finished signal for extract
         try:
             self.finished_signal.disconnect()
         except TypeError:
@@ -536,7 +525,6 @@ class GTArcExplorer(QMainWindow):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_extract_finished(self, success: bool, data):
-        # Restore the original load handler
         try:
             self.finished_signal.disconnect()
         except TypeError:
