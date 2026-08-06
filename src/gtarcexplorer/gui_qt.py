@@ -71,9 +71,9 @@ class GTArcExplorer(QMainWindow):
             self.setStyleSheet(qss.read_text(encoding="utf-8"))
         else:
             self.setStyleSheet("""
-                QMainWindow, QWidget { background-color: #313131; color: #85abaf; }
+                QMainWindow, QWidget { background-color: #252526 ; color: #FFFFFA; }
                 QTreeWidget { background-color: #252526; color: #e0e0e0; }
-                QPushButton { background-color: #4582ec; color: white; padding: 6px 12px; border-radius: 4px; }
+                QPushButton { background-color: #FF312E; color: white; padding: 6px 12px; border-radius: 4px; }
             """)
 
     # UI
