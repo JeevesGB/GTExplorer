@@ -26,6 +26,7 @@ Lossless by default: entries are written **exactly as stored** after GT-ZIP deco
 
 - Python 3.8+
 - [Pillow](https://python-pillow.org/) (Asset Viewer)
+- PyQt6 6.4
 
 ```bash
 pip install -r requirements.txt
