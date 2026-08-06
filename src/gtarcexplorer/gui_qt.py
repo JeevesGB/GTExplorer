@@ -6,13 +6,13 @@ import threading
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QAction, QFont, QPixmap, QImage, QIcon
+from PyQt6.QtGui import QAction, QFont, QPixmap, QImage, QIcon, QColor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTreeWidget, QTreeWidgetItem, QTabWidget,
     QTextEdit, QLabel, QToolBar, QStatusBar, QProgressBar,
     QFileDialog, QMessageBox, QCheckBox, QComboBox,
-    QScrollArea, QHeaderView, QAbstractItemView, QPushButton, QInputDialog
+    QScrollArea, QHeaderView, QAbstractItemView, QPushButton, QInputDialog, QColorDialog
 )
 
 from .archive import GTArc
@@ -39,8 +39,8 @@ class GTArcExplorer(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GTExplorer")
-        self.resize(1500, 920)
-        self.setMinimumSize(1080, 720)
+        self.resize(1800, 920)
+        self.setMinimumSize(1790, 720)
 
         icon_path = Path(__file__).resolve().parent.parent / "thm" / "icon.ico"
         if not icon_path.exists():
@@ -100,9 +100,12 @@ class GTArcExplorer(QMainWindow):
         self.act_extract_sel = QAction("Extract Selected", self)
         self.act_repack = QAction("Repack", self)
         self.act_folder = QAction("Open Extract Folder", self)
+        self.act_diff_folder = QAction("Diff vs folder…", self)
+        self.act_diff_dat = QAction("Diff vs another .DAT…", self)
 
         for act in (self.act_open, self.act_extract, self.act_extract_sel,
-                    self.act_repack, self.act_folder):
+                    self.act_repack, self.act_folder,
+                    self.act_diff_folder, self.act_diff_dat):
             toolbar.addAction(act)
 
         toolbar.addSeparator()
@@ -131,7 +134,7 @@ class GTArcExplorer(QMainWindow):
         left = QWidget()
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 0, 0)
-        left_lay.addWidget(QLabel("<b>Archive Contents (lossless)</b>"))
+        left_lay.addWidget(QLabel("<b>Archive Contents</b>"))
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["#", "Name", "Type", "Ext", "Size", "Compressed"])
@@ -231,6 +234,157 @@ class GTArcExplorer(QMainWindow):
         self.progress.setTextVisible(True)
         self.status.addPermanentWidget(self.progress)
 
+    def diff_vs_folder(self):
+        """Compare opened archive ↔ extract folder on disk."""
+        if not self.arc.files:
+            QMessageBox.warning(self, "No archive", "Open an archive first")
+            return
+
+        folder = self.extract_dir
+        if not folder or not Path(folder).is_dir():
+            folder = QFileDialog.getExistingDirectory(self, "Select extract folder to compare")
+            if not folder:
+                return
+            folder = Path(folder)
+
+        rows = []
+        for f in self.arc.files:
+            idx = f["index"]
+            name = Path(f["real_name"]).name if f.get("real_name") else f"{f['label']}{f['ext']}"
+
+            disk_path = folder / name
+            if not disk_path.exists():
+                alt = folder / f"{idx:03d}_{name}"
+                if alt.exists():
+                    disk_path = alt
+
+            left_size = len(f["data"]) if f.get("data") is not None else (f.get("decomp_size") or 0)
+
+            if disk_path.exists():
+                right_size = disk_path.stat().st_size
+                delta = right_size - left_size
+                status = "same" if delta == 0 else ("larger" if delta > 0 else "smaller")
+            else:
+                right_size = None
+                delta = None
+                status = "missing"
+
+            rows.append((idx, name, left_size, right_size, delta, status))
+
+        self._show_diff_dialog(rows, f"Archive  ↔  {folder}")
+
+    def diff_vs_dat(self):
+        """Compare opened archive ↔ another .DAT by index."""
+        if not self.arc.files:
+            QMessageBox.warning(self, "No archive", "Open the first archive first")
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open second .DAT to compare",
+            filter="DAT / ARC (*.dat *.DAT *.arc *.ARC);;All (*.*)"
+        )
+        if not path:
+            return
+
+        other = GTArc()
+        try:
+            other.load(path)
+            other.name_map = self.arc.name_map
+            for i in range(len(other.files)):
+                try:
+                    other.get_data(i)
+                except Exception:
+                    pass
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not load second archive:\n{e}")
+            return
+
+        rows = []
+        n = max(len(self.arc.files), len(other.files))
+
+        for i in range(n):
+            left  = self.arc.files[i] if i < len(self.arc.files) else None
+            right = other.files[i]    if i < len(other.files)    else None
+
+            if left and right:
+                name = (Path(left["real_name"]).name if left.get("real_name")
+                        else f"{left['label']}{left['ext']}")
+                left_size  = len(left["data"])  if left.get("data")  is not None else (left.get("decomp_size") or 0)
+                right_size = len(right["data"]) if right.get("data") is not None else (right.get("decomp_size") or 0)
+                delta = right_size - left_size
+                status = "same" if delta == 0 else ("larger" if delta > 0 else "smaller")
+            elif left and not right:
+                name = f"{left['label']}{left['ext']}"
+                left_size = len(left["data"]) if left.get("data") is not None else (left.get("decomp_size") or 0)
+                right_size = None
+                delta = None
+                status = "only in A"
+            else:
+                name = f"{right['label']}{right['ext']}"
+                left_size = None
+                right_size = len(right["data"]) if right.get("data") is not None else (right.get("decomp_size") or 0)
+                delta = None
+                status = "only in B"
+
+            rows.append((i, name, left_size, right_size, delta, status))
+
+        self._show_diff_dialog(
+            rows,
+            f"{Path(self.arc.path).name}  ↔  {Path(path).name}"
+        )
+
+    def _show_diff_dialog(self, rows, title: str):
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem,
+            QDialogButtonBox, QLabel
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Size diff")
+        dlg.resize(820, 540)
+        layout = QVBoxLayout(dlg)
+
+        layout.addWidget(QLabel(title))
+
+        table = QTableWidget(len(rows), 6)
+        table.setHorizontalHeaderLabels(["#", "Name", "Left", "Right", "Δ", "Status"])
+        table.setAlternatingRowColors(True)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
+        changed = 0
+        for r, (idx, name, left, right, delta, status) in enumerate(rows):
+            table.setItem(r, 0, QTableWidgetItem(str(idx)))
+            table.setItem(r, 1, QTableWidgetItem(name))
+            table.setItem(r, 2, QTableWidgetItem(f"{left:,}"  if left  is not None else "—"))
+            table.setItem(r, 3, QTableWidgetItem(f"{right:,}" if right is not None else "—"))
+            table.setItem(r, 4, QTableWidgetItem(f"{delta:+,}" if delta is not None else "—"))
+            table.setItem(r, 5, QTableWidgetItem(status))
+
+            color = {
+                "same":      "#7dcea0",
+                "larger":    "#f5b041",
+                "smaller":   "#5dade2",
+                "missing":   "#e74c3c",
+                "only in A": "#e74c3c",
+                "only in B": "#e74c3c",
+            }.get(status, "#cccccc")
+            table.item(r, 5).setForeground(QColor(color))
+            if status != "same":
+                changed += 1
+
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+
+        layout.addWidget(QLabel(f"{changed} difference(s)  •  {len(rows)} entries"))
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        dlg.exec()
+
     def _connect_signals(self):
         self.act_open.triggered.connect(self.open_archive)
         self.act_extract.triggered.connect(self.extract_all)
@@ -238,6 +392,8 @@ class GTArcExplorer(QMainWindow):
         self.act_repack.triggered.connect(self.repack)
         self.act_folder.triggered.connect(self.open_extract_folder)
         self.act_load_list.triggered.connect(self.load_custom_filelist)
+        self.act_diff_folder.triggered.connect(self.diff_vs_folder)
+        self.act_diff_dat.triggered.connect(self.diff_vs_dat)
 
         self.filelist_combo.currentTextChanged.connect(self.on_filelist_changed)
         self.tree.itemSelectionChanged.connect(self.on_select)
@@ -571,8 +727,17 @@ class GTArcExplorer(QMainWindow):
         if not ok: 
             return
         folder = self.extract_dir
-        if not folder or not (Path(folder) / "manifest.txt").exists():
-            folder = QFileDialog.getExistingDirectory(self, "Select folder with manifest.txt")
+        if not folder or not Path(folder).is_dir():
+            folder = QFileDialog.getExistingDirectory(self, "Select folder to pack")
+            if not folder:
+                return
+            self.extract_dir = Path(folder)
+        if not (Path(folder) / "manifest.txt").exists():
+            QMessageBox.information(
+                self, "No manifest",
+                "No manifest.txt found.\n"
+                "Files will be packed in sorted order from the folder."
+            )
             if not folder:
                 return
             self.extract_dir = Path(folder)

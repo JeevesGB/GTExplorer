@@ -9,18 +9,20 @@ QMainWindow, QWidget {
 }
 
 QToolBar {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 6pt;
     background-color: #262525;
     border: none;
-    spacing: 6px;
-    padding: 4px;
+    spacing: 4px;
+    padding: 2px;
 }
 
 QToolButton {
     background-color: transparent;
     color: #FFFFFA;
     border: none;
-    border-radius: 3px;
-    padding: 4px 8px;
+    border-radius: 2px;
+    padding: 2px 4px;
 }
 
 QToolButton:hover {
@@ -87,7 +89,7 @@ QTabWidget::pane {
 QTabBar::tab {
     background-color: #333138;
     color: #FFFFFA;
-    padding: 8px 18px;
+    padding: 2px 6px;
     margin-right: 2px;
     border-top-left-radius: 4px;
     border-top-right-radius: 4px;

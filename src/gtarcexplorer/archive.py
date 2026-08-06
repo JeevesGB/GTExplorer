@@ -179,35 +179,56 @@ class GTArc:
         return out
 
     @staticmethod
-    def pack_from_folder(src_dir: str, out_path: str, force_uncompressed=False, progress_cb=None):
+    def pack_from_folder(src_dir: str, out_path: str,
+                        force_uncompressed: bool = False,
+                        compress_level: int = 6,
+                        progress_cb=None):
         src = Path(src_dir)
-        manifest = src / "manifest.txt"
-        if not manifest.exists():
-            raise FileNotFoundError("manifest.txt not found – extract first")
+        manifest_path = src / "manifest.txt"
 
-        lines = [l.strip() for l in manifest.read_text(encoding="utf-8").splitlines() if l.strip()]
-        idx = 0
-        if lines[0].startswith("kind="):
-            idx = 1
-        content_type = int(lines[idx].split("=")[1], 0)
-        if force_uncompressed:
-            content_type = 0x0001
-        nfiles = int(lines[idx + 1].split("=")[1])
-        names = lines[idx + 2: idx + 2 + nfiles]
+        if manifest_path.exists():
+            lines = [l.strip() for l in manifest_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+            idx = 0
+            if lines and lines[0].startswith("kind="):
+                idx = 1
+            content_type = int(lines[idx].split("=")[1], 0)
+            if force_uncompressed:
+                content_type = 0x0001
+            nfiles = int(lines[idx + 1].split("=")[1])
+            names = lines[idx + 2: idx + 2 + nfiles]
+        else:
+            content_type = 0x0001 if force_uncompressed else 0x8001
+
+            def is_packable(p: Path) -> bool:
+                if not p.is_file():
+                    return False
+                if p.name.lower() == "manifest.txt":
+                    return False
+                if any(part.endswith(("_tims", "_samples")) for part in p.parts):
+                    return False
+                return True
+
+            files = sorted(
+                [p for p in src.iterdir() if is_packable(p)],
+                key=lambda p: (p.stem.zfill(8) if p.stem.isdigit() else p.stem.lower(), p.suffix.lower())
+            )
+            if not files:
+                raise FileNotFoundError("No packable files found in folder")
+            names = [p.name for p in files]
+            nfiles = len(names)
 
         payloads = []
         for ni, name in enumerate(names):
-            # If this is a TIM pack and a matching *_tims folder exists,
-            # rebuild the pack from the individual .tim files so edits are kept.
             p = src / name
-            stem = Path(name).stem  # e.g. "000" from "000.tpk"
+            if not p.exists():
+                raise FileNotFoundError(f"Missing file listed for pack: {name}")
+
+            stem = Path(name).stem
             tims_dir = src / f"{stem}_tims"
             if name.lower().endswith(".tpk") and tims_dir.is_dir():
                 if progress_cb:
-                    progress_cb(ni + 1, len(names), name, "rebuild-tpk")
-                tim_list = []
-                for tim_path in sorted(tims_dir.glob("*.tim")):
-                    tim_list.append((tim_path.name, tim_path.read_bytes()))
+                    progress_cb(ni + 1, nfiles, name, "rebuild-tpk")
+                tim_list = [(tp.name, tp.read_bytes()) for tp in sorted(tims_dir.glob("*.tim"))]
                 if not tim_list:
                     raise FileNotFoundError(f"No .tim files in {tims_dir}")
                 raw = build_tim_pack(tim_list)
@@ -217,13 +238,15 @@ class GTArc:
 
             if progress_cb:
                 action = "compress" if content_type == 0x8001 else "copy"
-                progress_cb(ni + 1, len(names), name, action)
+                progress_cb(ni + 1, nfiles, name, action)
+
             if content_type == 0x8001:
                 comp = gtzip_compress(raw, level=compress_level)
                 payloads.append((comp, len(raw)))
             else:
                 payloads.append((raw, len(raw)))
 
+        # write
         header = bytearray()
         header += b"@(#)GT-ARC\0\0"
         header += struct.pack("<HH", content_type, nfiles)
@@ -238,6 +261,7 @@ class GTArc:
             f.write(header)
             for comp, _ in payloads:
                 f.write(comp)
+
         return out_path
 
 
