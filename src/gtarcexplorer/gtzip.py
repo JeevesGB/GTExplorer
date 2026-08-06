@@ -32,21 +32,36 @@ def gtzip_decompress(src: bytes, decomp_size: int) -> bytes:
     return bytes(dst)
 
 
-def gtzip_compress(data: bytes) -> bytes:
-    """
-    Fast hash-based LZSS compressor compatible with GT-ZIP.
-    Much faster than naive O(n^2) search; still produces valid streams.
-    """
+def gtzip_compress(data: bytes, level: int = 6) -> bytes:
     n = len(data)
     if n == 0:
         return b""
+
+    if level <= 0:
+        out = bytearray()
+        i = 0
+        while i < n:
+            flag_pos = len(out)
+            out.append(0)
+            flags = 0
+            for bit in range(8):
+                if i >= n:
+                    break
+                out.append(data[i])
+                i += 1
+            out[flag_pos] = flags
+        return bytes(out)
+
+    window = min(0x7FFF, 1024 * max(1, min(level, 9) * 2))
+    max_chain = [4, 8, 16, 32, 64, 128, 256, 512, 1024][min(level, 9) - 1]
+    nice_len = [8, 16, 32, 64, 128, 258, 258, 258, 258][min(level, 9) - 1]
 
     out = bytearray()
     HASH_SIZE = 0x10000
     head = [-1] * HASH_SIZE
     prev = [-1] * n
 
-    def hash3(pos):
+    def hash3(pos: int) -> int:
         if pos + 2 >= n:
             return 0
         return ((data[pos] << 8) ^ (data[pos + 1] << 4) ^ data[pos + 2]) & 0xFFFF
@@ -56,6 +71,7 @@ def gtzip_compress(data: bytes) -> bytes:
         flag_pos = len(out)
         out.append(0)
         flags = 0
+
         for bit in range(8):
             if i >= n:
                 break
@@ -67,18 +83,25 @@ def gtzip_compress(data: bytes) -> bytes:
             if max_len >= 3:
                 h = hash3(i)
                 chain = 0
-                MAX_CHAIN = 64
                 j = head[h]
-                window_start = max(0, i - 0x7FFF)
-                while j >= window_start and chain < MAX_CHAIN:
-                    length = 0
+                window_start = max(0, i - window)
+
+                while j >= window_start and chain < max_chain:
+                    if data[j] != data[i] or data[j + 1] != data[i + 1]:
+                        j = prev[j]
+                        chain += 1
+                        continue
+
+                    length = 2
                     while length < max_len and data[j + length] == data[i + length]:
                         length += 1
+
                     if length > best_len:
                         best_len = length
                         best_disp = i - j - 1
-                        if best_len == max_len:
+                        if best_len >= nice_len:
                             break
+
                     j = prev[j]
                     chain += 1
 
@@ -90,6 +113,7 @@ def gtzip_compress(data: bytes) -> bytes:
                 else:
                     out.append(0x80 | (best_disp >> 8))
                     out.append(best_disp & 0xFF)
+
                 end = i + best_len
                 while i < end and i < n:
                     if i + 2 < n:
@@ -104,7 +128,7 @@ def gtzip_compress(data: bytes) -> bytes:
                     prev[i] = head[h]
                     head[h] = i
                 i += 1
+
         out[flag_pos] = flags
+
     return bytes(out)
-
-

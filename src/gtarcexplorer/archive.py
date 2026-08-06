@@ -219,7 +219,7 @@ class GTArc:
                 action = "compress" if content_type == 0x8001 else "copy"
                 progress_cb(ni + 1, len(names), name, action)
             if content_type == 0x8001:
-                comp = gtzip_compress(raw)
+                comp = gtzip_compress(raw, level=compress_level)
                 payloads.append((comp, len(raw)))
             else:
                 payloads.append((raw, len(raw)))

@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QTreeWidget, QTreeWidgetItem, QTabWidget,
     QTextEdit, QLabel, QToolBar, QStatusBar, QProgressBar,
     QFileDialog, QMessageBox, QCheckBox, QComboBox,
-    QScrollArea, QHeaderView, QAbstractItemView, QPushButton
+    QScrollArea, QHeaderView, QAbstractItemView, QPushButton, QInputDialog
 )
 
 from .archive import GTArc
@@ -33,7 +33,6 @@ except ImportError:
 
 
 class GTArcExplorer(QMainWindow):
-    # Signals must be class attributes
     progress_signal = pyqtSignal(int, int)       # current, total
     finished_signal = pyqtSignal(bool, object)   # success, path_or_error
 
@@ -63,9 +62,7 @@ class GTArcExplorer(QMainWindow):
         self.progress_signal.connect(self._update_progress)
         self.finished_signal.connect(self._on_load_finished)
 
-    # ------------------------------------------------------------------
     # Theme
-    # ------------------------------------------------------------------
     def _load_theme(self):
         qss = Path(__file__).resolve().parent.parent / "thm" / "thm.qss"
         if not qss.exists():
@@ -79,9 +76,7 @@ class GTArcExplorer(QMainWindow):
                 QPushButton { background-color: #4582ec; color: white; padding: 6px 12px; border-radius: 4px; }
             """)
 
-    # ------------------------------------------------------------------
     # UI
-    # ------------------------------------------------------------------
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -95,10 +90,10 @@ class GTArcExplorer(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
-        self.act_open = QAction("Open .DAT…", self)
+        self.act_open = QAction("Open .DAT", self)
         self.act_extract = QAction("Extract All", self)
         self.act_extract_sel = QAction("Extract Selected", self)
-        self.act_repack = QAction("Repack…", self)
+        self.act_repack = QAction("Repack", self)
         self.act_folder = QAction("Open Extract Folder", self)
 
         for act in (self.act_open, self.act_extract, self.act_extract_sel,
@@ -257,9 +252,7 @@ class GTArcExplorer(QMainWindow):
         self.btn_pal_plus.clicked.connect(lambda: self.ctex_shift_clut(1))
         self.btn_pal_minus.clicked.connect(lambda: self.ctex_shift_clut(-1))
 
-    # ------------------------------------------------------------------
     # Helpers
-    # ------------------------------------------------------------------
     def set_status(self, text: str):
         self.status_label.setText(text)
 
@@ -322,9 +315,7 @@ class GTArcExplorer(QMainWindow):
             named = sum(1 for f in self.arc.files if f.get("real_name"))
             self.set_status(f"Applied names from {Path(path).name}  •  {named} named")
 
-    # ------------------------------------------------------------------
-    # Open archive (thread-safe)
-    # ------------------------------------------------------------------
+    # Open archive
     def open_archive(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open GT archive",
@@ -390,9 +381,7 @@ class GTArcExplorer(QMainWindow):
         self.preview_text.clear()
         self.preview_info.setText("Select a file to preview")
 
-    # ------------------------------------------------------------------
     # Tree
-    # ------------------------------------------------------------------
     def populate_tree(self):
         self.tree.clear()
         for f in self.arc.files:
@@ -417,9 +406,7 @@ class GTArcExplorer(QMainWindow):
             except ValueError:
                 pass
 
-    # ------------------------------------------------------------------
     # Preview
-    # ------------------------------------------------------------------
     def show_preview(self, idx: int):
         try:
             data = self.arc.get_data(idx)
@@ -515,9 +502,7 @@ class GTArcExplorer(QMainWindow):
             asc = "".join(chr(b) if 32 <= b < 127 else "." for b in line)
             self.preview_text.append(f"{i:04x}  {hx:<48}  {asc}")
 
-    # ------------------------------------------------------------------
     # Extract / Repack
-    # ------------------------------------------------------------------
     def extract_all(self):
         if not self.arc.files:
             QMessageBox.warning(self, "No archive", "Open a file first")
@@ -590,6 +575,13 @@ class GTArcExplorer(QMainWindow):
             QMessageBox.critical(self, "Error", str(e))
 
     def repack(self):
+        level, ok = QInputDialog.getInt(
+            self, "Compression level", 
+            "0 = store, 1 = fastest, 9 = best\n(recommended: 4-6)",
+            value=6, min=0, max=9
+        )
+        if not ok: 
+            return
         folder = self.extract_dir
         if not folder or not (Path(folder) / "manifest.txt").exists():
             folder = QFileDialog.getExistingDirectory(self, "Select folder with manifest.txt")
@@ -671,9 +663,7 @@ class GTArcExplorer(QMainWindow):
                 size = item.stat().st_size
                 root_item.addChild(QTreeWidgetItem([f"{item.name}  ({size:,} B)"]))
 
-    # ------------------------------------------------------------------
     # Asset Viewer
-    # ------------------------------------------------------------------
     def _pil_to_qpixmap(self, img: Image.Image, scale: float = 1.0) -> QPixmap:
         if scale != 1.0:
             w = max(1, int(img.width * scale))
