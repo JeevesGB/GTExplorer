@@ -2,8 +2,6 @@
 
 Extractor for **Gran Turismo 1** (PlayStation) archive files.
 
-Lossless by default: entries are written **exactly as stored** after GT-ZIP decompression. No format conversion and no header rewriting unless you opt into TIM-pack rebuild on repack.
-
 ![](img/bg.png)
 ![](img/course.png)
 ![](img/gif.gif)
@@ -19,6 +17,8 @@ Lossless by default: entries are written **exactly as stored** after GT-ZIP deco
 - Built-in **Asset Viewer** (TIM, TIM packs, GT-CTEX, GT-PS point cloud)
 - **Preview** for sequences, filename lists, and car part tables (SPEC, COLOR, …)
 - Progress feedback while loading large archives
+
+Note: Repacking is currently unfinished.
 
 ---
 
