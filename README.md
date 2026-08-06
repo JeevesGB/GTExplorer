@@ -1,6 +1,6 @@
 # GTExplorer
 
-Extractor / repacker for **Gran Turismo 1** (PlayStation) archive files.
+Extractor for **Gran Turismo 1** (PlayStation) archive files.
 
 Lossless by default: entries are written **exactly as stored** after GT-ZIP decompression. No format conversion and no header rewriting unless you opt into TIM-pack rebuild on repack.
 
@@ -12,7 +12,7 @@ Lossless by default: entries are written **exactly as stored** after GT-ZIP deco
 
 ## Features
 
-- Extract and repack **GT-ARC** / **GT-ZIP** archives
+- Extract **GT-ARC** / **GT-ZIP** archives
 - Optional **TIM pack** expansion and rebuild
 - Optional **INST / ENGN** sample expansion
 - **Region file lists** for real asset names on extract
@@ -94,14 +94,6 @@ Each `.tpk` is still written intact, plus a subfolder:
 Enable **Expand INST/ENGN samples** before extracting.
 
 Instrument / engine banks are kept intact; samples can be written out for editing. On repack, edited sample data is folded back into the bank when present.
-
-### Repack
-
-**Repack…** builds a new archive from an extract folder + `manifest.txt`.
-
-- If a `*_tims/` folder exists next to a `.tpk`, the pack is **rebuilt from those TIM files** first  
-- Optional uncompressed (`content_type = 0x0001`) or GT-ZIP (`0x8001`) output  
-- Progress is shown per step (rebuild pack / compress / copy)
 
 ### Asset Viewer
 
@@ -237,4 +229,4 @@ requirements.txt
 
 ## Credits
 
-Archive research and file lists draw on community work including pez2k’s [gt2tools](https://github.com/pez2k/gt2tools) (GT1ArchiveExtractor and related utilities).
+- pez2k [gt2tools](https://github.com/pez2k/gt2tools) Prior research into GT1 files.
