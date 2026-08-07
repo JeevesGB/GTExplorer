@@ -142,3 +142,61 @@ def format_spec_preview(parsed: dict, max_strings: int = 40) -> str:
                 lines.append(f"  ... ({len(table) - max_strings} more)")
             lines.append("")
     return "\n".join(lines)
+
+def export_strings_as_text(parsed: dict, include_empty: bool = False) -> str:
+    """
+    Export all string tables from a parsed SPEC/COLOR/EQUIP/… table
+    as plain text (one string per line, tables separated by headers).
+    """
+    lines = []
+    tag = parsed.get("tag", "UNKNOWN")
+    tables = parsed.get("string_tables") or []
+
+    lines.append(f"# {tag}")
+    lines.append(f"# string tables: {len(tables)}")
+    lines.append("")
+
+    if not tables:
+        lines.append("(no string tables)")
+        return "\n".join(lines)
+
+    for ti, table in enumerate(tables):
+        lines.append(f"--- table[{ti}] ({len(table)} strings) ---")
+        for s in table:
+            if s or include_empty:
+                lines.append(s)
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def export_colour_names_as_text(parsed: dict) -> str:
+    """
+    Special-case export for COLOR tables: one line per colour
+    in the form  car_id  colour_id  name
+    """
+    if parsed.get("tag") != "COLOR":
+        return export_strings_as_text(parsed)
+
+    rows = colour_rows(parsed)
+    lines = [
+        "# COLOR",
+        f"# colours: {len(rows)}",
+        "",
+        f"{'CarID':>6}  {'CID':>4}  Name",
+        "-" * 40,
+    ]
+    for car_id, cid, name in rows:
+        lines.append(f"{car_id:6d}  {cid:02X}    {name}")
+    return "\n".join(lines) + "\n"
+
+def export_spec_strings(data: bytes, colour_mode: bool = True) -> str:
+    """
+    Parse a SPEC/COLOR/… blob and return its strings as text.
+    If the table is COLOR and colour_mode=True, produce the
+    car_id / colour_id / name listing instead of the raw tables.
+    """
+    parsed = parse_spec_table(data)
+    if colour_mode and parsed.get("tag") == "COLOR":
+        return export_colour_names_as_text(parsed)
+    return export_strings_as_text(parsed)

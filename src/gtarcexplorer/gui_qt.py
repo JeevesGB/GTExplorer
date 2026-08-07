@@ -12,7 +12,7 @@ from .tim_image import decode_tim
 from .gtps import parse_gtps_header, extract_vertices, bounds
 from .filelist import load_bundled, parse_filelist, bundled_lists
 from .ctex import decode_ctex, parse_ctex_header
-from .spec import is_spec_type, parse_spec_table, format_spec_preview
+from .spec import is_spec_type, parse_spec_table, format_spec_preview, export_spec_strings
 from .namelist import parse_name_list
 from .replay import is_replay_save, parse_replay_save, format_replay_preview
 from .gthtml import is_gthtml, parse_gthtml, format_gthtml_preview
@@ -20,17 +20,17 @@ from .gthtml import is_gthtml, parse_gthtml, format_gthtml_preview
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from PyQt6.QtGui import QAction, QFont, QPixmap, QImage, QIcon, QColor
 from PyQt6.QtWidgets import (
-    QApplication,       QMainWindow, 
-    QWidget,            QVBoxLayout, 
-    QHBoxLayout,        QSplitter, 
-    QTreeWidget,        QTreeWidgetItem, 
-    QTabWidget,         QTextEdit, 
-    QLabel,             QToolBar, 
+    QApplication,       QMainWindow,
+    QWidget,            QVBoxLayout,
+    QHBoxLayout,        QSplitter,
+    QTreeWidget,        QTreeWidgetItem,
+    QTabWidget,         QTextEdit,
+    QLabel,             QToolBar,
     QStatusBar,         QProgressBar,
-    QFileDialog,        QMessageBox, 
+    QFileDialog,        QMessageBox,
     QCheckBox,          QComboBox,
-    QScrollArea,        QHeaderView, 
-    QAbstractItemView,  QPushButton, 
+    QScrollArea,        QHeaderView,
+    QAbstractItemView,  QPushButton,
     QInputDialog,       QColorDialog
 )
 ############################################################################
@@ -110,19 +110,21 @@ class GTArcExplorer(QMainWindow):
         self.act_open_nested = QAction("Open Nested ARC", self)
         self.act_extract = QAction("Extract All", self)
         self.act_extract_sel = QAction("Extract Selected", self)
+        self.act_export_strings = QAction("Export Strings", self)   # ← NEW
         self.act_repack = QAction("Repack", self)
         self.act_folder = QAction("Open Extract Folder", self)
         self.act_diff_folder = QAction("Diff vs folder…", self)
         self.act_diff_dat = QAction("Diff vs another .DAT…", self)
 
         for act in (
-            self.act_open, 
+            self.act_open,
             self.act_open_nested,
-            self.act_extract, 
+            self.act_extract,
             self.act_extract_sel,
-            self.act_repack, 
+            self.act_export_strings,          # ← NEW
+            self.act_repack,
             self.act_folder,
-            self.act_diff_folder, 
+            self.act_diff_folder,
             self.act_diff_dat
             ):
             toolbar.addAction(act)
@@ -253,6 +255,66 @@ class GTArcExplorer(QMainWindow):
         self.progress.setTextVisible(True)
         self.status.addPermanentWidget(self.progress)
 
+    def export_strings(self):
+        """Export string tables from selected SPEC/COLOR/… entries (or all of them)."""
+        if not self.arc.files:
+            QMessageBox.warning(self, "No archive", "Open a file first")
+            return
+
+        items = self.tree.selectedItems()
+        if items:
+            indices = []
+            for it in items:
+                try:
+                    indices.append(int(it.text(0)))
+                except ValueError:
+                    pass
+        else:
+            # nothing selected → every part-table entry
+            indices = [
+                f["index"] for f in self.arc.files
+                if is_spec_type(f.get("type", ""))
+            ]
+
+        if not indices:
+            QMessageBox.information(
+                self, "Nothing to export",
+                "No SPEC / COLOR / EQUIP / … tables selected (or present)."
+            )
+            return
+
+        out_dir = QFileDialog.getExistingDirectory(self, "Choose folder for string exports")
+        if not out_dir:
+            return
+        out = Path(out_dir)
+
+        written = 0
+        errors = []
+        for idx in indices:
+            try:
+                f = self.arc.files[idx]
+                data = self.arc.get_data(idx)
+                if not is_spec_type(f.get("type", "")):
+                    continue
+                text = export_spec_strings(data)
+                name = f.get("real_name") or f"{f['label']}{f['ext']}"
+                stem = Path(name).stem
+                dest = out / f"{stem}_strings.txt"
+                dest.write_text(text, encoding="utf-8")
+                written += 1
+            except Exception as e:
+                errors.append(f"#{idx}: {e}")
+
+        msg = f"Exported strings from {written} table(s) to:\n{out}"
+        if errors:
+            msg += "\n\nSome entries failed:\n" + "\n".join(errors[:8])
+            if len(errors) > 8:
+                msg += f"\n… and {len(errors)-8} more"
+            QMessageBox.warning(self, "Export finished with errors", msg)
+        else:
+            QMessageBox.information(self, "Done", msg)
+        self.set_status(f"Exported strings from {written} table(s)")
+
     def diff_vs_folder(self):
         """Compare opened archive ↔ extract folder on disk."""
         if not self.arc.files:
@@ -362,7 +424,6 @@ class GTArcExplorer(QMainWindow):
         dlg.setWindowTitle("Size diff")
         dlg.resize(820, 540)
         layout = QVBoxLayout(dlg)
-
         layout.addWidget(QLabel(title))
 
         table = QTableWidget(len(rows), 6)
@@ -395,7 +456,6 @@ class GTArcExplorer(QMainWindow):
         table.resizeColumnsToContents()
         table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(table)
-
         layout.addWidget(QLabel(f"{changed} difference(s)  •  {len(rows)} entries"))
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -407,9 +467,10 @@ class GTArcExplorer(QMainWindow):
     def _connect_signals(self):
         self.act_open.triggered.connect(self.open_archive)
         self.act_open_nested.triggered.connect(self.open_nested_arc)
-        self.tree.itemDoubleClicked.connect(self._on_tree_double_click)  # ← .connect
+        self.tree.itemDoubleClicked.connect(self._on_tree_double_click)
         self.act_extract.triggered.connect(self.extract_all)
         self.act_extract_sel.triggered.connect(self.extract_selected)
+        self.act_export_strings.triggered.connect(self.export_strings)   # ← NEW
         self.act_repack.triggered.connect(self.repack)
         self.act_folder.triggered.connect(self.open_extract_folder)
         self.act_load_list.triggered.connect(self.load_custom_filelist)
@@ -500,7 +561,6 @@ class GTArcExplorer(QMainWindow):
         def worker():
             try:
                 raw = Path(path).read_bytes()
-
                 if is_replay_save(raw):
                     self.arc = GTArc()
                     self.arc.path = path
@@ -521,17 +581,15 @@ class GTArcExplorer(QMainWindow):
                     }]
                     self.finished_signal.emit(True, path)
                     return
-            
+
                 self.arc.load(path)
                 self._apply_filelist()
-
                 named = sum(1 for f in self.arc.files if f.get("real_name"))
                 if named == 0:
                     try:
                         self.arc.try_embedded_names()
                     except Exception:
                         pass
-
                 total = len(self.arc.files)
                 for i in range(total):
                     try:
@@ -540,7 +598,6 @@ class GTArcExplorer(QMainWindow):
                         pass
                     if i % 8 == 0 or i == total - 1:
                         self.progress_signal.emit(i + 1, total)
-
                 self.finished_signal.emit(True, path)
             except Exception as e:
                 import traceback
@@ -564,6 +621,7 @@ class GTArcExplorer(QMainWindow):
             QMessageBox.information(self, "Nothing selected",
                                     "Select a Nested GT-ARC entry first.")
             return
+
         idx = int(items[0].text(0))
         f = self.arc.files[idx]
         if f.get("type") != "Nested GT-ARC" and f.get("ext") != ".arc":
@@ -666,7 +724,7 @@ class GTArcExplorer(QMainWindow):
                 try:
                     save = parse_replay_save(data)
                     self.preview_text.append(format_replay_preview(save))
-                except Exception as e: 
+                except Exception as e:
                     self.preview_text.append(f"REPLAY.DAT parse error: {e}")
                     self._hex_dump(data[:256])
                 return
@@ -678,7 +736,7 @@ class GTArcExplorer(QMainWindow):
                     self.preview_text.append(f"{name:<20} {len(tim):>10,}")
                 self.show_pack_in_viewer(data)
 
-            elif f["type"] in ("Filename List", "Text / Messages"): #IDX FILES
+            elif f["type"] in ("Filename List", "Text / Messages"):  # IDX FILES
                 names = parse_name_list(data)
                 if names:
                     self.preview_text.append(f"Filename list - {len(names)} entries \n")
@@ -689,7 +747,7 @@ class GTArcExplorer(QMainWindow):
                         if i >= 499:
                             self.preview_text.append(f"... ({len(names) - 500} more)")
                             break
-                else: 
+                else:
                     try:
                         self.preview_text.append(data[:8000].decode("utf-8", errors="replace"))
                     except Exception:
@@ -707,11 +765,11 @@ class GTArcExplorer(QMainWindow):
                 try:
                     parsed = parse_gthtml(data)
                     self.preview_text.append(format_gthtml_preview(parsed))
-                except Exception as e: 
+                except Exception as e:
                     self.preview_text.append(f"GTHTML parse error: {e}")
                     self._hex_dump(data[:256])
 
-            elif f["type"] == "Nested GT-ARC" or f.get("ext") == ".arc": #NESTED .ARC FILES
+            elif f["type"] == "Nested GT-ARC" or f.get("ext") == ".arc":  # NESTED .ARC FILES
                 try:
                     import struct
                     if not data.startswith(b"@(#)GT-ARC"):
@@ -730,6 +788,7 @@ class GTArcExplorer(QMainWindow):
                 except Exception as e:
                     self.preview_text.append(f"Nested ARC preview error: {e}")
                     self._hex_dump(data[:256])
+
             elif f["type"] == "GT-CTEX Texture":
                 try:
                     hdr = parse_ctex_header(data)
@@ -804,7 +863,6 @@ class GTArcExplorer(QMainWindow):
         out = QFileDialog.getExistingDirectory(self, "Choose extract folder")
         if not out:
             return
-
         expand = self.chk_tims.isChecked()
         expand_inst = self.chk_inst.isChecked()
         self.set_progress(0, len(self.arc.files))
@@ -834,7 +892,6 @@ class GTArcExplorer(QMainWindow):
         except TypeError:
             pass
         self.finished_signal.connect(self._on_load_finished)
-
         self.progress.setValue(0)
         if success:
             self.extract_dir = Path(data)
@@ -868,18 +925,20 @@ class GTArcExplorer(QMainWindow):
 
     def repack(self):
         level, ok = QInputDialog.getInt(
-            self, "Compression level", 
+            self, "Compression level",
             "0 = store, 1 = fastest, 9 = best\n(recommended: 4-6)",
             value=6, min=0, max=9
         )
-        if not ok: 
+        if not ok:
             return
+
         folder = self.extract_dir
         if not folder or not Path(folder).is_dir():
             folder = QFileDialog.getExistingDirectory(self, "Select folder to pack")
             if not folder:
                 return
             self.extract_dir = Path(folder)
+
         if not (Path(folder) / "manifest.txt").exists():
             QMessageBox.information(
                 self, "No manifest",
@@ -928,7 +987,6 @@ class GTArcExplorer(QMainWindow):
         except TypeError:
             pass
         self.finished_signal.connect(self._on_load_finished)
-
         if success:
             self.set_status(f"Repacked → {data}")
             QMessageBox.information(self, "Done", f"Saved:\n{data}")

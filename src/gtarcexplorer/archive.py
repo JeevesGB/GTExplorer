@@ -1,4 +1,3 @@
-"""GTArc: load / extract / repack GT-ARC (.DAT) archives."""
 import struct
 from pathlib import Path
 
@@ -8,9 +7,40 @@ from .audio import expand_sample_bank
 from .detect import detect_type
 from .filelist import lookup, safe_filename, archive_stem
 from .namelist import parse_name_list
-from .replay import is_replay_save 
+from .replay import is_replay_save
 
-# Archive
+
+def _gtzip_decompress_full(src: bytes) -> bytes:
+    """Decompress a whole-archive GT-ZIP stream (decomp size unknown)."""
+    dst = bytearray()
+    pos = 0
+    while pos < len(src):
+        flags = src[pos]
+        pos += 1
+        for _ in range(8):
+            if pos >= len(src):
+                return bytes(dst)
+            if (flags & 1) == 0:
+                dst.append(src[pos])
+                pos += 1
+            else:
+                if pos + 1 >= len(src):
+                    return bytes(dst)
+                length = src[pos]
+                pos += 1
+                disp = src[pos]
+                pos += 1
+                if disp >= 0x80:
+                    if pos >= len(src):
+                        return bytes(dst)
+                    disp = (disp - 0x80) * 0x100 + src[pos]
+                    pos += 1
+                for _ in range(length + 3):
+                    dst.append(dst[-(disp + 1)] if disp + 1 <= len(dst) else 0)
+            flags >>= 1
+    return bytes(dst)
+
+
 class GTArc:
     def __init__(self):
         self.path = None
@@ -18,7 +48,7 @@ class GTArc:
         self.content_type = 0x8001
         self.files = []
         self.raw = b""
-        self.name_map = None  # optional filelist NameMap
+        self.name_map = None  
         self.stem = ""
 
     def load(self, path: str):
@@ -27,6 +57,7 @@ class GTArc:
         self.raw = Path(path).read_bytes()
         self.files = []
 
+        #  normal GT-ARC 
         if self.raw[:12] == b"@(#)GT-ARC\0\0":
             self.kind = "gtarc"
             self.content_type, nfiles = struct.unpack_from("<HH", self.raw, 12)
@@ -39,38 +70,70 @@ class GTArc:
                 })
             return
 
+        #  whole-archive compressed GT-ARC (CARINF.DAT etc.) 
         if self.raw[1:8] == b"@(#)GT-" and b"RC" in self.raw[8:14]:
-            self.kind = "gtarc_compressed"
-            self.files.append({
-                "index": 0, "offset": 0, "comp_size": len(self.raw),
-                "decomp_size": 0, "data": None,
-                "type": "Compressed GT-ARC", "ext": ".bin",
-                "label": "000_compressed_arc"
-            })
+            # Outer layer is GT-ZIP; decompress it, then treat the result
+            # as a normal GT-ARC.
+            try:
+                decomp = _gtzip_decompress_full(self.raw)
+            except Exception:
+                self.kind = "gtarc_compressed"
+                self.files.append({
+                    "index": 0, "offset": 0, "comp_size": len(self.raw),
+                    "decomp_size": 0, "data": None,
+                    "type": "Compressed GT-ARC", "ext": ".bin",
+                    "label": "000_compressed_arc"
+                })
+                return
+
+            if decomp[:12] != b"@(#)GT-ARC\0\0":
+                self.kind = "gtarc_compressed"
+                self.files.append({
+                    "index": 0, "offset": 0, "comp_size": len(self.raw),
+                    "decomp_size": 0, "data": None,
+                    "type": "Compressed GT-ARC", "ext": ".bin",
+                    "label": "000_compressed_arc"
+                })
+                return
+
+            self.raw = decomp
+            self.kind = "gtarc"
+            self.content_type, nfiles = struct.unpack_from("<HH", self.raw, 12)
+            for i in range(nfiles):
+                off, csz, dsz = struct.unpack_from("<III", self.raw, 0x10 + i * 12)
+                self.files.append({
+                    "index": i, "offset": off, "comp_size": csz,
+                    "decomp_size": dsz, "data": None,
+                    "type": "…", "ext": ".bin", "label": f"{i:03d}"
+                })
             return
 
         if is_replay_save(self.raw):
-            self.kind = [{
-                "index"         :   0, 
-                "label"         :   "REPLAY",
-                "ext"           :   ".replay",
-                "type"          :   "GT Replay Save",
-                "offset"        :   0,
-                "comp_size"     :   len(self.raw),
-                "decomp_size"   :   len(self.raw),
-                "data"          :   self.raw,
-                "real_name"     :   "REPLAY.DAT",
+            self.kind = "replay_save"
+            self.files = [{
+                "index": 0,
+                "label": "REPLAY",
+                "ext": ".replay",
+                "type": "GT Replay Save",
+                "offset": 0,
+                "comp_size": len(self.raw),
+                "decomp_size": len(self.raw),
+                "data": self.raw,
+                "real_name": "REPLAY.DAT",
             }]
-        return
-
+            return
 
         self.kind = "gtzip_raw"
         self.files.append({
-            "index": 0, "offset": 0, "comp_size": len(self.raw),
-            "decomp_size": 0x8000, "data": None,
-            "type": "Raw GT-ZIP", "ext": ".bin", "label": "000"
+            "index": 0,
+            "offset": 0,
+            "comp_size": len(self.raw),
+            "decomp_size": 0x8000,
+            "data": None,
+            "type": "Raw GT-ZIP",
+            "ext": ".bin",
+            "label": "000",
         })
-
 
     def try_embedded_names(self):
         """If an entry is a filename list whose length matches nfiles, use it as name_map."""
@@ -84,12 +147,10 @@ class GTArc:
                 continue
             names = parse_name_list(data)
             if len(names) == n:
-                # Build a temporary map for this stem
                 mapping = {}
                 for idx, name in enumerate(names):
                     mapping[(self.stem, idx)] = name.lstrip("_")
                 self.name_map = mapping
-                # Refresh labels
                 for f in self.files:
                     real = names[f["index"]].lstrip("_") if f["index"] < len(names) else None
                     if real:
@@ -125,7 +186,6 @@ class GTArc:
         f["ext"] = ext
         real = lookup(self.name_map, self.stem, f["index"])
         if real:
-            # Prefer list basename; keep list extension if present
             stem_part = Path(real).stem
             list_ext = Path(real).suffix
             f["label"] = stem_part
@@ -158,7 +218,6 @@ class GTArc:
                 name = safe_filename(f["real_name"])
             else:
                 name = f"{f['label']}{f['ext']}"
-            # Avoid collisions
             dest = out / name
             if dest.exists():
                 dest = out / f"{f['index']:03d}_{name}"
@@ -196,9 +255,9 @@ class GTArc:
 
     @staticmethod
     def pack_from_folder(src_dir: str, out_path: str,
-                        force_uncompressed: bool = False,
-                        compress_level: int = 6,
-                        progress_cb=None):
+                         force_uncompressed: bool = False,
+                         compress_level: int = 6,
+                         progress_cb=None):
         src = Path(src_dir)
         manifest_path = src / "manifest.txt"
 
@@ -262,7 +321,6 @@ class GTArc:
             else:
                 payloads.append((raw, len(raw)))
 
-        # write
         header = bytearray()
         header += b"@(#)GT-ARC\0\0"
         header += struct.pack("<HH", content_type, nfiles)
@@ -279,5 +337,3 @@ class GTArc:
                 f.write(comp)
 
         return out_path
-
-
