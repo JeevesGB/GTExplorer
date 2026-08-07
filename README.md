@@ -1,10 +1,10 @@
 # GTExplorer
 
-Extractor for **Gran Turismo 1** (PlayStation) archive files.
+Extractor and viewer for **Gran Turismo 1** (PlayStation) archive files.
 
-![](img/bg.png)
-![](img/course.png)
-![](img/gif.gif)
+![bg](img/bg.png)
+![course](img/course.png)
+![demo](img/gif.gif)
 
 ---
 
@@ -13,20 +13,20 @@ Extractor for **Gran Turismo 1** (PlayStation) archive files.
 - Extract **GT-ARC** / **GT-ZIP** archives
 - Optional **TIM pack** expansion and rebuild
 - Optional **INST / ENGN** sample expansion
-- **Region file lists** for real asset names on extract
-- Built-in **Asset Viewer** (TIM, TIM packs, GT-CTEX, GT-PS point cloud)
-- **Preview** for sequences, filename lists, and car part tables (SPEC, COLOR, …)
+- Region **file lists** for real asset names on extract
+- Built-in **Asset Viewer** (TIM, TIM packs, GT-CTEX, GT-PS)
+- **Preview** for sequences, filename lists, GTHTML, and car part tables (SPEC, COLOR, …)
 - Progress feedback while loading large archives
 
-Note: Repacking is currently unfinished.
+> **Note:** Repacking is currently unfinished.
 
 ---
 
 ## Requirements
 
 - Python 3.8+
-- [Pillow](https://python-pillow.org/) (Asset Viewer)
-- PyQt6 6.4
+- [Pillow](https://python-pillow.org/) (for the Asset Viewer)
+- PyQt6 ≥ 6.4
 
 ```bash
 pip install -r requirements.txt
@@ -34,145 +34,78 @@ pip install -r requirements.txt
 
 ---
 
-## Usage
+## Quick start
 
 From the repo root:
 
 ```bash
-python src/oldmain.py
+python src/main.py
 ```
 
-Or on Windows:
+Windows:
 
 ```bash
 runtool.bat
 ```
 
-### Open an archive
+1. **Open…** — pick a `.DAT` / `.ARC`
+2. (Optional) choose a **file list** so names are real instead of `000`, `001`, …
+3. **Extract All** or **Extract Selected**
 
-**Open…** — select a `.DAT` / `.ARC` file.
-
-| Kind | Detection | Examples |
-|------|-----------|----------|
-| Standard GT-ARC | Header `@(#)GT-ARC` | `COURSE.DAT`, `CAR.DAT`, `SOUND.DAT`, `MENU_RAW.ARC`, … |
-| Compressed GT-ARC | Mangled header (`@(#)GT-A` / `RC`) | `CARINF.DAT` |
-| Raw GT-ZIP | No ARC wrapper | `GAMEFONT.DAT` |
-
-Large files show a status bar and progress while reading and identifying types.
-
-### File names
-
-Use the **File names** dropdown (or **Browse…**) to load a region list so extracted files use real names instead of `000`, `001`, …
-
-Bundled lists live under `src/gtarcexplorer/filelists/` (PAL / USA / JP retail and demos).
-
-If no external list matches and an archive contains an embedded filename list of the same length as its entry count, those names are applied automatically.
-
-### Extract
-
-- **Extract All** — every entry into a folder  
-- **Extract Selected** — only selected rows  
-
-Extensions come from content magic (see below). A `manifest.txt` is written for lossless repacking.
-
-#### Optional: expand TIM packs
-
-Enable **Expand TIM packs** before extracting.
-
-Each `.tpk` is still written intact, plus a subfolder:
-
-```
-000.tpk
-000_tims/
-  refrect.tim
-  circuit.tim
-  …
-```
-
-#### Optional: expand INST / ENGN samples
-
-Enable **Expand INST/ENGN samples** before extracting.
-
-Instrument / engine banks are kept intact; samples can be written out for editing. On repack, edited sample data is folded back into the bank when present.
-
-### Asset Viewer
-
-Select a supported entry, then open the **Asset Viewer** tab.
-
-| Content | What you get |
-|---------|----------------|
-| **TIM** (`.tim`) | Texture preview, zoom / fit |
-| **TIM pack** (`.tpk`) | List of TIMs in the pack; click to view |
-| **GT-CTEX** (`.tex`) | Car texture (256×256 4bpp); **Pal ±** / **CLUT ±** |
-| **GT-PS** (`.ps`) | Course model point cloud; **Yaw / Pitch** |
-
-Supported TIM formats: 4-bit + CLUT, 8-bit + CLUT, 16-bit, 24-bit.
-
-### Preview tab
-
-Shows headers, hex, text, filename lists, and structured info for car part tables (`SPEC`, `COLOR`, `EQUIP`, `TIRE`, …) including string tables and colour listings where applicable.
-
----
-
-## Detected file types
-
-### Core / graphics / sound
-
-| Magic / content | Extension | Description |
-|-----------------|-----------|-------------|
-| `@(#)GT-PS` | `.ps` | Course / track model |
-| `@(#)GT-CAR` | `.car` | Car model |
-| `@(#)GT-CTEX` | `.tex` | Car texture set |
-| `@(#)GT-SKY` | `.sky` | Skybox |
-| `@(#)GT-ARC` | `.arc` | Nested GT-ARC |
-| `@(#)USEDCAR` | `.usedcar` | Used-car data |
-| `@(#)GTHTML` | `.gthtml` | GT HTML |
-| `INST` | `.ins` | Sound instrument bank |
-| `ENGN` | `.es` | Engine sound bank |
-| `SEQG` | `.seq` | Sequence (music / timing) |
-| `10 00 00 00` | `.tim` | PlayStation TIM texture |
-| TIM pack (count + `.tim` names) | `.tpk` | Named TIM container |
-| Mostly printable text | `.txt` | Message / string table |
-| Filename lists | `.lst` | Text lists of asset names |
-| Other | `.bin` | Unknown binary |
-
-### Car / tuning part tables (mainly CARINF)
-
-| Magic | Extension |
-|-------|-----------|
-| `@(#)SPEC` | `.spec` |
-| `@(#)COLOR` | `.color` |
-| `@(#)EQUIP` | `.equip` |
-| `@(#)TIRE` / `TIRECMP` / `TIRESIZ` | `.tire` / `.tirecmp` / `.tiresiz` |
-| `@(#)BRAKE` / `BRKCTRL` | `.brake` / `.brkctrl` |
-| `@(#)GEAR` / `CLUTCH` / `FLYWHEL` | `.gear` / `.clutch` / `.flywhel` |
-| `@(#)SUSPENS` / `STABILZ` | `.suspens` / `.stabilz` |
-| `@(#)TURBINE` / `NATUNE` / `MUFFLER` / … | matching part extension |
-
-When a **file list** is loaded, list names override these fallback extensions.
+Full guide → [Usage](docs/usage.md)
 
 ---
 
 ## Archive kinds
 
-| Kind | Detection | Behaviour |
-|------|-----------|-----------|
-| `gtarc` | Header `@(#)GT-ARC` | Multi-file; GT-ZIP when `content_type = 0x8001` |
-| `gtarc_compressed` | Mangled header (`@(#)GT-A` / `RC`) | Whole-archive compression (e.g. `CARINF.DAT`) |
-| `gtzip_raw` | No ARC header | Single GT-ZIP stream (e.g. `GAMEFONT.DAT`) |
+| Kind | Detection | Examples |
+|------|-----------|----------|
+| Standard GT-ARC | `@(#)GT-ARC` | `COURSE.DAT`, `CAR.DAT`, `SOUND.DAT`, `MENU_RAW.ARC` |
+| Compressed GT-ARC | Mangled `@(#)GT-A` / `RC` | `CARINF.DAT` |
+| Raw GT-ZIP | No ARC wrapper | `GAMEFONT.DAT` |
 
 ---
 
-## TIM Pack format (COURSE / BG)
+## Detected types (summary)
 
-```
-Offset  Size   Description
-0x00    4      Number of TIMs (uint32 LE)
-0x04    20×N   Directory:
-                 16 bytes  Name (null-padded ASCII)
-                  4 bytes  Offset of TIM data (uint32 LE)
-…       …      TIM blobs at listed offsets
-```
+| Content | Ext | Notes |
+|---------|-----|--------|
+| TIM texture | `.tim` | `10 00 00 00` magic |
+| TIM pack | `.tpk` | Named TIM container |
+| GT-PS / GT-CAR / GT-CTEX / GT-SKY | `.ps` / `.car` / `.tex` / `.sky` | Models & textures |
+| Nested GT-ARC | `.arc` | Open with **Open Nested ARC** |
+| GTHTML | `.gthtml` | GT menu/script data |
+| INST / ENGN / SEQG | `.ins` / `.es` / `.seq` | Sound & sequences |
+| SPEC, COLOR, TIRE, … | matching | Car part tables |
+| Filename lists / text | `.idx` / `.txt` | Name tables & messages |
+
+Full table + TIM pack layout → [Formats](docs/formats.md)
+
+---
+
+## File lists
+
+Bundled region lists: `src/gtarcexplorer/filelists/`
+
+Per-archive notes:
+
+- [ARCADE.DAT](doc/filelists/ARCADE.DAT.MD)
+- [BG.DAT](doc/filelists/BG.DAT.MD)
+- [CAR.DAT](doc/filelists/CAR.DAT.MD)
+- [CARCADE.DAT](doc/filelists/CARCADE.DAT.MD)
+- [COURSE.DAT](doc/filelists/COURSE.DAT.MD)
+- [GAMEMENU](doc/filelists/GAMEMENU.MD)
+- [MENU_IMG](doc/filelists/MENU_IMG.MD)
+- [MENU_RAW](doc/filelists/MENU_RAW.MD)
+- [PITMENU.DAT](doc/filelists/PITMENU.DAT.MD)
+- [REPLAY.DAT](doc/filelists/REPLAY.DAT.MD)
+- [SOUND.DAT](doc/filelists/SOUND.DAT.MD)
+
+---
+
+## Known GT1 archives
+
+See [Known archives](docs/archives.md).
 
 ---
 
@@ -180,53 +113,48 @@ Offset  Size   Description
 
 ```
 src/
-  oldmain.py              # entry point
-  gtarcexplorer/
-    gui.py                # main window
-    archive.py            # load / extract / repack
-    detect.py             # type sniffing
-    gtzip.py              # GT-ZIP compress / decompress
-    filelist.py           # region name lists
-    filelists/            # bundled PAL / USA / JP lists
-    tim_pack.py           # TIM pack parse / rebuild
-    tim_image.py          # TIM decode
-    ctex.py               # GT-CTEX decode
-    gtps.py               # GT-PS vertices / preview
-    audio.py              # INST / ENGN samples
-    spec.py               # part-table preview
-    namelist.py           # embedded filename lists
+├── main.py
+└── gtarcexplorer/
+    ├── __init__.py
+    ├── gui_qt.py
+    ├── archive.py
+    ├── detect.py
+    ├── gtzip.py
+    ├── filelist.py
+    ├── filelists/
+    │   ├── filelist_pal_retail.txt
+    │   ├── filelist_usa_retail.txt
+    │   ├── filelist_usa_demo.txt
+    │   ├── filelist_jp_retail.txt
+    │   ├── filelist_jp_demo.txt
+    │   └── filelist_jp_testdrive.txt
+    ├── tim_pack.py
+    ├── tim_image.py
+    ├── ctex.py
+    ├── gtps.py
+    ├── audio.py
+    ├── spec.py
+    ├── namelist.py
+    ├── gthtml.py
+    └── replay.py
+
+thm/
+├── icon.ico
+└── thm.qss
+
 runtool.bat
 requirements.txt
+docs/
 ```
-
----
-
-## Known GT1 archives
-
-| Archive | Typical contents |
-|---------|------------------|
-| `COURSE.DAT` | Track TIM packs (`.tpk`), course models (`.ps`) |
-| `CAR.DAT` / `CARCADE.DAT` | Car textures (`.tex`), car models (`.car`) |
-| `CARINF.DAT` | Compressed GT-ARC (specs, colours, parts) |
-| `BG.DAT` | Background TIM packs, skyboxes (`.sky`) |
-| `GAMEMENU.DAT` / `PITMENU.DAT` | Menu TIM textures |
-| `ARCADE.DAT` / `ARCADE2.DAT` | Arcade mode assets |
-| `TITLE.DAT` | Title screen assets |
-| `MENU_RAW.ARC` | Menu lists, nested ARCs, used-car data |
-| `MESSAGES.DAT` | UI / race message strings |
-| `SOUND.DAT` | Instrument (`.ins`) and engine (`.es`) banks |
-| `GAMEFONT.DAT` | Raw GT-ZIP font data |
-| `MENU_IMG.ARC` / `MUSIC.DAT` | Large GT-ARC assets |
 
 ---
 
 ## Notes
 
-- Extract keeps **original bytes** (only GT-ZIP decompression).
-- Repack rebuilds `.tpk` from `*_tims/` when present; otherwise packs files as extracted.
-- Real names come from region file lists and, when applicable, embedded name lists.
-- Asset Viewer needs Pillow; the rest of the tool works without it.
+- Extract keeps **original bytes** (only GT-ZIP decompression when needed).
+- Real names come from region file lists and, when present, embedded name lists.
+- Asset Viewer needs Pillow; everything else works without it.
 
 ## Credits
 
-- pez2k [gt2tools](https://github.com/pez2k/gt2tools) Prior research into GT1 files.
+- [pez2k / gt2tools](https://github.com/pez2k/gt2tools) — prior research into GT1 files

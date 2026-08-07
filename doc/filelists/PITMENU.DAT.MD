@@ -1,0 +1,26 @@
+# PITMENU.DAT
+```
+    000.tim
+    001.tim
+    002.tim
+    003.tim
+    004.tim
+    005.tim
+    006.tim
+    007.tim
+    008.tim
+    009.tim
+    010.tim
+    011.tim
+    012.tim
+    013.tim
+    014.tim
+    015.tim
+    016.tim
+    017.tim
+    018.tim
+    019.tim
+    020.tim
+    021.tim
+    022.tim
+    023.tim
