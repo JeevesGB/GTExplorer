@@ -48,7 +48,6 @@ _PREFIX_MAGICS = [
 
 
 def detect_type(data: bytes) -> tuple:
-    """Return (type_name, extension). Data is never altered."""
     if not data:
         return ("Empty", ".bin")
 
@@ -60,6 +59,53 @@ def detect_type(data: bytes) -> tuple:
         if data.startswith(magic):
             return (name, ext)
 
+    # PlayStation TIM (little-endian 0x00000010)
+    if len(data) >= 8 and data[0] == 0x10 and data[1] == 0x00 and data[2] == 0x00 and data[3] == 0x00:
+        return ("TIM Texture", ".tim")
+
+    # TIM pack: u32 count + 16-byte name containing ".tim"
+    if len(data) >= 24:
+        count = struct.unpack_from("<I", data, 0)[0]
+        if 1 <= count <= 512:
+            name = data[4:20].split(b"\0")[0]
+            if b".tim" in name.lower():
+                return ("TIM Pack", ".tpk")
+
+    # Filename lists (.idx style and embedded lists)
+    if len(data) < 2_000_000:
+        sample = data[:4096]
+        printable = sum(1 for b in sample if 32 <= b < 127 or b in (9, 10, 13))
+        if len(sample) >= 16 and printable >= len(sample) * 0.90:
+            try:
+                text = data.decode("ascii", errors="strict")
+            except Exception:
+                try:
+                    text = data.decode("cp932", errors="replace")
+                except Exception:
+                    text = None
+            if text is not None:
+                lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+                if len(lines) >= 2:
+                    scored = sum(
+                        1 for ln in lines[:80]
+                        if "." in ln and ln.count(" ") <= 1 and len(ln) < 64
+                    )
+                    if scored >= min(5, max(2, len(lines[:80]) // 3)):
+                        return ("Filename List", ".idx")
+
+    if b".tim\n" in data[:200] or b".seq\n" in data[:200] or b".htm\n" in data[:200]:
+        return ("Filename List", ".idx")
+
+    # Mostly ASCII text (messages, etc.)
+    sample = data[:64]
+    printable = sum(1 for b in sample if (32 <= b < 127) or b in (0, 9, 10, 13))
+    if len(sample) >= 16 and printable >= len(sample) * 0.85:
+        if b".tim" not in sample and b"@(#)" not in sample:
+            return ("Text / Messages", ".txt")
+
+    return ("Unknown", ".bin")
+
+    
     # PlayStation TIM (little-endian 0x00000010)
     if len(data) >= 8 and data[0] == 0x10 and data[1] == 0x00 and data[2] == 0x00 and data[3] == 0x00:
         return ("TIM Texture", ".tim")

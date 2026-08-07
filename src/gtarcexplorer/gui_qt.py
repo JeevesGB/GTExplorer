@@ -25,6 +25,7 @@ from .ctex import decode_ctex, parse_ctex_header
 from .spec import is_spec_type, parse_spec_table, format_spec_preview
 from .namelist import parse_name_list
 from .replay import is_replay_save, parse_replay_save, format_replay_preview
+from .gthtml import is_gthtml, parse_gthtml, format_gthtml_preview
 
 try:
     from PIL import Image
@@ -97,6 +98,7 @@ class GTArcExplorer(QMainWindow):
         self.addToolBar(toolbar)
 
         self.act_open = QAction("Open .DAT", self)
+        self.act_open_nested = QAction("Open Nested ARC", self)
         self.act_extract = QAction("Extract All", self)
         self.act_extract_sel = QAction("Extract Selected", self)
         self.act_repack = QAction("Repack", self)
@@ -104,9 +106,16 @@ class GTArcExplorer(QMainWindow):
         self.act_diff_folder = QAction("Diff vs folder…", self)
         self.act_diff_dat = QAction("Diff vs another .DAT…", self)
 
-        for act in (self.act_open, self.act_extract, self.act_extract_sel,
-                    self.act_repack, self.act_folder,
-                    self.act_diff_folder, self.act_diff_dat):
+        for act in (
+            self.act_open, 
+            self.act_open_nested,
+            self.act_extract, 
+            self.act_extract_sel,
+            self.act_repack, 
+            self.act_folder,
+            self.act_diff_folder, 
+            self.act_diff_dat
+            ):
             toolbar.addAction(act)
 
         toolbar.addSeparator()
@@ -388,6 +397,8 @@ class GTArcExplorer(QMainWindow):
 
     def _connect_signals(self):
         self.act_open.triggered.connect(self.open_archive)
+        self.act_open_nested.triggered.connect(self.open_nested_arc)
+        self.tree.itemDoubleClicked.connect(self._on_tree_double_click)  # ← .connect
         self.act_extract.triggered.connect(self.extract_all)
         self.act_extract_sel.triggered.connect(self.extract_selected)
         self.act_repack.triggered.connect(self.repack)
@@ -395,11 +406,9 @@ class GTArcExplorer(QMainWindow):
         self.act_load_list.triggered.connect(self.load_custom_filelist)
         self.act_diff_folder.triggered.connect(self.diff_vs_folder)
         self.act_diff_dat.triggered.connect(self.diff_vs_dat)
-
         self.filelist_combo.currentTextChanged.connect(self.on_filelist_changed)
         self.tree.itemSelectionChanged.connect(self.on_select)
         self.tim_list.itemSelectionChanged.connect(self.on_tim_list_select)
-
         self.btn_zoom_in.clicked.connect(lambda: self.viewer_zoom(1.25))
         self.btn_zoom_out.clicked.connect(lambda: self.viewer_zoom(0.8))
         self.btn_fit.clicked.connect(self.viewer_fit)
@@ -483,7 +492,6 @@ class GTArcExplorer(QMainWindow):
             try:
                 raw = Path(path).read_bytes()
 
-                # Standalone GT1 REPLAY.DAT (PS1 memory-card style save)
                 if is_replay_save(raw):
                     self.arc = GTArc()
                     self.arc.path = path
@@ -503,7 +511,7 @@ class GTArcExplorer(QMainWindow):
                         "real_name": Path(path).name,
                     }]
                     self.finished_signal.emit(True, path)
-                return
+                    return
             
                 self.arc.load(path)
                 self._apply_filelist()
@@ -525,6 +533,59 @@ class GTArcExplorer(QMainWindow):
                         self.progress_signal.emit(i + 1, total)
 
                 self.finished_signal.emit(True, path)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                self.finished_signal.emit(False, str(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_tree_double_click(self, item, _column):
+        try:
+            idx = int(item.text(0))
+            f = self.arc.files[idx]
+            if f.get("type") == "Nested GT-ARC" or f.get("ext") == ".arc":
+                self.open_nested_arc()
+        except Exception:
+            pass
+
+    def open_nested_arc(self):
+        items = self.tree.selectedItems()
+        if not items:
+            QMessageBox.information(self, "Nothing selected",
+                                    "Select a Nested GT-ARC entry first.")
+            return
+        idx = int(items[0].text(0))
+        f = self.arc.files[idx]
+        if f.get("type") != "Nested GT-ARC" and f.get("ext") != ".arc":
+            QMessageBox.information(self, "Not an ARC",
+                                    "Selected entry is not a nested GT-ARC.")
+            return
+
+        data = self.arc.get_data(idx)
+        import tempfile
+        name = f.get("real_name") or f"{f['label']}.arc"
+        tmp = Path(tempfile.gettempdir()) / Path(name).name
+        tmp.write_bytes(data)
+
+        self.set_status(f"Opening nested {tmp.name}…")
+        self.progress.setRange(0, 0)
+        self.act_open.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        def worker():
+            try:
+                self.arc.load(str(tmp))
+                self._apply_filelist()
+                total = len(self.arc.files)
+                for i in range(total):
+                    try:
+                        self.arc.get_data(i)
+                    except Exception:
+                        pass
+                    if i % 8 == 0 or i == total - 1:
+                        self.progress_signal.emit(i + 1, total)
+                self.finished_signal.emit(True, str(tmp))
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -608,6 +669,23 @@ class GTArcExplorer(QMainWindow):
                     self.preview_text.append(f"{name:<20} {len(tim):>10,}")
                 self.show_pack_in_viewer(data)
 
+            elif f["type"] in ("Filename List", "Text / Messages"): #IDX FILES
+                names = parse_name_list(data)
+                if names:
+                    self.preview_text.append(f"Filename list - {len(names)} entries \n")
+                    self.preview_text.append(f"{'Idx':>4} Name")
+                    self.preview_text.append("-" * 40)
+                    for i, nm in enumerate(names):
+                        self.preview_text.append(f"{i:4d} {nm}")
+                        if i >= 499:
+                            self.preview_text.append(f"... ({len(names) - 500} more)")
+                            break
+                else: 
+                    try:
+                        self.preview_text.append(data[:8000].decode("utf-8", errors="replace"))
+                    except Exception:
+                        self.preview_text.append(repr(data[:200]))
+
             elif f["type"] == "TIM Texture":
                 self._viewer_mode = "tim"
                 self.tim_list.clear()
@@ -616,6 +694,33 @@ class GTArcExplorer(QMainWindow):
                 self._ctex_data = None
                 self.show_in_viewer(data, f["label"] + f["ext"])
 
+            elif f["type"] == "GT HTML" or is_gthtml(data):
+                try:
+                    parsed = parse_gthtml(data)
+                    self.preview_text.append(format_gthtml_preview(parsed))
+                except Exception as e: 
+                    self.preview_text.append(f"GTHTML parse error: {e}")
+                    self._hex_dump(data[:256])
+
+            elif f["type"] == "Nested GT-ARC" or f.get("ext") == ".arc": #NESTED .ARC FILES
+                try:
+                    import struct
+                    if not data.startswith(b"@(#)GT-ARC"):
+                        raise ValueError("Not a GT-ARC")
+                    ct, nfiles = struct.unpack_from("<HH", data, 0x0C)
+                    self.preview_text.append("Nested GT-ARC")
+                    self.preview_text.append(
+                        f"Content type : 0x{ct:04X}  "
+                        f"({'compressed' if ct == 0x8001 else 'uncompressed'})"
+                    )
+                    self.preview_text.append(f"Files        : {nfiles}")
+                    self.preview_text.append("")
+                    self.preview_text.append(
+                        "Double-click the entry or use 'Open Nested ARC' to browse it."
+                    )
+                except Exception as e:
+                    self.preview_text.append(f"Nested ARC preview error: {e}")
+                    self._hex_dump(data[:256])
             elif f["type"] == "GT-CTEX Texture":
                 try:
                     hdr = parse_ctex_header(data)
