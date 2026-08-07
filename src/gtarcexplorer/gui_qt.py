@@ -51,7 +51,7 @@ class GTArcExplorer(QMainWindow):
         super().__init__()
         self.setWindowTitle("GTExplorer")
         self.resize(1800, 920)
-        self.setMinimumSize(1790, 720)
+        self.setMinimumSize(1500, 720)
 
         icon_path = Path(__file__).resolve().parent.parent / "thm" / "icon.ico"
         if not icon_path.exists():
