@@ -1,5 +1,5 @@
-"""File-type sniffing for entries pulled out of a GT-ARC container."""
 import struct
+from .replay import detect_replay
 
 # (magic_bytes, type_name, extension)
 # Order matters: longer / more specific magics first where needed.
@@ -51,6 +51,10 @@ def detect_type(data: bytes) -> tuple:
     """Return (type_name, extension). Data is never altered."""
     if not data:
         return ("Empty", ".bin")
+
+    r = detect_replay(data)
+    if r is not None:
+        return r
 
     for magic, name, ext in _PREFIX_MAGICS:
         if data.startswith(magic):

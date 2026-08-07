@@ -8,6 +8,7 @@ from .audio import expand_sample_bank
 from .detect import detect_type
 from .filelist import lookup, safe_filename, archive_stem
 from .namelist import parse_name_list
+from .replay import is_replay_save 
 
 # Archive
 class GTArc:
@@ -47,6 +48,21 @@ class GTArc:
                 "label": "000_compressed_arc"
             })
             return
+
+        if is_replay_save(self.raw):
+            self.kind = [{
+                "index"         :   0, 
+                "label"         :   "REPLAY",
+                "ext"           :   ".replay",
+                "type"          :   "GT Replay Save",
+                "offset"        :   0,
+                "comp_size"     :   len(self.raw),
+                "decomp_size"   :   len(self.raw),
+                "data"          :   self.raw,
+                "real_name"     :   "REPLAY.DAT",
+            }]
+        return
+
 
         self.kind = "gtzip_raw"
         self.files.append({

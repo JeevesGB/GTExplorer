@@ -24,6 +24,7 @@ from .filelist import load_bundled, parse_filelist, bundled_lists
 from .ctex import decode_ctex, parse_ctex_header
 from .spec import is_spec_type, parse_spec_table, format_spec_preview
 from .namelist import parse_name_list
+from .replay import is_replay_save, parse_replay_save, format_replay_preview
 
 try:
     from PIL import Image
@@ -566,6 +567,15 @@ class GTArcExplorer(QMainWindow):
             self.preview_text.append(f"Type     : {f['type']}")
             self.preview_text.append(f"Extension: {f['ext']}")
             self.preview_text.append(f"Size     : {len(data):,} bytes\n")
+
+            if is_replay_save(data) or f.get("type") == "GT Replay Save":
+                try:
+                    save = parse_replay_save(data)
+                    self.preview_text.append(format_replay_preview(save))
+                except Exception as e: 
+                    self.preview_text.append(f"REPLAY.DAT parse error: {e}")
+                    self._hex_dump(data[:256])
+                return
 
             if f["type"] == "TIM Pack":
                 tims = parse_tim_pack(data)
