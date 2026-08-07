@@ -5,16 +5,6 @@ import sys
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QAction, QFont, QPixmap, QImage, QIcon, QColor
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QTreeWidget, QTreeWidgetItem, QTabWidget,
-    QTextEdit, QLabel, QToolBar, QStatusBar, QProgressBar,
-    QFileDialog, QMessageBox, QCheckBox, QComboBox,
-    QScrollArea, QHeaderView, QAbstractItemView, QPushButton, QInputDialog, QColorDialog
-)
-
 from .archive import GTArc
 from .tim_pack import parse_tim_pack
 from .audio import parse_sample_bank
@@ -26,6 +16,25 @@ from .spec import is_spec_type, parse_spec_table, format_spec_preview
 from .namelist import parse_name_list
 from .replay import is_replay_save, parse_replay_save, format_replay_preview
 from .gthtml import is_gthtml, parse_gthtml, format_gthtml_preview
+
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtGui import QAction, QFont, QPixmap, QImage, QIcon, QColor
+from PyQt6.QtWidgets import (
+    QApplication,       QMainWindow, 
+    QWidget,            QVBoxLayout, 
+    QHBoxLayout,        QSplitter, 
+    QTreeWidget,        QTreeWidgetItem, 
+    QTabWidget,         QTextEdit, 
+    QLabel,             QToolBar, 
+    QStatusBar,         QProgressBar,
+    QFileDialog,        QMessageBox, 
+    QCheckBox,          QComboBox,
+    QScrollArea,        QHeaderView, 
+    QAbstractItemView,  QPushButton, 
+    QInputDialog,       QColorDialog
+)
+############################################################################
+############################################################################
 
 try:
     from PIL import Image
