@@ -481,6 +481,30 @@ class GTArcExplorer(QMainWindow):
 
         def worker():
             try:
+                raw = Path(path).read_bytes()
+
+                # Standalone GT1 REPLAY.DAT (PS1 memory-card style save)
+                if is_replay_save(raw):
+                    self.arc = GTArc()
+                    self.arc.path = path
+                    self.arc.raw = raw
+                    self.arc.kind = "replay_save"
+                    self.arc.stem = Path(path).stem
+                    self.arc.name_map = None
+                    self.arc.files = [{
+                        "index": 0,
+                        "label": "REPLAY",
+                        "ext": ".replay",
+                        "type": "GT Replay Save",
+                        "offset": 0,
+                        "comp_size": len(raw),
+                        "decomp_size": len(raw),
+                        "data": raw,
+                        "real_name": Path(path).name,
+                    }]
+                    self.finished_signal.emit(True, path)
+                return
+            
                 self.arc.load(path)
                 self._apply_filelist()
 
