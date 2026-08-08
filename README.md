@@ -1,3 +1,7 @@
+<div style="text-align: center;">
+  <img src="img/gtexplorericon.png" alt="icon">
+</div>
+
 # GTExplorer
 
 Extractor and viewer for **Gran Turismo 1** (PlayStation) archive files.
