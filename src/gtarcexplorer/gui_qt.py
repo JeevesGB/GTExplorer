@@ -149,13 +149,13 @@ class GTArcExplorer(QMainWindow):
         self._load_theme("light" if self._theme == "dark" else "dark")
 
     def _update_theme_button(self):
-        if hasattr(self, "btn_theme"):
-            if self._theme == "dark":
-                self.btn_theme.setText("Light")
-                self.btn_theme.setToolTip("Switch to light theme")
-            else:
-                self.btn_theme.setText("Dark")
-                self.btn_theme.setToolTip("Switch to dark theme")
+        if hasattr(self, "act_theme"):
+            self.act_theme.blockSignals(True)
+            self.act_theme.setChecked(self._theme == "dark")
+            self.act_theme.blockSignals(False)
+            self.act_theme.setToolTip(
+                "Switch to light theme" if self._theme == "dark" else "Switch to dark theme"
+            )
 
 #UI
     def _build_ui(self):
@@ -191,13 +191,57 @@ class GTArcExplorer(QMainWindow):
         self.act_folder = QAction("Open Extract Folder", self)
         self.act_diff_folder = QAction("Diff vs folder…", self)
         self.act_diff_dat = QAction("Diff vs another .DAT…", self)
+        self.act_load_list = QAction("Load list…", self)
+        self.act_save_sel = QAction("Save Selected…", self)
+        self.act_save_sel.setToolTip("Write selected entries to a folder")
+        self.act_about = QAction("About", self)
 
-        for act in (
-            self.act_open, self.act_open_nested, self.act_open_folder,
-            self.act_extract, self.act_extract_sel, self.act_export_strings,
-            self.act_repack, self.act_folder, self.act_diff_folder, self.act_diff_dat,
-        ):
-            toolbar.addAction(act)
+        self.menu_recent = QMenu("Recent", self)
+
+        self.act_theme = QAction("Dark theme", self)
+        self.act_theme.setCheckable(True)
+        self.act_theme.setToolTip("Toggle between light and dark theme")
+
+        # Menu bar: the full action set lives here. The toolbar below only
+        # keeps the handful of actions used on nearly every operation.
+        menubar = self.menuBar()
+
+        m_file = menubar.addMenu("&File")
+        m_file.addAction(self.act_open)
+        m_file.addAction(self.act_open_nested)
+        m_file.addAction(self.act_open_folder)
+        m_file.addSeparator()
+        m_file.addMenu(self.menu_recent)
+        m_file.addSeparator()
+        m_file.addAction(self.act_save_sel)
+        m_file.addAction(self.act_folder)
+
+        m_extract = menubar.addMenu("&Extract")
+        m_extract.addAction(self.act_extract)
+        m_extract.addAction(self.act_extract_sel)
+        m_extract.addAction(self.act_export_strings)
+        m_extract.addAction(self.act_repack)
+
+        m_diff = menubar.addMenu("&Diff")
+        m_diff.addAction(self.act_diff_folder)
+        m_diff.addAction(self.act_diff_dat)
+
+        m_tools = menubar.addMenu("&Tools")
+        m_tools.addAction(self.act_load_list)
+
+        m_view = menubar.addMenu("&View")
+        m_view.addAction(self.act_theme)
+        self.act_log = QAction("Show log", self)
+        self.act_log.setCheckable(True)
+        m_view.addAction(self.act_log)
+
+        m_help = menubar.addMenu("&Help")
+        m_help.addAction(self.act_about)
+
+        # Slim toolbar: only the actions used on nearly every pass.
+        toolbar.addAction(self.act_open)
+        toolbar.addAction(self.act_extract_sel)
+        toolbar.addAction(self.act_save_sel)
 
         toolbar.addSeparator()
         self.chk_tims = QCheckBox("Also extract TIMs from packs")
@@ -213,19 +257,6 @@ class GTArcExplorer(QMainWindow):
         self.filelist_combo.setCurrentText("filelist_pal_retail.txt")
         self.filelist_combo.setMinimumWidth(180)
         toolbar.addWidget(self.filelist_combo)
-        self.act_load_list = QAction("Load list…", self)
-        toolbar.addAction(self.act_load_list)
-
-        toolbar.addSeparator()
-        self.act_save_sel = QAction("Save Selected…", self)
-        self.act_save_sel.setToolTip("Write selected entries to a folder")
-        toolbar.addAction(self.act_save_sel)
-
-        self.act_about = QAction("About", self)
-        toolbar.addAction(self.act_about)
-
-        self.menu_recent = QMenu("Recent", self)
-        self.act_recent = toolbar.addAction("Recent")
 
 
 
@@ -238,21 +269,6 @@ class GTArcExplorer(QMainWindow):
         left_lay.setContentsMargins(0, 0, 0, 0)
         left_lay.setSpacing(4)
         left_lay.addWidget(QLabel("<b>Archive Contents</b>"))
-
-        # Breadcrumb + Back for nested navigation
-        nav_row = QHBoxLayout()
-        self.btn_nav_back = QPushButton("← Back")
-        self.btn_nav_back.setEnabled(False)
-        self.btn_nav_back.setFixedWidth(64)
-        self.btn_nav_back.setToolTip("Return to parent archive")
-        self.btn_nav_back.setProperty("class", "secondary")
-        nav_row.addWidget(self.btn_nav_back)
-        self.breadcrumb = QLabel("")
-        self.breadcrumb.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        self.breadcrumb.setOpenExternalLinks(False)
-        self.breadcrumb.setWordWrap(True)
-        nav_row.addWidget(self.breadcrumb, stretch=1)
-        left_lay.addLayout(nav_row)
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter by name or type…  (Ctrl+F)")
@@ -281,8 +297,30 @@ class GTArcExplorer(QMainWindow):
         left_lay.addWidget(self.tree)
         self.main_splitter.addWidget(left)
 
+        # Right: inspector -- breadcrumb/back sit above it now, since they
+        # describe "what you're looking at" rather than "where the tree is".
+        inspector_container = QWidget()
+        inspector_lay = QVBoxLayout(inspector_container)
+        inspector_lay.setContentsMargins(0, 0, 0, 0)
+        inspector_lay.setSpacing(4)
+
+        nav_row = QHBoxLayout()
+        self.btn_nav_back = QPushButton("← Back")
+        self.btn_nav_back.setEnabled(False)
+        self.btn_nav_back.setFixedWidth(64)
+        self.btn_nav_back.setToolTip("Return to parent archive")
+        self.btn_nav_back.setProperty("class", "secondary")
+        nav_row.addWidget(self.btn_nav_back)
+        self.breadcrumb = QLabel("")
+        self.breadcrumb.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.breadcrumb.setOpenExternalLinks(False)
+        self.breadcrumb.setWordWrap(True)
+        nav_row.addWidget(self.breadcrumb, stretch=1)
+        inspector_lay.addLayout(nav_row)
+
         self.tabs = QTabWidget()
-        self.main_splitter.addWidget(self.tabs)
+        inspector_lay.addWidget(self.tabs)
+        self.main_splitter.addWidget(inspector_container)
 
         prev_page = QWidget()
         prev_lay = QVBoxLayout(prev_page)
