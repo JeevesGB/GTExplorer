@@ -6,9 +6,11 @@
 
 Extractor and viewer for **Gran Turismo 1** (PlayStation) archive files.
 
-![bg](img/1.png)
-![course](img/2.png)
-![demo](img/gif.gif)
+![1](img/1.png)
+![2](img/2.png)
+![3](img/3.png)
+![4](img/4.png)
+![5](img/gif.gif)
 
 ---
 
