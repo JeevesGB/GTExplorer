@@ -11,7 +11,6 @@
 [![Gran Turismo 1](https://img.shields.io/badge/Gran%20Turismo-1-white?logo=playstation&logoColor=white)]()
 [![Last commit](https://img.shields.io/github/last-commit/JeevesGB/GTExplorer)](https://github.com/JeevesGB/GTExplorer/commits/main)
 [![GitHub release](https://img.shields.io/github/v/release/JeevesGB/GTExplorer)](https://github.com/JeevesGB/GTExplorer/releases)
-![Downloads](https://img.shields.io/github/downloads/JeevesGB/GTExplorer/total)
 
 Extractor and viewer for **Gran Turismo 1** (PlayStation) archive files.
 
