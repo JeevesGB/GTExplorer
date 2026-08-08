@@ -19,13 +19,17 @@ from .replay import is_replay_save, parse_replay_save, format_replay_preview
 from .gthtml import is_gthtml, parse_gthtml, format_gthtml_preview
 
 from PyQt6.QtCore import Qt, QSize, QSettings, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QFont, QPixmap, QImage, QIcon, QColor, QKeySequence, QDesktopServices, QActionGroup
+from PyQt6.QtGui import (
+    QAction, QFont, QPixmap, QImage, QIcon, QColor, QKeySequence,
+    QDesktopServices, QActionGroup,
+)
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QTreeWidget, QTreeWidgetItem, QTabWidget, QTextEdit,
-    QLabel, QToolBar, QStatusBar, QProgressBar, QFileDialog, QMessageBox,
-    QCheckBox, QComboBox, QScrollArea, QHeaderView, QAbstractItemView,
-    QPushButton, QInputDialog, QColorDialog, QLineEdit, QMenu,
+    QSplitter, QTreeWidget, QTreeWidgetItem, QStackedWidget, QTextEdit,
+    QLabel, QToolBar, QToolButton, QStatusBar, QProgressBar, QFileDialog,
+    QMessageBox, QCheckBox, QComboBox, QScrollArea, QHeaderView,
+    QAbstractItemView, QPushButton, QInputDialog, QColorDialog, QLineEdit,
+    QMenu, QSizePolicy, QButtonGroup,
 )
 
 try:
@@ -35,9 +39,6 @@ except ImportError:
     HAS_PIL = False
 
 
-# ---------------------------------------------------------------------------
-# Type → accent colour for the tree (foreground)
-# ---------------------------------------------------------------------------
 TYPE_COLORS = {
     "TIM Texture":       "#5dade2",
     "TIM Pack":          "#3498db",
@@ -54,9 +55,14 @@ TYPE_COLORS = {
 }
 
 
+CANVAS_PREVIEW = 0
+CANVAS_STRUCTURE = 1
+CANVAS_VIEWER = 2
+
+
 class GTArcExplorer(QMainWindow):
-    progress_signal = pyqtSignal(int, int)       # current, total
-    finished_signal = pyqtSignal(bool, object)   # success, path_or_error
+    progress_signal = pyqtSignal(int, int)       
+    finished_signal = pyqtSignal(bool, object)  
 
     def __init__(self):
         super().__init__()
@@ -75,7 +81,7 @@ class GTArcExplorer(QMainWindow):
         self.arc = GTArc()
         self.extract_dir: Path | None = None
         self._custom_filelist_path: str | None = None
-        self._theme = "dark"  
+        self._theme = "dark"
 
         self._viewer_image = None
         self._viewer_scale = 1.0
@@ -89,7 +95,7 @@ class GTArcExplorer(QMainWindow):
 
         self._nav_stack: list[dict] = []
         self._cancel_load = False
-        self._lazy_load = True  
+        self._lazy_load = True
 
         self._build_ui()
         self._load_theme()
@@ -129,12 +135,18 @@ class GTArcExplorer(QMainWindow):
                     QMainWindow, QWidget { background-color: #252526; color: #FFFFFA; }
                     QTreeWidget { background-color: #252526; color: #e0e0e0; }
                     QPushButton { background-color: #FF312E; color: white; padding: 6px 12px; border-radius: 4px; }
+                    QToolButton { background-color: transparent; color: #cfcfcf; border: none; padding: 6px; border-radius: 6px; }
+                    QToolButton:checked { background-color: #3a3a3a; color: #FF6B67; }
+                    QToolButton:hover { background-color: #2f2f2f; }
                 """)
             else:
                 self.setStyleSheet("""
                     QMainWindow, QWidget { background-color: #f5f5f5; color: #1e1e1e; }
                     QTreeWidget { background-color: #ffffff; color: #1e1e1e; }
                     QPushButton { background-color: #FF312E; color: white; padding: 6px 12px; border-radius: 4px; }
+                    QToolButton { background-color: transparent; color: #444; border: none; padding: 6px; border-radius: 6px; }
+                    QToolButton:checked { background-color: #e3e3e3; color: #c0392b; }
+                    QToolButton:hover { background-color: #ececec; }
                 """)
 
         self._update_theme_button()
@@ -157,7 +169,7 @@ class GTArcExplorer(QMainWindow):
                 "Switch to light theme" if self._theme == "dark" else "Switch to dark theme"
             )
 
-#UI
+# UI
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -202,8 +214,7 @@ class GTArcExplorer(QMainWindow):
         self.act_theme.setCheckable(True)
         self.act_theme.setToolTip("Toggle between light and dark theme")
 
-        # Menu bar: the full action set lives here. The toolbar below only
-        # keeps the handful of actions used on nearly every operation.
+
         menubar = self.menuBar()
 
         m_file = menubar.addMenu("&File")
@@ -238,18 +249,18 @@ class GTArcExplorer(QMainWindow):
         m_help = menubar.addMenu("&Help")
         m_help.addAction(self.act_about)
 
-        # Slim toolbar: only the actions used on nearly every pass.
-        toolbar.addAction(self.act_open)
-        toolbar.addAction(self.act_extract_sel)
-        toolbar.addAction(self.act_save_sel)
-
-        toolbar.addSeparator()
-        self.chk_tims = QCheckBox("Also extract TIMs from packs")
-        self.chk_inst = QCheckBox("Also extract samples from INST/ENGN")
+        self.chk_tims = QCheckBox("Extract TIMs")
+        self.chk_tims.setToolTip("Also extract TIMs from packs")
+        self.chk_inst = QCheckBox("Extract samples")
+        self.chk_inst.setToolTip("Also extract samples from INST/ENGN")
         toolbar.addWidget(self.chk_tims)
         toolbar.addWidget(self.chk_inst)
 
-        toolbar.addSeparator()
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+
         toolbar.addWidget(QLabel("Names:"))
         self.filelist_combo = QComboBox()
         lists = bundled_lists() or ["(none)"]
@@ -258,12 +269,43 @@ class GTArcExplorer(QMainWindow):
         self.filelist_combo.setMinimumWidth(180)
         toolbar.addWidget(self.filelist_combo)
 
-
-
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(self.main_splitter, stretch=1)
 
-        # Left: filter + tree
+
+        self.rail = QWidget()
+        self.rail.setFixedWidth(44)
+        rail_lay = QVBoxLayout(self.rail)
+        rail_lay.setContentsMargins(4, 10, 4, 10)
+        rail_lay.setSpacing(10)
+
+        self.rail_group = QButtonGroup(self)
+        self.rail_group.setExclusive(True)
+        self._rail_buttons: list[QToolButton] = []
+
+        style = self.style()
+        rail_defs = [
+            ("Preview", style.StandardPixmap.SP_FileDialogDetailedView),
+            ("Extracted structure", style.StandardPixmap.SP_DirIcon),
+            ("Asset viewer", style.StandardPixmap.SP_DesktopIcon),
+        ]
+        for i, (tip, pixmap) in enumerate(rail_defs):
+            btn = QToolButton()
+            btn.setIcon(style.standardIcon(pixmap))
+            btn.setIconSize(QSize(20, 20))
+            btn.setToolTip(tip)
+            btn.setCheckable(True)
+            btn.setAutoRaise(True)
+            btn.setFixedSize(36, 36)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            self.rail_group.addButton(btn, i)
+            rail_lay.addWidget(btn)
+            self._rail_buttons.append(btn)
+        rail_lay.addStretch()
+        self._rail_buttons[CANVAS_PREVIEW].setChecked(True)
+
+        self.main_splitter.addWidget(self.rail)
+
         left = QWidget()
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 0, 0)
@@ -285,6 +327,7 @@ class GTArcExplorer(QMainWindow):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
         hdr = self.tree.header()
+        hdr.setStretchLastSection(False)
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
@@ -294,20 +337,30 @@ class GTArcExplorer(QMainWindow):
         hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSortIndicator(0, Qt.SortOrder.AscendingOrder)
 
+        self.tree.setColumnHidden(3, True)
+        self.tree.setColumnHidden(5, True)
+
+
+        self.tree_empty_label = QLabel(
+            "No archive loaded\nFile \u203a Open .DAT to begin", self.tree
+        )
+        self.tree_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.tree_empty_label.setObjectName("treeEmptyLabel")
+        self.tree_empty_label.setStyleSheet("color: #888;")
+
         left_lay.addWidget(self.tree)
         self.main_splitter.addWidget(left)
 
-        # Right: inspector -- breadcrumb/back sit above it now, since they
-        # describe "what you're looking at" rather than "where the tree is".
-        inspector_container = QWidget()
-        inspector_lay = QVBoxLayout(inspector_container)
-        inspector_lay.setContentsMargins(0, 0, 0, 0)
-        inspector_lay.setSpacing(4)
+
+        canvas_container = QWidget()
+        canvas_lay = QVBoxLayout(canvas_container)
+        canvas_lay.setContentsMargins(0, 0, 0, 0)
+        canvas_lay.setSpacing(4)
 
         nav_row = QHBoxLayout()
         self.btn_nav_back = QPushButton("← Back")
         self.btn_nav_back.setEnabled(False)
-        self.btn_nav_back.setFixedWidth(64)
+        self.btn_nav_back.setMinimumWidth(64)
         self.btn_nav_back.setToolTip("Return to parent archive")
         self.btn_nav_back.setProperty("class", "secondary")
         nav_row.addWidget(self.btn_nav_back)
@@ -316,11 +369,11 @@ class GTArcExplorer(QMainWindow):
         self.breadcrumb.setOpenExternalLinks(False)
         self.breadcrumb.setWordWrap(True)
         nav_row.addWidget(self.breadcrumb, stretch=1)
-        inspector_lay.addLayout(nav_row)
+        canvas_lay.addLayout(nav_row)
 
-        self.tabs = QTabWidget()
-        inspector_lay.addWidget(self.tabs)
-        self.main_splitter.addWidget(inspector_container)
+        self.canvas_stack = QStackedWidget()
+        canvas_lay.addWidget(self.canvas_stack)
+        self.main_splitter.addWidget(canvas_container)
 
         prev_page = QWidget()
         prev_lay = QVBoxLayout(prev_page)
@@ -334,7 +387,7 @@ class GTArcExplorer(QMainWindow):
         self.preview_text.setReadOnly(True)
         self.preview_text.setFont(QFont("Consolas", 9))
         prev_lay.addWidget(self.preview_text)
-        self.tabs.addTab(prev_page, "Preview")
+        self.canvas_stack.addWidget(prev_page)  
 
         struct_page = QWidget()
         struct_lay = QVBoxLayout(struct_page)
@@ -342,7 +395,7 @@ class GTArcExplorer(QMainWindow):
         self.struct_tree = QTreeWidget()
         self.struct_tree.setHeaderHidden(True)
         struct_lay.addWidget(self.struct_tree)
-        self.tabs.addTab(struct_page, "Extracted Structure")
+        self.canvas_stack.addWidget(struct_page)  
 
         viewer_page = QWidget()
         viewer_lay = QVBoxLayout(viewer_page)
@@ -386,9 +439,16 @@ class GTArcExplorer(QMainWindow):
         vbody.setSizes([200, 800])
 
         viewer_lay.addWidget(vbody)
-        self.tabs.addTab(viewer_page, "Asset Viewer")
-
-        self.main_splitter.setSizes([480, 1000])
+        self.canvas_stack.addWidget(viewer_page)  
+        left.setMinimumWidth(280)
+        canvas_container.setMinimumWidth(280)
+        self.main_splitter.setCollapsible(0, False)
+        self.main_splitter.setCollapsible(1, False)
+        self.main_splitter.setCollapsible(2, False)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setStretchFactor(2, 1)
+        self.main_splitter.setSizes([44, 878, 878])
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
@@ -410,6 +470,12 @@ class GTArcExplorer(QMainWindow):
         self.act_focus_filter.setShortcut(QKeySequence("Ctrl+F"))
         self.addAction(self.act_focus_filter)
 
+    def _switch_canvas(self, idx: int):
+        """Show the given page in the canvas stack and sync the rail."""
+        self.canvas_stack.setCurrentIndex(idx)
+        if 0 <= idx < len(self._rail_buttons):
+            self._rail_buttons[idx].setChecked(True)
+
     def _restore_geometry(self):
         geo = self.settings.value("geometry")
         if geo is not None:
@@ -417,9 +483,16 @@ class GTArcExplorer(QMainWindow):
         sizes = self.settings.value("splitter")
         if sizes is not None:
             try:
-                self.main_splitter.setSizes([int(x) for x in sizes])
+                sizes = [int(x) for x in sizes]
+                if len(sizes) == self.main_splitter.count():
+                    self.main_splitter.setSizes(sizes)
             except Exception:
                 pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "tree_empty_label"):
+            self.tree_empty_label.setGeometry(self.tree.viewport().rect())
 
     def closeEvent(self, event):
         self.settings.setValue("geometry", self.saveGeometry())
@@ -460,6 +533,7 @@ class GTArcExplorer(QMainWindow):
         self.btn_pal_minus.clicked.connect(lambda: self.ctex_shift_clut(-1))
         self.filter_edit.textChanged.connect(self._apply_tree_filter)
         self.act_focus_filter.triggered.connect(lambda: self.filter_edit.setFocus())
+        self.rail_group.idClicked.connect(self._switch_canvas)
         if hasattr(self, "act_save_sel"):
             self.act_save_sel.triggered.connect(self.save_selected)
         if hasattr(self, "act_about"):
@@ -545,7 +619,7 @@ class GTArcExplorer(QMainWindow):
 
         if chosen is act_preview:
             self.show_preview(idx)
-            self.tabs.setCurrentIndex(0)
+            self._switch_canvas(CANVAS_PREVIEW)
         elif chosen is act_extract:
             self.extract_selected()
         elif chosen is act_save:
@@ -753,9 +827,6 @@ class GTArcExplorer(QMainWindow):
             table.setItem(r, 3, QTableWidgetItem(f"{right:,}" if right is not None else "—"))
             table.setItem(r, 4, QTableWidgetItem(f"{delta:+,}" if delta is not None else "—"))
             table.setItem(r, 5, QTableWidgetItem(status))
-            # Aligned to the theme's semantic palette (success/warning/error)
-            # rather than ad hoc colors, so this dialog reads consistently
-            # with the rest of the app.
             color = {
                 "same": "#1E7B4D", "larger": "#8F5A08", "smaller": "#5B8FD4",
                 "missing": "#8E1E1E", "only in A": "#8E1E1E", "only in B": "#8E1E1E",
@@ -1074,7 +1145,6 @@ class GTArcExplorer(QMainWindow):
             named = sum(1 for f in self.arc.files if f.get("real_name"))
             self.set_status(f"Applied names from {Path(path).name}  •  {named} named")
 
-
     def _recent_list(self) -> list[str]:
         raw = self.settings.value("recent", [])
         if not isinstance(raw, list):
@@ -1123,11 +1193,8 @@ class GTArcExplorer(QMainWindow):
         self.breadcrumb.setText(trail or "(root)")
         can_back = bool(self._nav_stack)
         self.btn_nav_back.setEnabled(can_back)
-        if hasattr(self, "act_open_nested"):
-            pass  
 
     def nav_back(self):
-        """Return to the parent archive on the navigation stack."""
         if not self._nav_stack:
             self._update_breadcrumb()
             return
@@ -1173,7 +1240,6 @@ class GTArcExplorer(QMainWindow):
             self._open_path(path)
 
     def _open_path(self, path: str, push_nav: bool = True):
-        """Open a file or folder path (used by Recent, DnD, nested)."""
         p = Path(path)
         if not p.exists():
             QMessageBox.warning(self, "Missing", f"Path not found:\n{path}")
@@ -1233,10 +1299,7 @@ class GTArcExplorer(QMainWindow):
         self.set_status(f"Exported {n} PNG(s) → {out}")
         QMessageBox.information(self, "Done", f"Exported {n} PNG(s) to:\n{out}")
 
-
-
     def _open_file_path(self, path: Path, push_nav: bool = True):
-        """Internal: open a file path (shares logic with open_archive dialog)."""
         self._set_last_dir(str(path))
         self._add_recent(str(path))
         self.set_status(f"Reading {path.name}… please wait")
@@ -1374,7 +1437,6 @@ class GTArcExplorer(QMainWindow):
 
         threading.Thread(target=worker, daemon=True).start()
 
-
     def open_archive(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open GT archive or extracted file",
@@ -1389,7 +1451,6 @@ class GTArcExplorer(QMainWindow):
             return
         self._nav_stack.clear()
         self._open_file_path(Path(path), push_nav=False)
-
 
     def _on_tree_double_click(self, item, _column):
         try:
@@ -1426,14 +1487,14 @@ class GTArcExplorer(QMainWindow):
         except Exception:
             parent_label = "?"
         parent_path = getattr(self.arc, "path", None)
-        parent_snapshot = self.arc  # keep the live object; we replace self.arc below
+        parent_snapshot = self.arc  
 
         self._nav_stack.append({
             "path": parent_path,
             "label": parent_label,
             "snapshot": parent_snapshot,
         })
-        self._update_breadcrumb()  # enable Back immediately
+        self._update_breadcrumb() 
 
         self.set_status(f"Opening nested {tmp.name}…")
         self.progress.setRange(0, 0)
@@ -1442,7 +1503,6 @@ class GTArcExplorer(QMainWindow):
 
         def worker():
             try:
-                # New GTArc instance so the snapshot above stays intact
                 nested = GTArc()
                 nested.load(str(tmp))
                 self.arc = nested
@@ -1457,7 +1517,6 @@ class GTArcExplorer(QMainWindow):
                         self.progress_signal.emit(i + 1, total)
                 self.finished_signal.emit(True, str(tmp))
             except Exception as e:
-                # Roll back nav entry on failure
                 if self._nav_stack:
                     self._nav_stack.pop()
                 import traceback
@@ -1474,7 +1533,6 @@ class GTArcExplorer(QMainWindow):
             return
         self._nav_stack.clear()
         self._open_folder_path(Path(folder))
-
 
     def _update_progress(self, current: int, total: int):
         self.progress.setRange(0, total)
@@ -1494,7 +1552,6 @@ class GTArcExplorer(QMainWindow):
             return
 
         self.filter_edit.clear()
-        # Scan for correct filenames from every available source
         named, src = self._auto_scan_names()
         self.populate_tree()
         self._update_action_states()
@@ -1534,7 +1591,6 @@ class GTArcExplorer(QMainWindow):
                 pct,
                 str(f.get("comp_size", "")),
             ])
-            # Numeric sort for index / size columns
             item.setData(0, Qt.ItemDataRole.UserRole, f["index"])
             try:
                 item.setData(4, Qt.ItemDataRole.UserRole, int(size) if size != "?" else -1)
@@ -1548,6 +1604,8 @@ class GTArcExplorer(QMainWindow):
             self.tree.addTopLevelItem(item)
         self.tree.setSortingEnabled(True)
         self._apply_tree_filter()
+        if hasattr(self, "tree_empty_label"):
+            self.tree_empty_label.setVisible(not self.arc.files)
 
     def on_select(self):
         self._update_action_states()
@@ -1559,7 +1617,6 @@ class GTArcExplorer(QMainWindow):
             except ValueError:
                 pass
 
-    # ------------------------------------------------------------------ preview
     def show_preview(self, idx: int):
         try:
             data = self.arc.get_data(idx)
@@ -1592,7 +1649,7 @@ class GTArcExplorer(QMainWindow):
                 self.show_pack_in_viewer(data)
                 if hasattr(self, "btn_export_pngs"):
                     self.btn_export_pngs.setEnabled(True)
-                self.tabs.setCurrentIndex(2)
+                self._switch_canvas(CANVAS_VIEWER)
 
             elif f["type"] in ("Filename List", "Text / Messages"):
                 names = parse_name_list(data)
@@ -1618,7 +1675,7 @@ class GTArcExplorer(QMainWindow):
                 self._model_verts = []
                 self._ctex_data = None
                 self.show_in_viewer(data, f["label"] + f["ext"])
-                self.tabs.setCurrentIndex(2)
+                self._switch_canvas(CANVAS_VIEWER)
 
             elif f["type"] == "GT HTML" or is_gthtml(data):
                 try:
@@ -1659,7 +1716,7 @@ class GTArcExplorer(QMainWindow):
                 except Exception as e:
                     self.preview_text.append(f"CTEX header: {e}")
                 self.show_ctex_in_viewer(data, f["label"] + f["ext"])
-                self.tabs.setCurrentIndex(2)
+                self._switch_canvas(CANVAS_VIEWER)
 
             elif is_spec_type(f["type"]):
                 try:
@@ -1678,7 +1735,7 @@ class GTArcExplorer(QMainWindow):
                 except Exception as e:
                     self.preview_text.append(f"Header: {e}")
                 self.show_model_in_viewer(data, f["label"] + f["ext"])
-                self.tabs.setCurrentIndex(2)
+                self._switch_canvas(CANVAS_VIEWER)
 
             elif f["type"] in ("Sound Instrument", "Engine Sound"):
                 _, samples = parse_sample_bank(data)
@@ -1691,7 +1748,6 @@ class GTArcExplorer(QMainWindow):
             else:
                 self.preview_text.append("=== Hex dump (first 256 bytes) ===")
                 self._hex_dump(data[:256])
-
 
             if hasattr(self, "chk_show_hex") and self.chk_show_hex.isChecked():
                 self.preview_text.append("\n=== Hex dump (first 256 bytes) ===")
@@ -1708,7 +1764,6 @@ class GTArcExplorer(QMainWindow):
             asc = "".join(chr(b) if 32 <= b < 127 else "." for b in line)
             self.preview_text.append(f"{i:04x}  {hx:<48}  {asc}")
 
-    # ------------------------------------------------------------------ extract / repack
     def extract_all(self):
         if not self.arc.files:
             QMessageBox.warning(self, "No archive", "Open a file first")
@@ -1873,7 +1928,10 @@ class GTArcExplorer(QMainWindow):
         self.struct_tree.addTopLevelItem(root_item)
         for item in sorted(root.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
             if item.is_dir():
-                dir_item = QTreeWidgetItem([f"📁 {item.name}/"])
+                dir_item = QTreeWidgetItem([f"{item.name}/"])
+                dir_item.setIcon(0, self.style().standardIcon(
+                    self.style().StandardPixmap.SP_DirIcon
+                ))
                 root_item.addChild(dir_item)
                 for sub in sorted(item.iterdir()):
                     if sub.is_file():
@@ -1883,7 +1941,6 @@ class GTArcExplorer(QMainWindow):
                 size = item.stat().st_size
                 root_item.addChild(QTreeWidgetItem([f"{item.name}  ({size:,} B)"]))
 
-    # ------------------------------------------------------------------ Asset Viewer
     def _pil_to_qpixmap(self, img: Image.Image, scale: float = 1.0) -> QPixmap:
         if scale != 1.0:
             w = max(1, int(img.width * scale))
@@ -1956,7 +2013,6 @@ class GTArcExplorer(QMainWindow):
         self._render_viewer()
 
     def viewer_fit(self):
-        """Scale image to fit the visible scroll area."""
         if self._viewer_image is None or not HAS_PIL:
             return
         if self._viewer_scroll is None:
