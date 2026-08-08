@@ -30,8 +30,7 @@ Extractor and viewer for **Gran Turismo 1** (PlayStation) archive files.
 - Optional **INST / ENGN** sample expansion
 - Region **file lists** for real asset names on extract
 - Built-in **Asset Viewer** (TIM, TIM packs, GT-CTEX, GT-PS)
-- **Preview** for sequences, filename lists, GTHTML, and car part tables (SPEC, COLOR, …)
-- Progress feedback while loading large archives
+- **Preview** for sequences, filename lists, GTHTML, and car part tables (SPEC, COLOR, etc)
 
 > **Note:** Repacking is currently unfinished.
 
