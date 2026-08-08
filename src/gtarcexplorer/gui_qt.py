@@ -75,7 +75,7 @@ class GTArcExplorer(QMainWindow):
         self.arc = GTArc()
         self.extract_dir: Path | None = None
         self._custom_filelist_path: str | None = None
-        self._theme = "light"  # default
+        self._theme = "dark"  
 
         self._viewer_image = None
         self._viewer_scale = 1.0
@@ -87,10 +87,9 @@ class GTArcExplorer(QMainWindow):
         self._viewer_mode = None
         self._viewer_scroll: QScrollArea | None = None
 
-        # Navigation stack for nested ARCs: list of (path_or_label, kind)
         self._nav_stack: list[dict] = []
         self._cancel_load = False
-        self._lazy_load = True  # identify types without full decompress at open
+        self._lazy_load = True  
 
         self._build_ui()
         self._load_theme()
@@ -101,7 +100,6 @@ class GTArcExplorer(QMainWindow):
         self.progress_signal.connect(self._update_progress)
         self.finished_signal.connect(self._on_load_finished)
 
-    # ------------------------------------------------------------------ theme
     def _thm_dir(self) -> Path:
         p = Path(__file__).resolve().parent.parent / "thm"
         if not p.exists():
@@ -126,7 +124,6 @@ class GTArcExplorer(QMainWindow):
                 self.setStyleSheet(qss.read_text(encoding="utf-8"))
                 break
         else:
-            # Minimal fallbacks so the app still looks OK without QSS files
             if self._theme == "dark":
                 self.setStyleSheet("""
                     QMainWindow, QWidget { background-color: #252526; color: #FFFFFA; }
@@ -140,7 +137,6 @@ class GTArcExplorer(QMainWindow):
                     QPushButton { background-color: #FF312E; color: white; padding: 6px 12px; border-radius: 4px; }
                 """)
 
-        # Sync menu checks
         self._update_theme_button()
 
     def set_theme_light(self):
@@ -161,7 +157,7 @@ class GTArcExplorer(QMainWindow):
                 self.btn_theme.setText("Dark")
                 self.btn_theme.setToolTip("Switch to dark theme")
 
-    # ------------------------------------------------------------------ UI
+#UI
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -169,7 +165,6 @@ class GTArcExplorer(QMainWindow):
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(4)
 
-        # ---- toolbar ----
         toolbar = QToolBar("Main")
         toolbar.setIconSize(QSize(18, 18))
         toolbar.setMovable(False)
@@ -229,15 +224,11 @@ class GTArcExplorer(QMainWindow):
         self.act_about = QAction("About", self)
         toolbar.addAction(self.act_about)
 
-        # Recent files (populated dynamically)
         self.menu_recent = QMenu("Recent", self)
         self.act_recent = toolbar.addAction("Recent")
-        # Use a tool button menu via QAction default - simpler: add menu to menubar later
 
 
-        # Theme toggle on the right of the toolbar
 
-        # ---- main splitter ----
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(self.main_splitter, stretch=1)
 
@@ -254,6 +245,7 @@ class GTArcExplorer(QMainWindow):
         self.btn_nav_back.setEnabled(False)
         self.btn_nav_back.setFixedWidth(64)
         self.btn_nav_back.setToolTip("Return to parent archive")
+        self.btn_nav_back.setProperty("class", "secondary")
         nav_row.addWidget(self.btn_nav_back)
         self.breadcrumb = QLabel("")
         self.breadcrumb.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
@@ -289,11 +281,9 @@ class GTArcExplorer(QMainWindow):
         left_lay.addWidget(self.tree)
         self.main_splitter.addWidget(left)
 
-        # Right: tabs
         self.tabs = QTabWidget()
         self.main_splitter.addWidget(self.tabs)
 
-        # Preview tab
         prev_page = QWidget()
         prev_lay = QVBoxLayout(prev_page)
         self.preview_info = QLabel(
@@ -308,7 +298,6 @@ class GTArcExplorer(QMainWindow):
         prev_lay.addWidget(self.preview_text)
         self.tabs.addTab(prev_page, "Preview")
 
-        # Extracted Structure tab
         struct_page = QWidget()
         struct_lay = QVBoxLayout(struct_page)
         struct_lay.addWidget(QLabel("Files after extraction"))
@@ -317,7 +306,6 @@ class GTArcExplorer(QMainWindow):
         struct_lay.addWidget(self.struct_tree)
         self.tabs.addTab(struct_page, "Extracted Structure")
 
-        # Asset Viewer tab
         viewer_page = QWidget()
         viewer_lay = QVBoxLayout(viewer_page)
 
@@ -333,6 +321,7 @@ class GTArcExplorer(QMainWindow):
         self.btn_pal_minus = QPushButton("Pal -")
         for b in (self.btn_zoom_in, self.btn_zoom_out, self.btn_fit,
                   self.btn_1to1, self.btn_pal_plus, self.btn_pal_minus):
+            b.setProperty("class", "secondary")
             vtop.addWidget(b)
         viewer_lay.addLayout(vtop)
 
@@ -349,9 +338,10 @@ class GTArcExplorer(QMainWindow):
         self.viewer_label = QLabel()
         self.viewer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.viewer_label.setMinimumSize(400, 300)
-        self.viewer_label.setStyleSheet("background-color: #2a2a2a;")
+        self.viewer_label.setObjectName("viewerLabel")
 
         self._viewer_scroll = QScrollArea()
+        self._viewer_scroll.setObjectName("viewerScroll")
         self._viewer_scroll.setWidgetResizable(True)
         self._viewer_scroll.setWidget(self.viewer_label)
         vbody.addWidget(self._viewer_scroll)
@@ -362,7 +352,6 @@ class GTArcExplorer(QMainWindow):
 
         self.main_splitter.setSizes([480, 1000])
 
-        # Status bar
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status_label = QLabel("Ready – open a GT-ARC / GT-ZIP file")
@@ -375,15 +364,14 @@ class GTArcExplorer(QMainWindow):
         self.btn_theme = QPushButton("Dark")
         self.btn_theme.setFixedWidth(56)
         self.btn_theme.setToolTip("Switch to dark theme")
+        self.btn_theme.setProperty("class", "secondary")
         self.btn_theme.clicked.connect(self.toggle_theme)
         self.status.addPermanentWidget(self.btn_theme)
 
-        # Hidden shortcut for filter focus
         self.act_focus_filter = QAction(self)
         self.act_focus_filter.setShortcut(QKeySequence("Ctrl+F"))
         self.addAction(self.act_focus_filter)
 
-    # ------------------------------------------------------------------ settings / geometry
     def _restore_geometry(self):
         geo = self.settings.value("geometry")
         if geo is not None:
@@ -409,7 +397,6 @@ class GTArcExplorer(QMainWindow):
         d = str(p if p.is_dir() else p.parent)
         self.settings.setValue(key, d)
 
-    # ------------------------------------------------------------------ signals
     def _connect_signals(self):
         self.act_open.triggered.connect(self.open_archive)
         self.act_open_nested.triggered.connect(self.open_nested_arc)
@@ -469,7 +456,6 @@ class GTArcExplorer(QMainWindow):
         if hasattr(self, "act_save_sel"):
             self.act_save_sel.setEnabled(has_files and has_sel)
 
-    # ------------------------------------------------------------------ helpers
     def set_status(self, text: str):
         self.status_label.setText(text)
 
@@ -489,7 +475,6 @@ class GTArcExplorer(QMainWindow):
             )
             item.setHidden(text not in hay)
 
-    # ------------------------------------------------------------------ context menu
     def _tree_context_menu(self, pos):
         items = self.tree.selectedItems()
         if not items:
@@ -505,7 +490,6 @@ class GTArcExplorer(QMainWindow):
         act_copy_name = menu.addAction("Copy name")
         act_copy_path = menu.addAction("Copy path / index")
 
-        # Enable nested only when appropriate
         try:
             f = self.arc.files[int(items[0].text(0))]
             act_nested.setEnabled(
@@ -551,7 +535,6 @@ class GTArcExplorer(QMainWindow):
         self._set_last_dir(path, "last_extract_dir")
         self.set_status(f"Saved → {path}")
 
-    # ------------------------------------------------------------------ export / diff (unchanged logic)
     def export_strings(self):
         if not self.arc.files:
             QMessageBox.warning(self, "No archive", "Open a file first")
@@ -732,10 +715,13 @@ class GTArcExplorer(QMainWindow):
             table.setItem(r, 3, QTableWidgetItem(f"{right:,}" if right is not None else "—"))
             table.setItem(r, 4, QTableWidgetItem(f"{delta:+,}" if delta is not None else "—"))
             table.setItem(r, 5, QTableWidgetItem(status))
+            # Aligned to the theme's semantic palette (success/warning/error)
+            # rather than ad hoc colors, so this dialog reads consistently
+            # with the rest of the app.
             color = {
-                "same": "#7dcea0", "larger": "#f5b041", "smaller": "#5dade2",
-                "missing": "#e74c3c", "only in A": "#e74c3c", "only in B": "#e74c3c",
-            }.get(status, "#cccccc")
+                "same": "#1E7B4D", "larger": "#8F5A08", "smaller": "#5B8FD4",
+                "missing": "#8E1E1E", "only in A": "#8E1E1E", "only in B": "#8E1E1E",
+            }.get(status, "#BFBFBF")
             table.item(r, 5).setForeground(QColor(color))
             if status != "same":
                 changed += 1
@@ -749,7 +735,6 @@ class GTArcExplorer(QMainWindow):
         layout.addWidget(buttons)
         dlg.exec()
 
-    # ------------------------------------------------------------------ filelist
     def on_filelist_changed(self, _name=None):
         self._custom_filelist_path = None
         if self.arc.files:
@@ -788,6 +773,253 @@ class GTArcExplorer(QMainWindow):
                 f["label"] = f.get("label") or f"{f['index']:03d}"
                 f["real_name"] = None
 
+    def _apply_name_list(self, names: list[str], overwrite: bool = False) -> int:
+        applied = 0
+        for i, f in enumerate(self.arc.files):
+            if i >= len(names):
+                break
+            if f.get("real_name") and not overwrite:
+                continue
+            nm = (names[i] or "").strip()
+            if not nm:
+                continue
+            nm = nm.replace("\\", "/").split("/")[-1]
+            f["real_name"] = nm
+            f["label"] = Path(nm).stem or nm
+            suf = Path(nm).suffix
+            if suf:
+                f["ext"] = suf
+            applied += 1
+        return applied
+
+    def _collect_name_candidates(self) -> list[tuple[str, list[str]]]:
+
+        if not self.arc.files:
+            return []
+        n = len(self.arc.files)
+        found: list[tuple[str, list[str]]] = []
+
+        def consider(label: str, data: bytes | None = None):
+            try:
+                if not data:
+                    return
+                names = parse_name_list(data)
+                if not names:
+                    return
+                if len(names) == n or (n < len(names) <= n + 3):
+                    found.append((label, names[:n]))
+                elif n > 4 and abs(len(names) - n) <= max(2, n // 20):
+                    found.append((label, names[:n] if len(names) >= n else names))
+            except Exception:
+                pass
+
+        for f in self.arc.files:
+            t = (f.get("type") or "").lower()
+            ext = (f.get("ext") or "").lower()
+            rn = (f.get("real_name") or f.get("label") or "").lower()
+            looks_like_list = (
+                "filename" in t
+                or "text" in t
+                or "message" in t
+                or ext in (".idx", ".txt", ".lst", ".nam", ".list")
+                or any(k in rn for k in ("idx", "list", "name", "htmls", "sound", "file"))
+            )
+            if not looks_like_list:
+                try:
+                    data = f.get("data")
+                    if data is None:
+                        continue
+                    if len(data) > 500_000:
+                        continue
+                    sample = data[:256]
+                    printable = sum(1 for b in sample if 32 <= b < 127 or b in (9, 10, 13))
+                    if not sample or printable < len(sample) * 0.9:
+                        continue
+                    if data.count(b"\n") < max(3, n // 4):
+                        continue
+                except Exception:
+                    continue
+            try:
+                data = self.arc.get_data(f["index"])
+            except Exception:
+                data = f.get("data")
+            if data:
+                consider(f.get("real_name") or f.get("label") or f"entry#{f['index']}", data)
+
+        try:
+            base = Path(self.arc.path) if getattr(self.arc, "path", None) else None
+            parent = base.parent if base else None
+            if parent and parent.is_dir():
+                patterns = (
+                    "*.idx", "*.IDX", "*.txt", "*.TXT", "*.lst", "*.LST",
+                    "*.nam", "*.NAM", "*list*", "*names*", "filelist*",
+                )
+                seen: set[str] = set()
+                for pat in patterns:
+                    for sp in parent.glob(pat):
+                        if not sp.is_file():
+                            continue
+                        key = str(sp.resolve())
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        try:
+                            if sp.stat().st_size > 2_000_000:
+                                continue
+                            raw = sp.read_bytes()
+                        except Exception:
+                            continue
+                        sample = raw[:512]
+                        printable = sum(
+                            1 for b in sample if 32 <= b < 127 or b in (9, 10, 13)
+                        )
+                        if sample and printable < len(sample) * 0.8:
+                            continue
+                        consider(sp.name, raw)
+        except Exception:
+            pass
+
+        if self._nav_stack:
+            snap = self._nav_stack[-1].get("snapshot")
+            if snap is not None and getattr(snap, "files", None):
+                for f in snap.files:
+                    t = (f.get("type") or "").lower()
+                    ext = (f.get("ext") or "").lower()
+                    if not (
+                        "filename" in t
+                        or "text" in t
+                        or "message" in t
+                        or ext in (".idx", ".txt", ".lst", ".nam")
+                    ):
+                        continue
+                    try:
+                        data = f.get("data")
+                        if data is None:
+                            data = snap.get_data(f["index"])
+                        if data:
+                            consider(
+                                f"parent:{f.get('real_name') or f.get('label')}",
+                                data,
+                            )
+                    except Exception:
+                        pass
+
+        return found
+
+    def _count_named(self) -> int:
+        return sum(1 for f in self.arc.files if f.get("real_name"))
+
+    def _try_all_bundled_filelists(self) -> tuple[int, str]:
+        from .filelist import lookup as fl_lookup
+
+        n = len(self.arc.files)
+        if n == 0:
+            return 0, ""
+
+        stem = (getattr(self.arc, "stem", None) or "").upper()
+        stems: set[str] = {stem} if stem else set()
+        try:
+            p = Path(self.arc.path) if getattr(self.arc, "path", None) else None
+            if p:
+                stems.add(p.stem.upper())
+        except Exception:
+            pass
+        stems.discard("")
+
+        best_map = None
+        best_name = ""
+        best_hits = -1
+        best_stem = stem
+
+        lists = bundled_lists() or []
+        current = self.filelist_combo.currentText()
+        if current in lists:
+            lists = [current] + [x for x in lists if x != current]
+
+        for list_name in lists:
+            if list_name == "(none)":
+                continue
+            try:
+                mapping = load_bundled(list_name)
+            except Exception:
+                continue
+            for st in (stems or {stem}):
+                hits = sum(
+                    1 for f in self.arc.files
+                    if fl_lookup(mapping, st, f["index"])
+                )
+                if hits > best_hits:
+                    best_hits = hits
+                    best_map = mapping
+                    best_name = f"{list_name} [{st}]"
+                    best_stem = st
+
+        if best_map is None or best_hits <= 0:
+            return self._count_named(), ""
+
+        self.arc.name_map = best_map
+        for f in self.arc.files:
+            real = fl_lookup(best_map, best_stem, f["index"])
+            if not real:
+                for st in stems:
+                    real = fl_lookup(best_map, st, f["index"])
+                    if real:
+                        break
+            if real:
+                f["label"] = Path(real).stem
+                if Path(real).suffix:
+                    f["ext"] = Path(real).suffix
+                f["real_name"] = real
+            elif not f.get("real_name"):
+                f["label"] = f.get("label") or f"{f['index']:03d}"
+
+        win_list = best_name.split()[0] if best_name else ""
+        if win_list:
+            items = [self.filelist_combo.itemText(i) for i in range(self.filelist_combo.count())]
+            if win_list in items:
+                self.filelist_combo.blockSignals(True)
+                self.filelist_combo.setCurrentText(win_list)
+                self.filelist_combo.blockSignals(False)
+
+        return self._count_named(), best_name
+
+    def _auto_scan_names(self) -> tuple[int, str]:
+        if not self.arc.files:
+            return 0, ""
+
+        n = len(self.arc.files)
+        sources: list[str] = []
+
+        try:
+            self.arc.try_embedded_names()
+            if self._count_named():
+                sources.append("embedded")
+        except Exception:
+            pass
+
+        named, fl_src = self._try_all_bundled_filelists()
+        if fl_src:
+            sources.append(fl_src)
+
+        if self._count_named() >= n:
+            return self._count_named(), " + ".join(sources) if sources else "filelist"
+
+        candidates = self._collect_name_candidates()
+        if candidates:
+            def score(item: tuple[str, list[str]]) -> tuple:
+                label, names = item
+                low = label.lower()
+                exact = 0 if len(names) == n else 1
+                hint = sum(-1 for h in ("html", "sound", "file", "name", "list", "idx", "menu") if h in low)
+                return (exact, hint, -len(names))
+
+            candidates.sort(key=score)
+            best_label, best_names = candidates[0]
+            if self._apply_name_list(best_names, overwrite=False):
+                sources.append(best_label)
+
+        return self._count_named(), " + ".join(sources) if sources else ""
+
     def load_custom_filelist(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open GT1 file list",
@@ -804,9 +1036,7 @@ class GTArcExplorer(QMainWindow):
             named = sum(1 for f in self.arc.files if f.get("real_name"))
             self.set_status(f"Applied names from {Path(path).name}  •  {named} named")
 
-    # ------------------------------------------------------------------ open paths
 
-    # ================================================================== recent / about / nav / dnd
     def _recent_list(self) -> list[str]:
         raw = self.settings.value("recent", [])
         if not isinstance(raw, list):
@@ -837,7 +1067,8 @@ class GTArcExplorer(QMainWindow):
             "About GTExplorer",
             "<b>GTExplorer</b><br>"
             "Gran Turismo 1 archive explorer<br><br>"
-            '<a href="https://github.com/JeevesGB/GTExplorer">github.com/JeevesGB/GTExplorer</a><br><br>'
+            '<a href="https://github.com/JeevesGB/GTExplorer" style="color:#FF6B67;">'
+            'github.com/JeevesGB/GTExplorer</a><br><br>'
             "Open · extract · preview TIM/CTEX · nested ARC · REPLAY · SPEC tables",
         )
 
@@ -855,7 +1086,7 @@ class GTArcExplorer(QMainWindow):
         can_back = bool(self._nav_stack)
         self.btn_nav_back.setEnabled(can_back)
         if hasattr(self, "act_open_nested"):
-            pass  # enable state handled elsewhere
+            pass  
 
     def nav_back(self):
         """Return to the parent archive on the navigation stack."""
@@ -864,7 +1095,6 @@ class GTArcExplorer(QMainWindow):
             return
         state = self._nav_stack.pop()
         path = state.get("path")
-        # Prefer restoring a saved in-memory snapshot (folder / single-file parents)
         snap = state.get("snapshot")
         if snap is not None:
             try:
@@ -883,7 +1113,6 @@ class GTArcExplorer(QMainWindow):
             except Exception as e:
                 print("nav_back snapshot restore failed:", e)
         if path and Path(path).exists():
-            # Re-open parent from disk without clearing the remaining stack
             self._open_path(path, push_nav=False)
         else:
             QMessageBox.warning(
@@ -912,7 +1141,6 @@ class GTArcExplorer(QMainWindow):
             QMessageBox.warning(self, "Missing", f"Path not found:\n{path}")
             return
         if p.is_dir():
-            # reuse open_folder logic via setting path
             self._open_folder_path(p)
         else:
             self._open_file_path(p, push_nav=push_nav)
@@ -971,7 +1199,6 @@ class GTArcExplorer(QMainWindow):
 
     def _open_file_path(self, path: Path, push_nav: bool = True):
         """Internal: open a file path (shares logic with open_archive dialog)."""
-        # Simulate dialog result by calling the same worker path
         self._set_last_dir(str(path))
         self._add_recent(str(path))
         self.set_status(f"Reading {path.name}… please wait")
@@ -1013,10 +1240,7 @@ class GTArcExplorer(QMainWindow):
                         except Exception:
                             pass
                     total = len(self.arc.files)
-                    # LAZY: only sniff type via get_data when needed; still call get_data
-                    # but skip if cancel. For true lazy, archive layer must support it.
                     if self._lazy_load:
-                        # Decompress on demand — still identify by reading entry once
                         for i in range(total):
                             if self._cancel_load:
                                 break
@@ -1156,8 +1380,6 @@ class GTArcExplorer(QMainWindow):
         tmp = Path(tempfile.gettempdir()) / Path(name).name
         tmp.write_bytes(data)
 
-        # Snapshot the parent so Back works without re-reading disk
-        # (and still works if parent was a folder / single-file view)
         try:
             parent_label = (
                 Path(self.arc.path).name if getattr(self.arc, "path", None)
@@ -1234,12 +1456,19 @@ class GTArcExplorer(QMainWindow):
             return
 
         self.filter_edit.clear()
+        # Scan for correct filenames from every available source
+        named, src = self._auto_scan_names()
         self.populate_tree()
         self._update_action_states()
         self._update_breadcrumb()
-        self.set_status(
+        status = (
             f"Loaded {Path(data).name}  •  {len(self.arc.files)} file(s)  •  {self.arc.kind}"
         )
+        if named:
+            status += f"  •  {named} named"
+            if src:
+                status += f" via {src}"
+        self.set_status(status)
         self.preview_text.clear()
         self.preview_info.setText("Select a file to preview")
 

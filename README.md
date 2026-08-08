@@ -140,7 +140,7 @@ src/
 
 thm/
 ├── icon.ico
-└── thm.qss
+└── dark.qss
 
 runtool.bat
 requirements.txt
