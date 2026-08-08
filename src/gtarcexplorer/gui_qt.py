@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
     QLabel, QToolBar, QToolButton, QStatusBar, QProgressBar, QFileDialog,
     QMessageBox, QCheckBox, QComboBox, QScrollArea, QHeaderView,
     QAbstractItemView, QPushButton, QInputDialog, QColorDialog, QLineEdit,
-    QMenu, QSizePolicy, QButtonGroup,
+    QMenu, QSizePolicy, QButtonGroup, QStyle
 )
 
 try:
@@ -68,7 +68,7 @@ class GTArcExplorer(QMainWindow):
         super().__init__()
         self.setWindowTitle("GTExplorer")
         self.resize(1800, 920)
-        self.setMinimumSize(1500, 720)
+        self.setMinimumSize(800, 720)
         self.setAcceptDrops(True)
 
         icon_path = Path(__file__).resolve().parent.parent / "thm" / "icon.ico"
@@ -168,6 +168,16 @@ class GTArcExplorer(QMainWindow):
             self.act_theme.setToolTip(
                 "Switch to light theme" if self._theme == "dark" else "Switch to dark theme"
             )
+
+    def _rail_icon(self, name: str, fallback: "QStyle.StandardPixmap") -> QIcon:
+        """Load thm/<name>.png (or .svg / .ico). Fall back to a standard icon."""
+        thm = self._thm_dir()
+        for ext in (".png", ".svg", ".ico"):
+            path = thm / f"{name}{ext}"
+            if path.exists():
+                return QIcon(str(path))
+        return self.style().standardIcon(fallback)
+
 
 # UI
     def _build_ui(self):
@@ -284,23 +294,26 @@ class GTArcExplorer(QMainWindow):
         self._rail_buttons: list[QToolButton] = []
 
         style = self.style()
+        # Filenames (without extension) expected under thm/
         rail_defs = [
-            ("Preview", style.StandardPixmap.SP_FileDialogDetailedView),
-            ("Extracted structure", style.StandardPixmap.SP_DirIcon),
-            ("Asset viewer", style.StandardPixmap.SP_DesktopIcon),
+            ("Preview",            "preview",   style.StandardPixmap.SP_FileDialogDetailedView),
+            ("Extracted structure","structure", style.StandardPixmap.SP_DirIcon),
+            ("Asset viewer",       "viewer",    style.StandardPixmap.SP_DesktopIcon),
         ]
-        for i, (tip, pixmap) in enumerate(rail_defs):
+        for i, (tip, icon_name, fallback) in enumerate(rail_defs):
             btn = QToolButton()
-            btn.setIcon(style.standardIcon(pixmap))
+            btn.setIcon(self._rail_icon(icon_name, fallback))
             btn.setIconSize(QSize(20, 20))
             btn.setToolTip(tip)
             btn.setCheckable(True)
             btn.setAutoRaise(True)
             btn.setFixedSize(36, 36)
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            btn.setObjectName("railButton")
             self.rail_group.addButton(btn, i)
             rail_lay.addWidget(btn)
             self._rail_buttons.append(btn)
+
         rail_lay.addStretch()
         self._rail_buttons[CANVAS_PREVIEW].setChecked(True)
 
