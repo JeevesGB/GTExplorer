@@ -106,11 +106,24 @@ class GTArcExplorer(QMainWindow):
         self.progress_signal.connect(self._update_progress)
         self.finished_signal.connect(self._on_load_finished)
 
+    def _app_root(self) -> Path:
+        if getattr(sys, "frozen", False):
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                return Path(meipass)
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent.parent
+
     def _thm_dir(self) -> Path:
-        p = Path(__file__).resolve().parent.parent / "thm"
-        if not p.exists():
-            p = Path(__file__).resolve().parent / "thm"
-        return p
+        root = app_root()
+        for candidate in (
+            root / "thm",
+            root / "src" / "thm",
+            Path(__file__).resolve().parent / "thm",
+        ):
+            if candidate.is_dir():
+                return candidate
+        return root / "thm"
 
     def _load_theme(self, name: str | None = None):
         """Load light or dark QSS. Default is light."""
@@ -178,6 +191,7 @@ class GTArcExplorer(QMainWindow):
                 return QIcon(str(path))
         return self.style().standardIcon(fallback)
 
+     
 
 # UI
     def _build_ui(self):

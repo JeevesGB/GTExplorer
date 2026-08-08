@@ -1,3 +1,7 @@
 1tools/
 2old/
 3TESTING/
+build
+dist
+GTExplorer.spec
+build.bat
