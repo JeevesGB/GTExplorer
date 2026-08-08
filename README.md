@@ -4,6 +4,12 @@
 
 # GTExplorer
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![PyQt](https://img.shields.io/badge/UI-PyQt6-41CD52.svg)](https://www.riverbankcomputing.com/software/pyqt/)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
+[![Last commit](https://img.shields.io/github/last-commit/JeevesGB/GTExplorer)](https://github.com/JeevesGB/GTExplorer/commits/main)
+
 Extractor and viewer for **Gran Turismo 1** (PlayStation) archive files.
 
 ![1](img/1.png)
@@ -164,3 +170,11 @@ docs/
 ## Credits
 
 - [pez2k / gt2tools](https://github.com/pez2k/gt2tools) — prior research into GT1 files
+
+
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+###### JeevesGB 
