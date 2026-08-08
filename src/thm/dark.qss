@@ -223,8 +223,8 @@ QTreeView::branch:hover {
     background-color: #333138;
 }
 
-QTreeView::branch:has-siblings:!adjoins-item,
-QTreeView::branch:!has-siblings:!adjoins-item {
+QTreeView::branch:has-siblings:adjoins-item,
+QTreeView::branch:has-siblings:adjoins-item {
     border-image: none;
 }
 

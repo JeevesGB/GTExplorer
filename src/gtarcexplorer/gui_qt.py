@@ -87,9 +87,10 @@ class GTArcExplorer(QMainWindow):
         self._viewer_mode = None
         self._viewer_scroll: QScrollArea | None = None
 
+        # Navigation stack for nested ARCs: list of (path_or_label, kind)
         self._nav_stack: list[dict] = []
         self._cancel_load = False
-        self._lazy_load = True 
+        self._lazy_load = True  # identify types without full decompress at open
 
         self._build_ui()
         self._load_theme()
@@ -100,7 +101,7 @@ class GTArcExplorer(QMainWindow):
         self.progress_signal.connect(self._update_progress)
         self.finished_signal.connect(self._on_load_finished)
 
-    # theme
+    # ------------------------------------------------------------------ theme
     def _thm_dir(self) -> Path:
         p = Path(__file__).resolve().parent.parent / "thm"
         if not p.exists():
@@ -108,6 +109,7 @@ class GTArcExplorer(QMainWindow):
         return p
 
     def _load_theme(self, name: str | None = None):
+        """Load light or dark QSS. Default is light."""
         if name is None:
             name = self.settings.value("theme", "light")
         self._theme = name if name in ("light", "dark") else "light"
@@ -845,21 +847,50 @@ class GTArcExplorer(QMainWindow):
         parts = [s.get("label", "?") for s in self._nav_stack]
         current = ""
         try:
-            current = Path(self.arc.path).name if self.arc.path else self.arc.kind
+            current = Path(self.arc.path).name if getattr(self.arc, "path", None) else getattr(self.arc, "kind", "")
         except Exception:
-            current = getattr(self.arc, "kind", "")
-        trail = "  →  ".join(parts + ([current] if current else []))
-        self.breadcrumb.setText(trail or "")
-        self.btn_nav_back.setEnabled(bool(self._nav_stack))
+            current = getattr(self.arc, "kind", "") or ""
+        trail = "  →  ".join(parts + ([str(current)] if current else []))
+        self.breadcrumb.setText(trail or "(root)")
+        can_back = bool(self._nav_stack)
+        self.btn_nav_back.setEnabled(can_back)
+        if hasattr(self, "act_open_nested"):
+            pass  # enable state handled elsewhere
 
     def nav_back(self):
+        """Return to the parent archive on the navigation stack."""
         if not self._nav_stack:
+            self._update_breadcrumb()
             return
         state = self._nav_stack.pop()
         path = state.get("path")
+        # Prefer restoring a saved in-memory snapshot (folder / single-file parents)
+        snap = state.get("snapshot")
+        if snap is not None:
+            try:
+                self.arc = snap
+                self.filter_edit.clear()
+                self.populate_tree()
+                self._update_action_states()
+                self._update_breadcrumb()
+                label = state.get("label") or Path(getattr(self.arc, "path", "") or "?").name
+                self.set_status(
+                    f"Back → {label}  •  {len(self.arc.files)} file(s)  •  {self.arc.kind}"
+                )
+                self.preview_text.clear()
+                self.preview_info.setText("Select a file to preview")
+                return
+            except Exception as e:
+                print("nav_back snapshot restore failed:", e)
         if path and Path(path).exists():
+            # Re-open parent from disk without clearing the remaining stack
             self._open_path(path, push_nav=False)
         else:
+            QMessageBox.warning(
+                self, "Cannot go back",
+                "Parent archive is no longer available.\n"
+                f"path={path!r}",
+            )
             self._update_breadcrumb()
 
     def dragEnterEvent(self, event):
@@ -1125,14 +1156,24 @@ class GTArcExplorer(QMainWindow):
         tmp = Path(tempfile.gettempdir()) / Path(name).name
         tmp.write_bytes(data)
 
-        # Push parent onto nav stack
+        # Snapshot the parent so Back works without re-reading disk
+        # (and still works if parent was a folder / single-file view)
         try:
-            self._nav_stack.append({
-                "path": getattr(self.arc, "path", None),
-                "label": Path(self.arc.path).name if self.arc.path else self.arc.kind,
-            })
+            parent_label = (
+                Path(self.arc.path).name if getattr(self.arc, "path", None)
+                else getattr(self.arc, "kind", "?")
+            )
         except Exception:
-            self._nav_stack.append({"path": None, "label": "?"})
+            parent_label = "?"
+        parent_path = getattr(self.arc, "path", None)
+        parent_snapshot = self.arc  # keep the live object; we replace self.arc below
+
+        self._nav_stack.append({
+            "path": parent_path,
+            "label": parent_label,
+            "snapshot": parent_snapshot,
+        })
+        self._update_breadcrumb()  # enable Back immediately
 
         self.set_status(f"Opening nested {tmp.name}…")
         self.progress.setRange(0, 0)
@@ -1141,7 +1182,10 @@ class GTArcExplorer(QMainWindow):
 
         def worker():
             try:
-                self.arc.load(str(tmp))
+                # New GTArc instance so the snapshot above stays intact
+                nested = GTArc()
+                nested.load(str(tmp))
+                self.arc = nested
                 self._apply_filelist()
                 total = len(self.arc.files)
                 for i in range(total):
@@ -1153,6 +1197,9 @@ class GTArcExplorer(QMainWindow):
                         self.progress_signal.emit(i + 1, total)
                 self.finished_signal.emit(True, str(tmp))
             except Exception as e:
+                # Roll back nav entry on failure
+                if self._nav_stack:
+                    self._nav_stack.pop()
                 import traceback
                 traceback.print_exc()
                 self.finished_signal.emit(False, str(e))
@@ -1189,6 +1236,7 @@ class GTArcExplorer(QMainWindow):
         self.filter_edit.clear()
         self.populate_tree()
         self._update_action_states()
+        self._update_breadcrumb()
         self.set_status(
             f"Loaded {Path(data).name}  •  {len(self.arc.files)} file(s)  •  {self.arc.kind}"
         )
