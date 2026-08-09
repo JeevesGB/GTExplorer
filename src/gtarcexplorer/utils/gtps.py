@@ -1,5 +1,6 @@
-import struct
 from __future__ import annotations
+
+import struct
 from typing import List, Tuple
 
 Vec3 = Tuple[float, float, float]

@@ -1,13 +1,13 @@
 import struct
 from pathlib import Path
 
-from ..utils.gtzip import gtzip_decompress, gtzip_compress
-from ..utils.tim_pack import parse_tim_pack, build_tim_pack
-from ..utils.audio import expand_sample_bank
-from ..utils.detect import detect_type
-from ..utils.filelist import lookup, safe_filename, archive_stem
-from ..utils.namelist import parse_name_list
-from ..utils.replay import is_replay_save
+from .gtzip import gtzip_decompress, gtzip_compress
+from .tim_pack import parse_tim_pack, build_tim_pack
+from .audio import expand_sample_bank
+from .detect import detect_type
+from .filelist import lookup, safe_filename, archive_stem
+from .namelist import parse_name_list
+from .replay import is_replay_save
 
 
 def _gtzip_decompress_full(src: bytes) -> bytes:

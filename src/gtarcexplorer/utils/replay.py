@@ -1,5 +1,5 @@
-import struct
 from __future__ import annotations
+import struct
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 

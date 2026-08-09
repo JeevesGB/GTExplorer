@@ -1,5 +1,5 @@
-import struct
 from __future__ import annotations
+import struct
 from PIL import Image
 from pathlib import Path
 from typing import Optional
