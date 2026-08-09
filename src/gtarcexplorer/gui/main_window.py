@@ -233,6 +233,12 @@ class GTArcExplorer(QMainWindow):
 
         self.act_workspace = QAction("Setup / Workspace…", self)
         self.act_workspace.setToolTip("Working folders and optional mkpsxiso paths")
+        self.act_dump_disc = QAction("Dump disc (dumpsxiso)…", self)
+        self.act_dump_disc.setToolTip("Extract a .bin/.cue to files + rebuild XML")
+        self.act_build_disc = QAction("Build disc (mkpsxiso)…", self)
+        self.act_build_disc.setToolTip("Rebuild .bin/.cue from project XML")
+        self.act_open_tools = QAction("Open tools folder", self)
+        self.act_open_tools.setToolTip("Open the tools/ folder (place mkpsxiso here)")
 
         self.menu_recent = QMenu("Recent", self)
 
@@ -275,6 +281,10 @@ class GTArcExplorer(QMainWindow):
 
         m_tools = menubar.addMenu("&Tools")
         m_tools.addAction(self.act_load_list)
+        m_tools.addSeparator()
+        m_tools.addAction(self.act_dump_disc)
+        m_tools.addAction(self.act_build_disc)
+        m_tools.addAction(self.act_open_tools)
         m_tools.addSeparator()
         m_tools.addAction(self.act_convert_tim)
         m_tools.addAction(self.act_reencode_tim)
@@ -603,6 +613,9 @@ class GTArcExplorer(QMainWindow):
         self.btn_nav_back.clicked.connect(self.nav_back)
         self.act_theme.triggered.connect(self.toggle_theme)
         self.act_workspace.triggered.connect(self.set_workspace)
+        self.act_dump_disc.triggered.connect(self.dump_disc)
+        self.act_build_disc.triggered.connect(self.build_disc)
+        self.act_open_tools.triggered.connect(self.open_tools_folder)
         self.input_list.itemClicked.connect(lambda *_: self.on_input_file_clicked())
 
     def _update_action_states(self):
@@ -725,6 +738,15 @@ class GTArcExplorer(QMainWindow):
     def set_workspace(self):
         actions.set_workspace(self)
 
+    def dump_disc(self):
+        actions.dump_disc(self)
+
+    def build_disc(self):
+        actions.build_disc(self)
+
+    def open_tools_folder(self):
+        actions.open_tools_folder(self)
+
     def on_input_file_clicked(self):
         actions.on_input_file_clicked(self)
 
@@ -826,9 +848,6 @@ class GTArcExplorer(QMainWindow):
 
     def diff_vs_dat(self):
         actions.diff_vs_dat(self)
-
-    def set_workspace(self):
-        actions.set_workspace(self)
 
     def _recent_list(self) -> list[str]:
         raw = self.settings.value("recent", [])

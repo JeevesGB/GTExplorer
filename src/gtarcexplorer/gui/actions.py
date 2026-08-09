@@ -856,33 +856,32 @@ def default_mkpsxiso_exe() -> str:
 
 
 def set_workspace(win, first_run: bool = False) -> None:
-    """Workspace / first-run setup: working folders + optional mkpsxiso paths."""
+    """Workspace / first-run setup: working folders + optional disc tools."""
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import (
         QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
         QPushButton, QHBoxLayout, QFileDialog, QMessageBox, QLabel,
-        QVBoxLayout, QCheckBox, QGroupBox, QSizePolicy,
+        QVBoxLayout, QCheckBox, QGroupBox,
     )
 
     dlg = QDialog(win)
     dlg.setWindowTitle("Welcome — Setup" if first_run else "Setup / Workspace")
-    dlg.resize(640, 520)
-    dlg.setMinimumSize(560, 460)
+    dlg.resize(660, 580)
+    dlg.setMinimumSize(580, 500)
 
     root = QVBoxLayout(dlg)
     root.setSpacing(12)
     root.setContentsMargins(14, 14, 14, 14)
 
-    # ---- Header ----
     title = QLabel("Welcome to GTExplorer" if first_run else "Workspace setup")
     title.setStyleSheet("font-size: 15px; font-weight: 600;")
     root.addWidget(title)
 
     subtitle = QLabel(
-        "Tell the tool where your game files live and where to save mods. "
-        "Everything can be changed later from <b>File → Setup / Workspace…</b>."
+        "Choose working folders and, optionally, disc dump/rebuild paths. "
+        "You can change these later from <b>File → Setup / Workspace…</b>."
         if first_run else
-        "Paths for original archives, mod output, and optional disc rebuilding."
+        "Working folders for archives/mods, and disc dump/rebuild (dumpsxiso / mkpsxiso)."
     )
     subtitle.setWordWrap(True)
     subtitle.setStyleSheet("color: #aaa;")
@@ -891,7 +890,7 @@ def set_workspace(win, first_run: bool = False) -> None:
     def _path_row(default: str = "", placeholder: str = ""):
         edit = QLineEdit(default)
         edit.setPlaceholderText(placeholder)
-        edit.setMinimumWidth(320)
+        edit.setMinimumWidth(300)
         edit.setClearButtonEnabled(True)
         btn = QPushButton("Browse…")
         btn.setFixedWidth(80)
@@ -904,16 +903,12 @@ def set_workspace(win, first_run: bool = False) -> None:
     # ---- 1. Working folders ----
     folders_box = QGroupBox("1. Working folders")
     folders_lay = QVBoxLayout(folders_box)
-    folders_lay.setSpacing(8)
-
     folders_help = QLabel(
-        "<b>Input</b> — folder with your original <code>.DAT</code> / <code>.ARC</code> files "
-        "(GTExplorer will not overwrite these).<br>"
-        "<b>Output</b> — folder for extracts and repacked mods "
-        "(created automatically if missing)."
+        "<b>Input</b> — original <code>.DAT</code> / <code>.ARC</code> files (not overwritten).<br>"
+        "<b>Output</b> — extracts and repacked mods."
     )
     folders_help.setWordWrap(True)
-    folders_help.setStyleSheet("color: #bbb; margin-bottom: 4px;")
+    folders_help.setStyleSheet("color: #bbb;")
     folders_lay.addWidget(folders_help)
 
     folders_form = QFormLayout()
@@ -935,7 +930,7 @@ def set_workspace(win, first_run: bool = False) -> None:
 
     def browse_in():
         path = QFileDialog.getExistingDirectory(
-            dlg, "Select input folder (original game archives)",
+            dlg, "Input folder (original game archives)",
             in_edit.text() or win._last_dir(),
         )
         if path:
@@ -945,7 +940,7 @@ def set_workspace(win, first_run: bool = False) -> None:
 
     def browse_out():
         path = QFileDialog.getExistingDirectory(
-            dlg, "Select output folder (extracts and packs)",
+            dlg, "Output folder (extracts / packs)",
             out_edit.text() or in_edit.text() or win._last_dir("last_extract_dir"),
         )
         if path:
@@ -954,23 +949,21 @@ def set_workspace(win, first_run: bool = False) -> None:
     in_btn.clicked.connect(browse_in)
     out_btn.clicked.connect(browse_out)
 
-    # ---- 2. mkpsxiso (optional) ----
-    mk_box = QGroupBox("2. Disc rebuild (optional)")
+    # ---- 2. Disc dump & rebuild ----
+    mk_box = QGroupBox("2. Disc dump & rebuild (optional)")
     mk_lay = QVBoxLayout(mk_box)
-    mk_lay.setSpacing(8)
 
-    mk_enable = QCheckBox("I want to rebuild a full disc image (.bin / .cue) after packing")
+    mk_enable = QCheckBox("Enable disc tools (dumpsxiso / mkpsxiso)")
     mk_enable.setChecked(bool(win.settings.value("mkpsxiso/enabled", False, type=bool)))
     mk_lay.addWidget(mk_enable)
 
     tools_path = tools_dir()
     mk_help = QLabel(
-        "Place the official "
-        "<a href='https://github.com/Lameguy64/mkpsxiso/releases'>mkpsxiso</a> "
-        f"binaries in <code>{tools_path}</code> "
-        "(see <code>tools/README.txt</code>).<br>"
-        "Dump your original disc once with <b>dumpsxiso</b> to produce a file tree and XML, "
-        "then fill in the paths below."
+        f"Put official binaries in <code>{tools_path}</code> "
+        "(see <code>tools/README.txt</code>). "
+        "<a href='https://github.com/Lameguy64/mkpsxiso/releases'>Download mkpsxiso</a><br>"
+        "<b>Dump</b> extracts a disc image to files + XML. "
+        "<b>Build</b> rebuilds a <code>.bin</code>/<code>.cue</code> after you mod files in the disc folder."
     )
     mk_help.setWordWrap(True)
     mk_help.setOpenExternalLinks(True)
@@ -988,6 +981,10 @@ def set_workspace(win, first_run: bool = False) -> None:
     mk_exe_edit, mk_exe_btn, mk_exe_row = _path_row(
         saved_exe, placeholder=str(tools_path / "mkpsxiso.exe")
     )
+    img_edit, img_btn, img_row = _path_row(
+        win.settings.value("mkpsxiso/last_image", "", type=str) or "",
+        placeholder=r"e.g. D:\ISOs\GT1.bin or GT1.cue",
+    )
     mk_xml_edit, mk_xml_btn, mk_xml_row = _path_row(
         win.settings.value("mkpsxiso/xml", "", type=str) or "",
         placeholder=r"e.g. D:\GT1\gt1.xml",
@@ -1002,15 +999,30 @@ def set_workspace(win, first_run: bool = False) -> None:
     )
 
     mk_form.addRow("mkpsxiso program:", mk_exe_row)
+    mk_form.addRow("Disc image to dump:", img_row)
     mk_form.addRow("Project XML:", mk_xml_row)
     mk_form.addRow("Disc files folder:", mk_files_row)
     mk_form.addRow("Build output folder:", mk_out_row)
     mk_lay.addLayout(mk_form)
+
+    # Action buttons for dump / build
+    act_row = QHBoxLayout()
+    btn_dump = QPushButton("Dump disc now…")
+    btn_dump.setToolTip("Run dumpsxiso using the paths above")
+    btn_build = QPushButton("Build disc now…")
+    btn_build.setToolTip("Run mkpsxiso using the paths above")
+    btn_tools = QPushButton("Open tools folder")
+    act_row.addWidget(btn_dump)
+    act_row.addWidget(btn_build)
+    act_row.addWidget(btn_tools)
+    act_row.addStretch(1)
+    mk_lay.addLayout(act_row)
     root.addWidget(mk_box)
 
     mk_widgets = [
-        mk_help, mk_exe_edit, mk_exe_btn, mk_xml_edit, mk_xml_btn,
-        mk_files_edit, mk_files_btn, mk_out_edit, mk_out_btn,
+        mk_help, mk_exe_edit, mk_exe_btn, img_edit, img_btn,
+        mk_xml_edit, mk_xml_btn, mk_files_edit, mk_files_btn,
+        mk_out_edit, mk_out_btn, btn_dump, btn_build, btn_tools,
     ]
 
     def _set_mk_enabled(on: bool):
@@ -1023,18 +1035,34 @@ def set_workspace(win, first_run: bool = False) -> None:
     def browse_exe():
         start = mk_exe_edit.text() or str(tools_dir())
         path, _ = QFileDialog.getOpenFileName(
-            dlg, "Select mkpsxiso executable",
-            start,
-            "Executable (mkpsxiso.exe mkpsxiso);;All files (*.*)",
+            dlg, "mkpsxiso executable", start,
+            "Executable (mkpsxiso.exe mkpsxiso);;All (*.*)",
         )
         if path:
             mk_exe_edit.setText(path)
 
+    def browse_img():
+        path, _ = QFileDialog.getOpenFileName(
+            dlg, "Disc image",
+            img_edit.text() or win._last_dir(),
+            "Disc images (*.bin *.cue *.iso *.img);;All (*.*)",
+        )
+        if path:
+            img_edit.setText(path)
+            stem = Path(path).stem
+            parent = Path(path).parent
+            if not mk_files_edit.text().strip():
+                mk_files_edit.setText(str(parent / f"{stem}_files"))
+            if not mk_xml_edit.text().strip():
+                mk_xml_edit.setText(str(parent / f"{stem}.xml"))
+            if not mk_out_edit.text().strip():
+                mk_out_edit.setText(str(parent / "_built"))
+
     def browse_xml():
         path, _ = QFileDialog.getOpenFileName(
-            dlg, "Select disc project XML (from dumpsxiso)",
+            dlg, "Project XML",
             mk_xml_edit.text() or win._last_dir(),
-            "XML (*.xml);;All files (*.*)",
+            "XML (*.xml);;All (*.*)",
         )
         if path:
             mk_xml_edit.setText(path)
@@ -1048,7 +1076,7 @@ def set_workspace(win, first_run: bool = False) -> None:
 
     def browse_files():
         path = QFileDialog.getExistingDirectory(
-            dlg, "Select disc files folder (dumpsxiso extract)",
+            dlg, "Disc files folder",
             mk_files_edit.text() or win._last_dir(),
         )
         if path:
@@ -1056,18 +1084,46 @@ def set_workspace(win, first_run: bool = False) -> None:
 
     def browse_mk_out():
         path = QFileDialog.getExistingDirectory(
-            dlg, "Select folder for built .bin / .cue",
+            dlg, "Build output folder",
             mk_out_edit.text() or out_edit.text() or win._last_dir("last_extract_dir"),
         )
         if path:
             mk_out_edit.setText(path)
 
     mk_exe_btn.clicked.connect(browse_exe)
+    img_btn.clicked.connect(browse_img)
     mk_xml_btn.clicked.connect(browse_xml)
     mk_files_btn.clicked.connect(browse_files)
     mk_out_btn.clicked.connect(browse_mk_out)
 
-    # ---- Buttons ----
+    def _save_fields_to_settings():
+        """Persist current form values so Dump/Build dialogs see them."""
+        win.settings.setValue("mkpsxiso/enabled", mk_enable.isChecked())
+        win.settings.setValue(
+            "mkpsxiso/exe",
+            mk_exe_edit.text().strip() or default_mkpsxiso_exe(),
+        )
+        win.settings.setValue("mkpsxiso/last_image", img_edit.text().strip())
+        win.settings.setValue("mkpsxiso/xml", mk_xml_edit.text().strip())
+        win.settings.setValue("mkpsxiso/files_dir", mk_files_edit.text().strip())
+        win.settings.setValue("mkpsxiso/output_dir", mk_out_edit.text().strip())
+
+    def on_dump():
+        _save_fields_to_settings()
+        dump_disc(win)
+
+    def on_build():
+        _save_fields_to_settings()
+        build_disc(win)
+
+    def on_tools():
+        open_tools_folder(win)
+
+    btn_dump.clicked.connect(on_dump)
+    btn_build.clicked.connect(on_build)
+    btn_tools.clicked.connect(on_tools)
+
+    # ---- Dialog buttons ----
     root.addStretch(1)
     if first_run:
         buttons = QDialogButtonBox(
@@ -1119,21 +1175,15 @@ def set_workspace(win, first_run: bool = False) -> None:
         win._set_last_dir(out_dir, "last_extract_dir")
         win.extract_dir = Path(out_dir)
 
-    mk_on = mk_enable.isChecked()
-    mk_exe = mk_exe_edit.text().strip() or default_mkpsxiso_exe()
-    win.settings.setValue("mkpsxiso/enabled", mk_on)
-    win.settings.setValue("mkpsxiso/exe", mk_exe)
-    win.settings.setValue("mkpsxiso/xml", mk_xml_edit.text().strip())
-    win.settings.setValue("mkpsxiso/files_dir", mk_files_edit.text().strip())
-    win.settings.setValue("mkpsxiso/output_dir", mk_out_edit.text().strip())
+    _save_fields_to_settings()
     win.settings.setValue("setup/completed", True)
 
-    if mk_on and mk_exe and not Path(mk_exe).is_file():
+    mk_exe = mk_exe_edit.text().strip() or default_mkpsxiso_exe()
+    if mk_enable.isChecked() and mk_exe and not Path(mk_exe).is_file():
         QMessageBox.information(
             win, "mkpsxiso not found",
             f"mkpsxiso was not found at:\n{mk_exe}\n\n"
-            f"Download the official release and place it in:\n{tools_dir()}\n\n"
-            "You can still use extract/repack without disc rebuild.",
+            f"Download the official release into:\n{tools_dir()}",
         )
 
     refresh_input_file_list(win)
@@ -1142,8 +1192,8 @@ def set_workspace(win, first_run: bool = False) -> None:
         status_bits.append(f"in={in_dir}")
     if out_dir:
         status_bits.append(f"out={out_dir}")
-    if mk_on:
-        status_bits.append("mkpsxiso=on")
+    if mk_enable.isChecked():
+        status_bits.append("disc tools=on")
     win.set_status(
         "Setup  •  " + "  •  ".join(status_bits) if status_bits else "Setup saved"
     )
@@ -1222,3 +1272,369 @@ def on_input_file_clicked(win) -> None:
 
     win._nav_stack.clear()
     open_file_path(win, Path(path), push_nav=False)
+
+
+def _resolve_tool_exe(win, which: str) -> Path | None:
+    """
+    which: 'mkpsxiso' or 'dumpsxiso'
+    Prefer settings path for mkpsxiso; otherwise tools/ folder.
+    """
+    if which == "mkpsxiso":
+        saved = (win.settings.value("mkpsxiso/exe", "", type=str) or "").strip()
+        if saved and Path(saved).is_file():
+            return Path(saved)
+    td = tools_dir()
+    names = []
+    if which == "mkpsxiso":
+        names = ["mkpsxiso.exe", "mkpsxiso"]
+    else:
+        names = ["dumpsxiso.exe", "dumpsxiso"]
+    for n in names:
+        p = td / n
+        if p.is_file():
+            return p
+        p2 = td / "bin" / n
+        if p2.is_file():
+            return p2
+    return None
+
+
+def _run_tool_with_log(win, title: str, exe: Path, args: list, cwd: Path | None = None) -> None:
+    """Run external tool in a dialog with live-ish log (buffered read on finish)."""
+    import subprocess
+    from PyQt6.QtWidgets import (
+        QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox, QLabel, QMessageBox,
+    )
+    from PyQt6.QtCore import Qt
+
+    dlg = QDialog(win)
+    dlg.setWindowTitle(title)
+    dlg.resize(720, 420)
+    lay = QVBoxLayout(dlg)
+    info = QLabel(f"<code>{exe.name}</code>  " + " ".join(f'"{a}"' if " " in a else a for a in args))
+    info.setWordWrap(True)
+    info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    lay.addWidget(info)
+    log = QTextEdit()
+    log.setReadOnly(True)
+    log.setPlaceholderText("Running…")
+    lay.addWidget(log, stretch=1)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+    buttons.button(QDialogButtonBox.StandardButton.Close).setEnabled(False)
+    buttons.rejected.connect(dlg.reject)
+    buttons.accepted.connect(dlg.accept)
+    lay.addWidget(buttons)
+
+    dlg.show()
+    QApplication.processEvents()
+
+    cmd = [str(exe)] + args
+    workdir = str(cwd or exe.parent)
+    log.append(f"$ cd {workdir}\n$ {' '.join(cmd)}\n")
+    QApplication.processEvents()
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=None,
+        )
+        out = (proc.stdout or "") + (proc.stderr or "")
+        if out.strip():
+            log.append(out)
+        log.append(f"\nExit code: {proc.returncode}")
+        if proc.returncode == 0:
+            win.set_status(f"{title} — success")
+        else:
+            win.set_status(f"{title} — failed (code {proc.returncode})")
+    except FileNotFoundError:
+        log.append(f"ERROR: could not run {exe}")
+        QMessageBox.critical(win, title, f"Could not run:\n{exe}")
+    except Exception as e:
+        log.append(f"ERROR: {e}")
+        QMessageBox.critical(win, title, str(e))
+
+    buttons.button(QDialogButtonBox.StandardButton.Close).setEnabled(True)
+    buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(dlg.accept)
+    dlg.exec()
+
+
+def dump_disc(win) -> None:
+    """GUI wrapper for dumpsxiso — extract disc image to files + XML."""
+    from PyQt6.QtWidgets import (
+        QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
+        QHBoxLayout, QFileDialog, QDialogButtonBox, QLabel, QMessageBox,
+    )
+
+    exe = _resolve_tool_exe(win, "dumpsxiso")
+    if not exe:
+        QMessageBox.warning(
+            win, "dumpsxiso not found",
+            f"Place dumpsxiso.exe in:\n{tools_dir()}\n\n"
+            "Download: https://github.com/Lameguy64/mkpsxiso/releases",
+        )
+        return
+
+    dlg = QDialog(win)
+    dlg.setWindowTitle("Dump disc (dumpsxiso)")
+    dlg.setMinimumWidth(560)
+    lay = QVBoxLayout(dlg)
+    lay.addWidget(QLabel(
+        "Extract a PlayStation disc image to a folder and create a rebuild XML "
+        "for mkpsxiso. Original image is not modified."
+    ))
+
+    form = QFormLayout()
+
+    def row(default="", ph=""):
+        e = QLineEdit(default)
+        e.setPlaceholderText(ph)
+        e.setClearButtonEnabled(True)
+        b = QPushButton("Browse…")
+        b.setFixedWidth(80)
+        h = QHBoxLayout()
+        h.addWidget(e, 1)
+        h.addWidget(b)
+        return e, b, h
+
+    img_default = win.settings.value("mkpsxiso/last_image", "", type=str) or ""
+    out_default = win.settings.value("mkpsxiso/files_dir", "", type=str) or ""
+    xml_default = win.settings.value("mkpsxiso/xml", "", type=str) or ""
+
+    img_e, img_b, img_r = row(img_default, r"D:\ISOs\game.bin or game.cue")
+    out_e, out_b, out_r = row(out_default, r"D:\GT1\disc_files")
+    xml_e, xml_b, xml_r = row(xml_default, r"D:\GT1\gt1.xml")
+
+    form.addRow("Disc image (.bin / .cue):", img_r)
+    form.addRow("Extract files to:", out_r)
+    form.addRow("Write project XML:", xml_r)
+    lay.addLayout(form)
+
+    def browse_img():
+        p, _ = QFileDialog.getOpenFileName(
+            dlg, "Disc image",
+            img_e.text() or win._last_dir(),
+            "Disc images (*.bin *.cue *.iso *.img);;All (*.*)",
+        )
+        if p:
+            img_e.setText(p)
+            stem = Path(p).stem
+            parent = str(Path(p).parent)
+            if not out_e.text().strip():
+                out_e.setText(str(Path(parent) / f"{stem}_files"))
+            if not xml_e.text().strip():
+                xml_e.setText(str(Path(parent) / f"{stem}.xml"))
+
+    def browse_out():
+        p = QFileDialog.getExistingDirectory(dlg, "Extract folder", out_e.text() or win._last_dir())
+        if p:
+            out_e.setText(p)
+
+    def browse_xml():
+        p, _ = QFileDialog.getSaveFileName(
+            dlg, "Project XML",
+            xml_e.text() or win._last_dir(),
+            "XML (*.xml)",
+        )
+        if p:
+            xml_e.setText(p)
+
+    img_b.clicked.connect(browse_img)
+    out_b.clicked.connect(browse_out)
+    xml_b.clicked.connect(browse_xml)
+
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    )
+    buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Dump disc")
+    buttons.accepted.connect(dlg.accept)
+    buttons.rejected.connect(dlg.reject)
+    lay.addWidget(buttons)
+
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return
+
+    image = img_e.text().strip()
+    out_dir = out_e.text().strip()
+    xml_path = xml_e.text().strip()
+    if not image or not Path(image).is_file():
+        QMessageBox.warning(win, "Dump disc", "Choose a valid disc image file.")
+        return
+    if not out_dir:
+        QMessageBox.warning(win, "Dump disc", "Choose an extract folder.")
+        return
+    if not xml_path:
+        QMessageBox.warning(win, "Dump disc", "Choose where to write the project XML.")
+        return
+
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    Path(xml_path).parent.mkdir(parents=True, exist_ok=True)
+
+    args = ["-x", out_dir, "-s", xml_path, image]
+    _run_tool_with_log(win, "Dump disc (dumpsxiso)", exe, args, cwd=exe.parent)
+
+    # Remember paths for Build disc / Setup
+    win.settings.setValue("mkpsxiso/last_image", image)
+    win.settings.setValue("mkpsxiso/files_dir", out_dir)
+    win.settings.setValue("mkpsxiso/xml", xml_path)
+    if not (win.settings.value("mkpsxiso/exe", "", type=str) or "").strip():
+        mk = _resolve_tool_exe(win, "mkpsxiso")
+        if mk:
+            win.settings.setValue("mkpsxiso/exe", str(mk))
+    win.settings.setValue("mkpsxiso/enabled", True)
+
+    if Path(xml_path).is_file():
+        QMessageBox.information(
+            win, "Dump finished",
+            f"Files:\n{out_dir}\n\nXML:\n{xml_path}\n\n"
+            "These paths were saved for Build disc / Setup.",
+        )
+
+
+def build_disc(win) -> None:
+    """GUI wrapper for mkpsxiso — rebuild .bin/.cue from project XML."""
+    from PyQt6.QtWidgets import (
+        QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
+        QHBoxLayout, QFileDialog, QDialogButtonBox, QLabel, QMessageBox,
+    )
+
+    exe = _resolve_tool_exe(win, "mkpsxiso")
+    if not exe:
+        QMessageBox.warning(
+            win, "mkpsxiso not found",
+            f"Place mkpsxiso.exe in:\n{tools_dir()}\n\n"
+            "Or set the path in File → Setup / Workspace…",
+        )
+        return
+
+    dlg = QDialog(win)
+    dlg.setWindowTitle("Build disc (mkpsxiso)")
+    dlg.setMinimumWidth(560)
+    lay = QVBoxLayout(dlg)
+    lay.addWidget(QLabel(
+        "Rebuild a PlayStation disc image from a dumpsxiso XML and file tree. "
+        "Put modded .DAT files into the disc files folder before building."
+    ))
+
+    form = QFormLayout()
+
+    def row(default="", ph=""):
+        e = QLineEdit(default)
+        e.setPlaceholderText(ph)
+        e.setClearButtonEnabled(True)
+        b = QPushButton("Browse…")
+        b.setFixedWidth(80)
+        h = QHBoxLayout()
+        h.addWidget(e, 1)
+        h.addWidget(b)
+        return e, b, h
+
+    xml_default = win.settings.value("mkpsxiso/xml", "", type=str) or ""
+    out_default = win.settings.value("mkpsxiso/output_dir", "", type=str) or ""
+    if out_default and Path(out_default).is_dir() and xml_default:
+        stem = Path(xml_default).stem
+        bin_default = str(Path(out_default) / f"{stem}_mod.bin")
+        cue_default = str(Path(out_default) / f"{stem}_mod.cue")
+    elif xml_default:
+        bin_default = str(Path(xml_default).with_name(Path(xml_default).stem + "_mod.bin"))
+        cue_default = str(Path(xml_default).with_name(Path(xml_default).stem + "_mod.cue"))
+    else:
+        bin_default, cue_default = "", ""
+
+    xml_e, xml_b, xml_r = row(xml_default, r"D:\GT1\gt1.xml")
+    bin_e, bin_b, bin_r = row(bin_default, r"D:\GT1\_built\gt1_mod.bin")
+    cue_e, cue_b, cue_r = row(cue_default, r"D:\GT1\_built\gt1_mod.cue")
+
+    form.addRow("Project XML:", xml_r)
+    form.addRow("Output .bin:", bin_r)
+    form.addRow("Output .cue:", cue_r)
+    lay.addLayout(form)
+
+    files_dir = win.settings.value("mkpsxiso/files_dir", "", type=str) or ""
+    if files_dir:
+        lay.addWidget(QLabel(f"Disc files folder (from setup): <code>{files_dir}</code>"))
+
+    def browse_xml():
+        p, _ = QFileDialog.getOpenFileName(
+            dlg, "Project XML", xml_e.text() or win._last_dir(), "XML (*.xml);;All (*.*)"
+        )
+        if p:
+            xml_e.setText(p)
+
+    def browse_bin():
+        p, _ = QFileDialog.getSaveFileName(
+            dlg, "Output BIN", bin_e.text() or win._last_dir(), "BIN (*.bin);;ISO (*.iso);;All (*.*)"
+        )
+        if p:
+            bin_e.setText(p)
+            if not cue_e.text().strip():
+                cue_e.setText(str(Path(p).with_suffix(".cue")))
+
+    def browse_cue():
+        p, _ = QFileDialog.getSaveFileName(
+            dlg, "Output CUE", cue_e.text() or win._last_dir(), "CUE (*.cue);;All (*.*)"
+        )
+        if p:
+            cue_e.setText(p)
+
+    xml_b.clicked.connect(browse_xml)
+    bin_b.clicked.connect(browse_bin)
+    cue_b.clicked.connect(browse_cue)
+
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    )
+    buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Build disc")
+    buttons.accepted.connect(dlg.accept)
+    buttons.rejected.connect(dlg.reject)
+    lay.addWidget(buttons)
+
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return
+
+    xml_path = xml_e.text().strip()
+    bin_path = bin_e.text().strip()
+    cue_path = cue_e.text().strip()
+    if not xml_path or not Path(xml_path).is_file():
+        QMessageBox.warning(win, "Build disc", "Choose a valid project XML.")
+        return
+    if not bin_path:
+        QMessageBox.warning(win, "Build disc", "Choose an output .bin path.")
+        return
+
+    Path(bin_path).parent.mkdir(parents=True, exist_ok=True)
+    if cue_path:
+        Path(cue_path).parent.mkdir(parents=True, exist_ok=True)
+
+    args = ["-o", bin_path]
+    if cue_path:
+        args += ["-c", cue_path]
+    args.append(xml_path)
+
+    _run_tool_with_log(win, "Build disc (mkpsxiso)", exe, args, cwd=exe.parent)
+
+    win.settings.setValue("mkpsxiso/xml", xml_path)
+    win.settings.setValue("mkpsxiso/output_dir", str(Path(bin_path).parent))
+    win.settings.setValue("mkpsxiso/enabled", True)
+
+    if Path(bin_path).is_file():
+        msg = f"Created:\n{bin_path}"
+        if cue_path and Path(cue_path).is_file():
+            msg += f"\n{cue_path}"
+        QMessageBox.information(win, "Build finished", msg)
+
+
+def open_tools_folder(win) -> None:
+    """Open the tools/ directory in the system file manager."""
+    td = tools_dir()
+    td.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        os.startfile(td)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        os.system(f'open "{td}"')
+    else:
+        os.system(f'xdg-open "{td}"')
