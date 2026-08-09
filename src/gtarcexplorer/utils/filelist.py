@@ -1,11 +1,8 @@
-"""GT1 region file-list loader (names for archive entries)."""
-from __future__ import annotations
-
 import re
+from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-# (archive_stem_upper, index) -> "basename.ext"
 NameMap = Dict[Tuple[str, int], str]
 
 _UNKNOWN_RE = re.compile(
@@ -17,15 +14,7 @@ _DEST_RE = re.compile(
     re.IGNORECASE,
 )
 
-
 def parse_filelist(path: str | Path) -> NameMap:
-    """
-    Parse a GT1ArchiveExtractor-style filelist.
-
-    Lines look like:
-      .\\COURSE\\_unknown0001.ps .\\COURSE\\_circuit.ps
-      .\\CAR\\_unknown0000.tex .\\CAR\\_0logn.tex
-    """
     path = Path(path)
     mapping: NameMap = {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -48,14 +37,11 @@ def parse_filelist(path: str | Path) -> NameMap:
         mapping[(folder, index)] = name
     return mapping
 
-
 def load_bundled(name: str = "filelist_pal_retail.txt") -> NameMap:
-    """Load a filelist shipped next to this module under filelists/."""
     here = Path(__file__).resolve().parent / "filelists" / name
     if not here.exists():
         raise FileNotFoundError(f"Bundled filelist not found: {here}")
     return parse_filelist(here)
-
 
 def bundled_lists() -> list:
     d = Path(__file__).resolve().parent / "filelists"
@@ -63,19 +49,14 @@ def bundled_lists() -> list:
         return []
     return sorted(p.name for p in d.glob("filelist_*.txt"))
 
-
 def archive_stem(path: str | Path) -> str:
-    """COURSE.DAT → COURSE, car.dat → CAR."""
     return Path(path).stem.upper()
-
 
 def lookup(mapping: Optional[NameMap], stem: str, index: int) -> Optional[str]:
     if not mapping:
         return None
     return mapping.get((stem.upper(), index))
 
-
 def safe_filename(name: str) -> str:
-    """Strip path separators / illegal chars; keep extension."""
     name = name.replace("\\", "_").replace("/", "_")
     return "".join(c if c.isalnum() or c in "._-+() " else "_" for c in name)

@@ -1,4 +1,3 @@
-"""GT-ZIP compression/decompression (LZSS-style codec used by Gran Turismo archives)."""
 def gtzip_decompress(src: bytes, decomp_size: int) -> bytes:
     dst = bytearray()
     pos = 0
@@ -29,7 +28,6 @@ def gtzip_decompress(src: bytes, decomp_size: int) -> bytes:
                     dst.append(dst[-(disp + 1)] if disp + 1 <= len(dst) else 0)
             flags >>= 1
     return bytes(dst)
-
 
 def gtzip_compress(data: bytes, level: int = 6) -> bytes:
     n = len(data)

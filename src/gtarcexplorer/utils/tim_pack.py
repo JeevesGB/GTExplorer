@@ -1,14 +1,7 @@
-"""TIM pack (COURSE / BG style container) parsing and rebuilding."""
 import struct
-# TIM pack helpers
+
 def parse_tim_pack(data: bytes):
-    """
-    TIM pack layout (COURSE / BG style):
-      u32 count
-      count × (16-byte name null-padded + u32 offset)
-      TIM blobs at those offsets
-    Returns list of (name, tim_bytes). Does not modify data.
-    """
+
     if len(data) < 4:
         return []
     count = struct.unpack_from("<I", data, 0)[0]
@@ -35,13 +28,8 @@ def parse_tim_pack(data: bytes):
         result.append((name, data[offset:end]))
     return result
 
-
-
 def build_tim_pack(tim_files: list) -> bytes:
-    """
-    Rebuild a TIM pack from list of (name, bytes).
-    Layout matches parse_tim_pack (COURSE / BG style).
-    """
+
     count = len(tim_files)
     dir_size = 4 + count * 20
     data_start = (dir_size + 15) & ~15
@@ -68,7 +56,3 @@ def build_tim_pack(tim_files: list) -> bytes:
         struct.pack_into("<I", out, 4 + i * 20 + 16, off)
 
     return bytes(out)
-
-
-
-

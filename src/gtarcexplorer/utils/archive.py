@@ -1,17 +1,16 @@
 import struct
 from pathlib import Path
 
-from .gtzip import gtzip_decompress, gtzip_compress
-from .tim_pack import parse_tim_pack, build_tim_pack
-from .audio import expand_sample_bank
-from .detect import detect_type
-from .filelist import lookup, safe_filename, archive_stem
-from .namelist import parse_name_list
-from .replay import is_replay_save
+from ..utils.gtzip import gtzip_decompress, gtzip_compress
+from ..utils.tim_pack import parse_tim_pack, build_tim_pack
+from ..utils.audio import expand_sample_bank
+from ..utils.detect import detect_type
+from ..utils.filelist import lookup, safe_filename, archive_stem
+from ..utils.namelist import parse_name_list
+from ..utils.replay import is_replay_save
 
 
 def _gtzip_decompress_full(src: bytes) -> bytes:
-    """Decompress a whole-archive GT-ZIP stream (decomp size unknown)."""
     dst = bytearray()
     pos = 0
     while pos < len(src):
@@ -57,7 +56,6 @@ class GTArc:
         self.raw = Path(path).read_bytes()
         self.files = []
 
-        #  normal GT-ARC 
         if self.raw[:12] == b"@(#)GT-ARC\0\0":
             self.kind = "gtarc"
             self.content_type, nfiles = struct.unpack_from("<HH", self.raw, 12)
@@ -70,10 +68,7 @@ class GTArc:
                 })
             return
 
-        #  whole-archive compressed GT-ARC (CARINF.DAT etc.) 
         if self.raw[1:8] == b"@(#)GT-" and b"RC" in self.raw[8:14]:
-            # Outer layer is GT-ZIP; decompress it, then treat the result
-            # as a normal GT-ARC.
             try:
                 decomp = _gtzip_decompress_full(self.raw)
             except Exception:
@@ -199,12 +194,7 @@ class GTArc:
 
     def extract_all(self, out_dir: str, indices=None, expand_tim_packs=False,
                     expand_inst_banks=False, progress_cb=None):
-        """
-        Lossless extract.
-        expand_tim_packs: also write individual .tim files from each TIM Pack.
-        expand_inst_banks: also decode INST/ENGN sample banks to WAV (+ raw ADPCM).
-        The original container file is always kept.
-        """
+
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
         if indices is None:

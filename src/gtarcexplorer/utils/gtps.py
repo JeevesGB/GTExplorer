@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 import struct
+from __future__ import annotations
 from typing import List, Tuple
 
 Vec3 = Tuple[float, float, float]
-
 
 def parse_gtps_header(data: bytes) -> dict:
     if len(data) < 0x30 or not data.startswith(b"@(#)GT-PS"):
@@ -16,12 +14,10 @@ def parse_gtps_header(data: bytes) -> dict:
         "field_1c": lod_or_sections,
     }
 
-
 def extract_vertices(data: bytes, max_verts: int = 80000) -> List[Vec3]:
     if len(data) < 0x40:
         return []
 
-    # Prefer int16 XYZ at 6-byte stride
     candidates: List[Tuple[int, List[Vec3]]] = []
     i = 0x20
     end = len(data) - 6
@@ -41,7 +37,6 @@ def extract_vertices(data: bytes, max_verts: int = 80000) -> List[Vec3]:
             ys = [v[1] for v in run]
             zs = [v[2] for v in run]
             spread = (max(xs) - min(xs)) + (max(ys) - min(ys)) + (max(zs) - min(zs))
-            # skip near-empty / sequential-index junk (monotonic small steps)
             if spread > 200:
                 candidates.append((spread, run))
             i = j
@@ -51,7 +46,6 @@ def extract_vertices(data: bytes, max_verts: int = 80000) -> List[Vec3]:
     if not candidates:
         return []
 
-    # Keep runs with the most spatial spread (likely real geometry)
     candidates.sort(key=lambda t: -t[0])
     verts: List[Vec3] = []
     seen = set()
@@ -66,7 +60,6 @@ def extract_vertices(data: bytes, max_verts: int = 80000) -> List[Vec3]:
                 return verts
     return verts
 
-
 def bounds(verts: List[Vec3]):
     if not verts:
         return (0, 0, 0, 0, 0, 0)
@@ -74,7 +67,6 @@ def bounds(verts: List[Vec3]):
     ys = [v[1] for v in verts]
     zs = [v[2] for v in verts]
     return min(xs), max(xs), min(ys), max(ys), min(zs), max(zs)
-
 
 def project_orthographic(
     verts: List[Vec3],
@@ -95,13 +87,11 @@ def project_orthographic(
 
     pts = []
     for x, y, z in verts:
-        # yaw around Y
         xz_x = x * cy + z * sy
         xz_z = -x * sy + z * cy
-        # pitch around X
         y2 = y * cp - xz_z * sp
         z2 = y * sp + xz_z * cp
-        pts.append((xz_x, -y2))  # flip Y for screen
+        pts.append((xz_x, -y2))  
 
     min_x = min(p[0] for p in pts)
     max_x = max(p[0] for p in pts)

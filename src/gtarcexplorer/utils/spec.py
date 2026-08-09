@@ -1,10 +1,7 @@
-"""GT1 part/spec table parser (SPEC, COLOR, EQUIP, TIRE, …) from GT1SpecSplitter."""
-from __future__ import annotations
-
 import struct
+from __future__ import annotations
 from typing import List, Optional, Tuple
 
-# Types that use the @(#)NAME struct-table layout
 SPEC_TYPES = {
     "Car Spec", "Car Color", "Equipment", "Tire", "Tire Compound", "Tire Size",
     "Brake", "Brake Controller", "Clutch", "Gearbox", "Suspension", "Stabilizer",
@@ -13,10 +10,8 @@ SPEC_TYPES = {
     "Computer / ECU", "Computer", "Turbo / Turbine", "Used Car Data",
 }
 
-
 def is_spec_type(type_name: str) -> bool:
     return type_name in SPEC_TYPES
-
 
 def parse_spec_table(data: bytes) -> dict:
     """
@@ -91,9 +86,7 @@ def parse_spec_table(data: bytes) -> dict:
         "string_tables": string_tables,
     }
 
-
 def colour_rows(parsed: dict) -> List[Tuple[int, int, str]]:
-    """For COLOR tables: list of (car_id, colour_id, name)."""
     rows = []
     tables = parsed.get("string_tables") or []
     for buf in parsed.get("structs") or []:
@@ -114,7 +107,6 @@ def colour_rows(parsed: dict) -> List[Tuple[int, int, str]]:
             if colour_id > 0:
                 rows.append((car_id, colour_id, name))
     return rows
-
 
 def format_spec_preview(parsed: dict, max_strings: int = 40) -> str:
     lines = [
@@ -144,10 +136,7 @@ def format_spec_preview(parsed: dict, max_strings: int = 40) -> str:
     return "\n".join(lines)
 
 def export_strings_as_text(parsed: dict, include_empty: bool = False) -> str:
-    """
-    Export all string tables from a parsed SPEC/COLOR/EQUIP/… table
-    as plain text (one string per line, tables separated by headers).
-    """
+
     lines = []
     tag = parsed.get("tag", "UNKNOWN")
     tables = parsed.get("string_tables") or []
@@ -169,12 +158,8 @@ def export_strings_as_text(parsed: dict, include_empty: bool = False) -> str:
 
     return "\n".join(lines).rstrip() + "\n"
 
-
 def export_colour_names_as_text(parsed: dict) -> str:
-    """
-    Special-case export for COLOR tables: one line per colour
-    in the form  car_id  colour_id  name
-    """
+
     if parsed.get("tag") != "COLOR":
         return export_strings_as_text(parsed)
 
@@ -191,11 +176,7 @@ def export_colour_names_as_text(parsed: dict) -> str:
     return "\n".join(lines) + "\n"
 
 def export_spec_strings(data: bytes, colour_mode: bool = True) -> str:
-    """
-    Parse a SPEC/COLOR/… blob and return its strings as text.
-    If the table is COLOR and colour_mode=True, produce the
-    car_id / colour_id / name listing instead of the raw tables.
-    """
+
     parsed = parse_spec_table(data)
     if colour_mode and parsed.get("tag") == "COLOR":
         return export_colour_names_as_text(parsed)

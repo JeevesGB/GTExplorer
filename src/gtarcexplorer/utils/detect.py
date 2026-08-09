@@ -46,7 +46,6 @@ _PREFIX_MAGICS = [
     (b"SEQG", "Sequence", ".seq"),
 ]
 
-
 def detect_type(data: bytes) -> tuple:
     if not data:
         return ("Empty", ".bin")
@@ -59,11 +58,9 @@ def detect_type(data: bytes) -> tuple:
         if data.startswith(magic):
             return (name, ext)
 
-    # PlayStation TIM (little-endian 0x00000010)
     if len(data) >= 8 and data[0] == 0x10 and data[1] == 0x00 and data[2] == 0x00 and data[3] == 0x00:
         return ("TIM Texture", ".tim")
 
-    # TIM pack: u32 count + 16-byte name containing ".tim"
     if len(data) >= 24:
         count = struct.unpack_from("<I", data, 0)[0]
         if 1 <= count <= 512:
@@ -71,7 +68,6 @@ def detect_type(data: bytes) -> tuple:
             if b".tim" in name.lower():
                 return ("TIM Pack", ".tpk")
 
-    # Filename lists (.idx style and embedded lists)
     if len(data) < 2_000_000:
         sample = data[:4096]
         printable = sum(1 for b in sample if 32 <= b < 127 or b in (9, 10, 13))
@@ -96,7 +92,6 @@ def detect_type(data: bytes) -> tuple:
     if b".tim\n" in data[:200] or b".seq\n" in data[:200] or b".htm\n" in data[:200]:
         return ("Filename List", ".idx")
 
-    # Mostly ASCII text (messages, etc.)
     sample = data[:64]
     printable = sum(1 for b in sample if (32 <= b < 127) or b in (0, 9, 10, 13))
     if len(sample) >= 16 and printable >= len(sample) * 0.85:
@@ -106,11 +101,9 @@ def detect_type(data: bytes) -> tuple:
     return ("Unknown", ".bin")
 
     
-    # PlayStation TIM (little-endian 0x00000010)
     if len(data) >= 8 and data[0] == 0x10 and data[1] == 0x00 and data[2] == 0x00 and data[3] == 0x00:
         return ("TIM Texture", ".tim")
 
-    # TIM pack: u32 count + 16-byte name containing ".tim"
     if len(data) >= 24:
         count = struct.unpack_from("<I", data, 0)[0]
         if 1 <= count <= 512:
@@ -118,7 +111,6 @@ def detect_type(data: bytes) -> tuple:
             if b".tim" in name.lower():
                 return ("TIM Pack", ".tpk")
 
-    # Mostly ASCII text
     sample = data[:64]
     printable = sum(1 for b in sample if (32 <= b < 127) or b in (0, 9, 10, 13))
     if len(sample) >= 16 and printable >= len(sample) * 0.85:

@@ -1,15 +1,12 @@
-from __future__ import annotations
-
 import struct
+from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
-
 
 ENTRY_SIZE = 0x34
 ENTRY_TABLE_OFF = 0x200
 NAME_OFF = 0x08
 NAME_MAX = 24
-
 
 @dataclass
 class ReplayEntry:
@@ -19,7 +16,6 @@ class ReplayEntry:
     raw_header: bytes         
     raw: bytes                 
 
-
 @dataclass
 class ReplaySave:
     title: str
@@ -27,7 +23,6 @@ class ReplaySave:
     block_count: int
     entries: List[ReplayEntry]
     raw: bytes
-
 
 def is_replay_save(data: bytes) -> bool:
     if len(data) < 0x80 or data[0:2] != b"SC":
@@ -44,7 +39,6 @@ def is_replay_save(data: bytes) -> bool:
         or "gt replay" in title_l
         or title.startswith("ＧＴ")
     )
-
 
 def parse_replay_save(data: bytes) -> ReplaySave:
 
@@ -91,7 +85,6 @@ def parse_replay_save(data: bytes) -> ReplaySave:
         raw=data,
     )
 
-
 def format_replay_preview(save: ReplaySave) -> str:
     lines = [
         f"Title          : {save.title}",
@@ -105,7 +98,6 @@ def format_replay_preview(save: ReplaySave) -> str:
     for e in save.entries:
         lines.append(f"{e.index:3d}  0x{e.offset:04X}  {e.name}")
     return "\n".join(lines)
-
 
 def detect_replay(data: bytes) -> Optional[Tuple[str, str]]:
     if is_replay_save(data):
