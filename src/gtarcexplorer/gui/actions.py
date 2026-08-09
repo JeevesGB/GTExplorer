@@ -19,6 +19,7 @@ from ..utils.replay import is_replay_save
 from ..utils.spec import is_spec_type, export_spec_strings
 from . import names
 
+ARCHIVE_GLOBS = ("*.dat", "*.DAT", "*.arc", "*.ARC")
 
 def last_dir(win, key: str = "last_open_dir") -> str:
     return win.settings.value(key, "", type=str) or ""
@@ -333,12 +334,23 @@ def extract_all(win) -> None:
     if not win.arc.files:
         QMessageBox.warning(win, "No archive", "Open a file first")
         return
+
+    default_out = ""
+    if getattr(win, "extract_dir", None) and Path(win.extract_dir).exists():
+        default_out = str(win.extract_dir)
+    else:
+        default_out = win.settings.value("workspace/extract_dir", "", type=str) or ""
+    if not default_out:
+        default_out = win._last_dir("last_extract_dir")
+
     out = QFileDialog.getExistingDirectory(
-        win, "Choose extract folder", win._last_dir("last_extract_dir")
+        win, "Choose extract folder", default_out
     )
     if not out:
         return
     win._set_last_dir(out, "last_extract_dir")
+    win.extract_dir = Path(out)
+
     expand = win.chk_tims.isChecked()
     expand_inst = win.chk_inst.isChecked()
     win.set_progress(0, len(win.arc.files))
@@ -432,14 +444,26 @@ def repack(win) -> None:
             "Files will be packed in sorted order from the folder.",
         )
 
+    default_pack = getattr(win, "_workspace_pack_out", None) or ""
+    if not default_pack:
+        default_pack = win.settings.value("workspace/pack_out", "", type=str) or ""
+
     out, _ = QFileDialog.getSaveFileName(
         win, "Save repacked archive",
-        win._last_dir(),
+        default_pack or win._last_dir(),
         "DAT (*.DAT *.dat);;All (*.*)",
     )
     if not out:
         return
     win._set_last_dir(out)
+
+    if would_write_into_input(win, out):
+        QMessageBox.warning(
+            win, "Refusing overwrite",
+            "Packed file would be written into the input (game) folder.\n"
+            "Use the workspace output folder instead.",
+        )
+        return
 
     force_unc = QMessageBox.question(
         win, "Compression",
@@ -454,6 +478,7 @@ def repack(win) -> None:
             result = GTArc.pack_from_folder(
                 str(win.extract_dir), out,
                 force_uncompressed=force_unc,
+                compress_level=level,
             )
             win.finished_signal.emit(True, result)
         except Exception as e:
@@ -466,6 +491,17 @@ def repack(win) -> None:
     win.finished_signal.connect(lambda ok, data: on_repack_finished(win, ok, data))
     threading.Thread(target=worker, daemon=True).start()
 
+def would_write_into_input(win, out_path: str) -> bool:
+    """True if out_path is inside the workspace input (game) folder."""
+    in_dir = getattr(win, "_workspace_input", None)
+    if not in_dir or not out_path:
+        return False
+    try:
+        out_p = Path(out_path).resolve()
+        in_p = Path(in_dir).resolve()
+        return in_p in out_p.parents or out_p.parent == in_p
+    except Exception:
+        return False
 
 def on_repack_finished(win, success: bool, data) -> None:
     try:
@@ -777,3 +813,156 @@ def show_diff_dialog(win, rows, title: str) -> None:
     buttons.rejected.connect(dlg.reject)
     layout.addWidget(buttons)
     dlg.exec()
+
+
+def set_workspace(win) -> None:
+    from PyQt6.QtWidgets import (
+        QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
+        QPushButton, QHBoxLayout, QFileDialog, QMessageBox, QLabel,
+    )
+
+    dlg = QDialog(win)
+    dlg.setWindowTitle("Set workspace")
+    dlg.setMinimumWidth(520)
+    form = QFormLayout(dlg)
+
+    def _row(default: str = ""):
+        edit = QLineEdit(default)
+        btn = QPushButton("…")
+        btn.setFixedWidth(32)
+        row = QHBoxLayout()
+        row.addWidget(edit, stretch=1)
+        row.addWidget(btn)
+        return edit, btn, row
+
+    in_edit, in_btn, in_row = _row(
+        win.settings.value("workspace/input_dir", "", type=str) or ""
+    )
+    out_edit, out_btn, out_row = _row(
+        win.settings.value("workspace/output_dir", "", type=str) or ""
+    )
+
+    form.addRow(QLabel(
+        "Input folder = original game archives (.DAT / .ARC)\n"
+        "Output folder = extracts and packed mods (originals are never overwritten)."
+    ))
+    form.addRow("Input folder:", in_row)
+    form.addRow("Output folder:", out_row)
+
+    def browse_in():
+        path = QFileDialog.getExistingDirectory(
+            dlg, "Input folder (game files)",
+            in_edit.text() or win._last_dir(),
+        )
+        if path:
+            in_edit.setText(path)
+            if not out_edit.text().strip():
+                out_edit.setText(str(Path(path) / "_mods"))
+
+    def browse_out():
+        path = QFileDialog.getExistingDirectory(
+            dlg, "Output folder (extracts / packs)",
+            out_edit.text() or in_edit.text() or win._last_dir("last_extract_dir"),
+        )
+        if path:
+            out_edit.setText(path)
+
+    in_btn.clicked.connect(browse_in)
+    out_btn.clicked.connect(browse_out)
+
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    )
+    buttons.accepted.connect(dlg.accept)
+    buttons.rejected.connect(dlg.reject)
+    form.addRow(buttons)
+
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return
+
+    in_dir = in_edit.text().strip()
+    out_dir = out_edit.text().strip()
+    if not in_dir or not Path(in_dir).is_dir():
+        QMessageBox.warning(win, "Workspace", "Choose a valid input folder.")
+        return
+    if not out_dir:
+        out_dir = str(Path(in_dir) / "_mods")
+
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+    win.settings.setValue("workspace/input_dir", in_dir)
+    win.settings.setValue("workspace/output_dir", out_dir)
+    win._workspace_input = in_dir
+    win._workspace_output = out_dir
+    win._set_last_dir(in_dir)
+    win._set_last_dir(out_dir, "last_extract_dir")
+
+    refresh_input_file_list(win)
+    win.set_status(f"Workspace  •  in={in_dir}  •  out={out_dir}")
+
+
+def apply_workspace_paths(win) -> None:
+    in_dir = win.settings.value("workspace/input_dir", "", type=str) or ""
+    out_dir = win.settings.value("workspace/output_dir", "", type=str) or ""
+    win._workspace_input = in_dir or None
+    win._workspace_output = out_dir or None
+    if out_dir:
+        win.extract_dir = Path(out_dir)  # base; per-file extract uses subfolder
+    if in_dir and Path(in_dir).is_dir() and hasattr(win, "input_list"):
+        refresh_input_file_list(win)
+
+
+def refresh_input_file_list(win) -> None:
+    if not hasattr(win, "input_list"):
+        return
+    win.input_list.clear()
+    in_dir = getattr(win, "_workspace_input", None) or ""
+    if not in_dir or not Path(in_dir).is_dir():
+        return
+
+    files = []
+    root = Path(in_dir)
+    for pat in ARCHIVE_GLOBS:
+        files.extend(root.glob(pat))
+    # unique, sorted
+    seen = set()
+    uniq = []
+    for p in sorted(files, key=lambda x: x.name.lower()):
+        key = str(p.resolve()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(p)
+
+    for p in uniq:
+        item = QTreeWidgetItem([p.name, f"{p.stat().st_size:,}"])
+        item.setData(0, Qt.ItemDataRole.UserRole, str(p))
+        win.input_list.addTopLevelItem(item)
+
+    win.set_status(f"Input folder: {len(uniq)} archive(s) in {in_dir}")
+
+
+def on_input_file_clicked(win) -> None:
+    items = win.input_list.selectedItems()
+    if not items:
+        return
+    path = items[0].data(0, Qt.ItemDataRole.UserRole)
+    if not path or not Path(path).is_file():
+        return
+
+    # Per-archive extract / pack defaults under output folder
+    out_root = getattr(win, "_workspace_output", None) or win.settings.value(
+        "workspace/output_dir", "", type=str
+    )
+    stem = Path(path).stem
+    if out_root:
+        extract = Path(out_root) / f"{stem}_extract"
+        pack_out = Path(out_root) / f"{stem}_mod{Path(path).suffix or '.DAT'}"
+        extract.mkdir(parents=True, exist_ok=True)
+        win.extract_dir = extract
+        win._workspace_pack_out = str(pack_out)
+        win.settings.setValue("workspace/extract_dir", str(extract))
+        win.settings.setValue("workspace/pack_out", str(pack_out))
+
+    win._nav_stack.clear()
+    open_file_path(win, Path(path), push_nav=False)

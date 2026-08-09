@@ -19,7 +19,7 @@ from . import names, tim_tools, viewer, actions
 
 from PyQt6.QtCore import Qt, QSize, QSettings, pyqtSignal
 from PyQt6.QtGui import (
-    QAction, QFont, QIcon, QColor, QKeySequence,
+    QAction, QFont, QIcon, QColor, QKeySequence, 
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -93,12 +93,17 @@ class GTArcExplorer(QMainWindow):
         self._nav_stack: list[dict] = []
         self._cancel_load = False
         self._lazy_load = True
+        self._workspace_game = None 
+        self._workspace_pack_out = None
 
         self._build_ui()
         self._load_theme()
         self._connect_signals()
         self._restore_geometry()
         self._update_action_states()
+        self._workspace_input = None
+        self._workspace_output = None 
+        self._workspace_pack_out = None
 
         self.progress_signal.connect(self._update_progress)
         self.finished_signal.connect(self._on_load_finished)
@@ -225,6 +230,9 @@ class GTArcExplorer(QMainWindow):
         self.act_save_sel.setToolTip("Write selected entries to a folder")
         self.act_about = QAction("About", self)
 
+        self.act_workspace = QAction("Set workspace", self)
+        self.act_workspace.setToolTip("Set project paths")
+
         self.menu_recent = QMenu("Recent", self)
 
         self.act_theme = QAction("Dark theme", self)
@@ -251,6 +259,8 @@ class GTArcExplorer(QMainWindow):
         m_file.addSeparator()
         m_file.addAction(self.act_save_sel)
         m_file.addAction(self.act_folder)
+        m_file.addSeparator()
+        m_file.addAction(self.act_workspace)
 
         m_extract = menubar.addMenu("&Extract")
         m_extract.addAction(self.act_extract)
@@ -339,6 +349,16 @@ class GTArcExplorer(QMainWindow):
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 0, 0)
         left_lay.setSpacing(4)
+
+        left_lay.addWidget(QLabel("<b>Input files</b>"))
+        self.input_list = QTreeWidget()
+        self.input_list.setHeaderLabels(["File", "Size"])
+        self.input_list.setRootIsDecorated(False)
+        self.input_list.setUniformRowHeights(True)
+        self.input_list.setMaximumHeight(160)
+        self.input_list.setToolTip("Archives in the workspace input folder — click to open")
+        left_lay.addWidget(self.input_list)
+
         left_lay.addWidget(QLabel("<b>Archive Contents</b>"))
 
         self.filter_edit = QLineEdit()
@@ -566,6 +586,8 @@ class GTArcExplorer(QMainWindow):
         self.act_about.triggered.connect(self.show_about)
         self.btn_nav_back.clicked.connect(self.nav_back)
         self.act_theme.triggered.connect(self.toggle_theme)
+        self.act_workspace.triggered.connect(self.set_workspace)
+        self.input_list.itemClicked.connect(lambda *_: self.on_input_file_clicked())
 
     def _update_action_states(self):
         has_files = bool(self.arc.files)
@@ -601,6 +623,7 @@ class GTArcExplorer(QMainWindow):
         self.act_diff_folder.setEnabled(has_files)
         self.act_diff_dat.setEnabled(has_files)
         self.act_save_sel.setEnabled(has_files and has_sel)
+        actions.apply_workspace_paths(self)
 
     def set_status(self, text: str):
         self.status_label.setText(text)
@@ -680,6 +703,11 @@ class GTArcExplorer(QMainWindow):
         elif chosen is act_replace:
             self.replace_selected_with_image()
 
+    def set_workspace(self):
+        actions.set_workspace(self)
+
+    def on_input_file_clicked(self):
+        actions.on_input_file_clicked(self)
 
     def convert_image_to_tim(self):
         tim_tools.convert_image_to_tim(self)
@@ -780,6 +808,8 @@ class GTArcExplorer(QMainWindow):
     def diff_vs_dat(self):
         actions.diff_vs_dat(self)
 
+    def set_workspace(self):
+        actions.set_workspace(self)
 
     def _recent_list(self) -> list[str]:
         raw = self.settings.value("recent", [])
