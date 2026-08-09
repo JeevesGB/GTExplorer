@@ -1,5 +1,5 @@
 <div style="text-align: center;">
-  <img src="img/gtexplorericon.png" alt="icon">
+  <img src="img/gtexplorericon.png" width="300" alt="icon">
 </div>
 
 # GTExplorer
@@ -12,7 +12,7 @@
 [![Last commit](https://img.shields.io/github/last-commit/JeevesGB/GTExplorer)](https://github.com/JeevesGB/GTExplorer/commits/main)
 [![GitHub release](https://img.shields.io/github/v/release/JeevesGB/GTExplorer)](https://github.com/JeevesGB/GTExplorer/releases)
 
-Extractor and viewer for **Gran Turismo 1** (PlayStation) archive files.
+Extractor, viewer, and repacker for **Gran Turismo 1** (PlayStation) archive files — with optional full disc dump/rebuild via [mkpsxiso](https://github.com/Lameguy64/mkpsxiso).
 
 ![1](img/1.png)
 ![2](img/2.png)
@@ -26,47 +26,98 @@ Extractor and viewer for **Gran Turismo 1** (PlayStation) archive files.
 ## Features
 
 - Extract **GT-ARC** / **GT-ZIP** archives
+- **Repack** extracted folders back to `.DAT` / `.ARC` (uses `manifest.txt` when present)
 - Optional **TIM pack** expansion and rebuild
 - Optional **INST / ENGN** sample expansion
 - Region **file lists** for real asset names on extract
 - Built-in **Asset Viewer** (TIM, TIM packs, GT-CTEX, GT-PS)
-- **Preview** for sequences, filename lists, GTHTML, and car part tables (SPEC, COLOR, etc)
+- **Preview** for sequences, filename lists, GTHTML, and car part tables (SPEC, COLOR, …)
+- **TIM tools** — convert / re-encode / replace / batch convert (requires Pillow)
+- **Setup / Workspace** — project paths for originals, mods, and disc tools
+- **Disc dump & rebuild** (optional) — run **dumpsxiso** / **mkpsxiso** from the GUI
+- In-app **User Guide** (Help button or **Help → User Guide**)
 
-> **Note:** Repacking is currently unfinished.
+> Prefer a clean **Extract All** (with `manifest.txt`) before editing and repacking.
 
 ---
 
 ## Requirements
 
-- Python 3.8+
-- [Pillow](https://python-pillow.org/) (for the Asset Viewer)
-- PyQt6 ≥ 6.4
+- **Python 3.8+**
+- [Pillow](https://python-pillow.org/) (Asset Viewer + TIM tools)
+- **PyQt6** ≥ 6.4
 
 ```bash
 pip install -r requirements.txt
 ```
 
+### Optional — disc rebuild
+
+GTExplorer does **not** ship mkpsxiso. To dump/build full disc images:
+
+1. Download the official release: [Lameguy64/mkpsxiso](https://github.com/Lameguy64/mkpsxiso/releases/latest)
+2. Place `mkpsxiso.exe` and `dumpsxiso.exe` in the project `tools/` folder  
+   (see `tools/README.txt`)
+3. Configure paths under **File → Setup / Workspace…**
+
 ---
 
 ## Quick start
 
-From the repo root:
+**Windows**
+
+```bat
+runtool.bat
+```
+
+**Or from the repo root**
 
 ```bash
 python src/main.py
 ```
 
-Windows:
+1. On first launch, complete **Setup** (input / output folders).
+2. **File → Open .DAT** — or click an archive in the Input list.
+3. (Optional) pick a region **Names** list in the toolbar.
+4. **Extract → Extract All** into your output folder.
+5. Edit files on disk, then **Extract → Repack**.
 
-```bash
-runtool.bat
+Press the toolbar **Help** button for the full User Guide.
+
+---
+
+## Setup / Workspace
+
+**File → Setup / Workspace…**
+
+| Section | Purpose |
+|---------|---------|
+| **1. Working folders** | **Input** = original `.DAT` / `.ARC` (read-only). **Output** = extracts and packs. |
+| **2. Disc dump & rebuild** | Optional. Paths for disc image, dumpsxiso XML, disc files tree, and built `.bin`/`.cue`. |
+
+Suggested layout:
+
+```
+C:\GT1\
+  GAMEFILES\       ← input (original archives or dumped disc files)
+  _mods\           ← output (extracts / intermediate packs)
+  disc_files\      ← dumpsxiso extract (full disc tree)
+  gt1.xml          ← dumpsxiso project XML
+  _built\          ← mkpsxiso output .bin / .cue
 ```
 
-1. **Open…** — pick a `.DAT` / `.ARC`
-2. (Optional) choose a **file list** so names are real instead of `000`, `001`, …
-3. **Extract All** or **Extract Selected**
+Default project paths can be pointed at something like **`C:/GT1/`** for a simple single-root layout.
 
-Full guide → [Usage](docs/usage.md)
+---
+
+## Typical mod loop
+
+1. **Dump disc** (optional, once) — **Tools → Dump disc (dumpsxiso)…** or from Setup.
+2. Open a `.DAT` → **Extract All**.
+3. Edit TIM / text / other assets in the extract folder.
+4. **Repack** the folder to a new `.DAT`.
+5. Copy the modded `.DAT` into the disc files tree (same path/name as the original).
+6. **Tools → Build disc (mkpsxiso)…** → boot the new `.cue` in an emulator.
 
 ---
 
@@ -84,99 +135,48 @@ Full guide → [Usage](docs/usage.md)
 
 | Content | Ext | Notes |
 |---------|-----|--------|
-| TIM texture | `.tim` | `10 00 00 00` magic |
-| TIM pack | `.tpk` | Named TIM container |
+| TIM texture | `.tim` | Preview, replace, re-encode |
+| TIM pack | `.tpk` | Expand / rebuild with Extract TIMs |
 | GT-PS / GT-CAR / GT-CTEX / GT-SKY | `.ps` / `.car` / `.tex` / `.sky` | Models & textures |
-| Nested GT-ARC | `.arc` | Open with **Open Nested ARC** |
-| GTHTML | `.gthtml` | GT menu/script data |
+| Nested GT-ARC | `.arc` | Open Nested ARC |
+| GTHTML | `.gthtml` | Menu / script data |
 | INST / ENGN / SEQG | `.ins` / `.es` / `.seq` | Sound & sequences |
 | SPEC, COLOR, TIRE, … | matching | Car part tables |
 | Filename lists / text | `.idx` / `.txt` | Name tables & messages |
 
-Full table + TIM pack layout → [Formats](docs/formats.md)
-
 ---
 
-## File lists
-
-Bundled region lists: `src/gtarcexplorer/filelists/`
-
-Per-archive notes:
-
-- [ARCADE.DAT](doc/filelists/ARCADE.DAT.MD)
-- [BG.DAT](doc/filelists/BG.DAT.MD)
-- [CAR.DAT](doc/filelists/CAR.DAT.MD)
-- [CARCADE.DAT](doc/filelists/CARCADE.DAT.MD)
-- [COURSE.DAT](doc/filelists/COURSE.DAT.MD)
-- [GAMEMENU](doc/filelists/GAMEMENU.MD)
-- [MENU_IMG](doc/filelists/MENU_IMG.MD)
-- [MENU_RAW](doc/filelists/MENU_RAW.MD)
-- [PITMENU.DAT](doc/filelists/PITMENU.DAT.MD)
-- [REPLAY.DAT](doc/filelists/REPLAY.DAT.MD)
-- [SOUND.DAT](doc/filelists/SOUND.DAT.MD)
-
----
-
-## Known GT1 archives
-
-See [Known archives](docs/archives.md).
-
----
-
-## Project layout
+## Tools folder
 
 ```
-src/
-├── main.py
-└── gtarcexplorer/
-    ├── __init__.py
-    ├── gui_qt.py
-    ├── archive.py
-    ├── detect.py
-    ├── gtzip.py
-    ├── filelist.py
-    ├── filelists/
-    │   ├── filelist_pal_retail.txt
-    │   ├── filelist_usa_retail.txt
-    │   ├── filelist_usa_demo.txt
-    │   ├── filelist_jp_retail.txt
-    │   ├── filelist_jp_demo.txt
-    │   └── filelist_jp_testdrive.txt
-    ├── tim_pack.py
-    ├── tim_image.py
-    ├── ctex.py
-    ├── gtps.py
-    ├── audio.py
-    ├── spec.py
-    ├── namelist.py
-    ├── gthtml.py
-    └── replay.py
-
-thm/
-├── icon.ico
-└── dark.qss
-
-runtool.bat
-requirements.txt
-docs/
+tools/
+  README.txt          ← ships with the project
+  mkpsxiso.exe        ← you add (official release)
+  dumpsxiso.exe      ← you add
 ```
+
+Binaries are gitignored so each user installs the official build themselves.
 
 ---
 
-## Notes
+## Keyboard shortcuts
 
-- Extract keeps **original bytes** (only GT-ZIP decompression when needed).
-- Real names come from region file lists and, when present, embedded name lists.
-- Asset Viewer needs Pillow; everything else works without it.
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+O` | Open archive |
+| `Ctrl+Shift+O` | Open extract folder |
+| `Ctrl+E` | Extract selected |
+| `Ctrl+F` | Focus filter |
+
+---
 
 ## Credits
 
 - [pez2k / gt2tools](https://github.com/pez2k/gt2tools) — prior research into GT1 files
+- [Lameguy64 / mkpsxiso](https://github.com/Lameguy64/mkpsxiso) — optional disc dump & rebuild
 
-
+---
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-###### JeevesGB 
