@@ -27,7 +27,8 @@ from PyQt6.QtWidgets import (
     QLabel, QToolBar, QToolButton, QStatusBar, QProgressBar, QFileDialog,
     QMessageBox, QCheckBox, QComboBox, QScrollArea, QHeaderView,
     QAbstractItemView, QPushButton, QLineEdit,
-    QMenu, QSizePolicy, QButtonGroup, QStyle,
+    QMenu, QSizePolicy, QButtonGroup, QStyle, QDialog, QDialogButtonBox,
+    QTabWidget, QTextBrowser,
 )
 
 try:
@@ -230,8 +231,8 @@ class GTArcExplorer(QMainWindow):
         self.act_save_sel.setToolTip("Write selected entries to a folder")
         self.act_about = QAction("About", self)
 
-        self.act_workspace = QAction("Set workspace", self)
-        self.act_workspace.setToolTip("Set project paths")
+        self.act_workspace = QAction("Setup / Workspace…", self)
+        self.act_workspace.setToolTip("Working folders and optional mkpsxiso paths")
 
         self.menu_recent = QMenu("Recent", self)
 
@@ -286,7 +287,12 @@ class GTArcExplorer(QMainWindow):
         self.act_log.setCheckable(True)
         m_view.addAction(self.act_log)
 
+        self.act_user_guide = QAction("User Guide", self)
+        self.act_user_guide.setShortcut(QKeySequence("F1"))
+        self.act_user_guide.setToolTip("How to extract, edit, and repack")
+
         m_help = menubar.addMenu("&Help")
+        m_help.addAction(self.act_user_guide)
         m_help.addAction(self.act_about)
 
         self.chk_tims = QCheckBox("Extract TIMs")
@@ -307,6 +313,15 @@ class GTArcExplorer(QMainWindow):
         self.filelist_combo.setCurrentText("filelist_pal_retail.txt")
         self.filelist_combo.setMinimumWidth(180)
         toolbar.addWidget(self.filelist_combo)
+
+        # Visible Help button (opens User Guide)
+        toolbar.addSeparator()
+        self.btn_help = QPushButton("Help")
+        self.btn_help.setToolTip("Open the User Guide")
+        self.btn_help.setMinimumWidth(56)
+        self.btn_help.setProperty("class", "secondary")
+        self.btn_help.clicked.connect(self.show_user_guide)
+        toolbar.addWidget(self.btn_help)
 
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(self.main_splitter, stretch=1)
@@ -584,6 +599,7 @@ class GTArcExplorer(QMainWindow):
         self.rail_group.idClicked.connect(self._switch_canvas)
         self.act_save_sel.triggered.connect(self.save_selected)
         self.act_about.triggered.connect(self.show_about)
+        self.act_user_guide.triggered.connect(self.show_user_guide)
         self.btn_nav_back.clicked.connect(self.nav_back)
         self.act_theme.triggered.connect(self.toggle_theme)
         self.act_workspace.triggered.connect(self.set_workspace)
@@ -624,6 +640,9 @@ class GTArcExplorer(QMainWindow):
         self.act_diff_dat.setEnabled(has_files)
         self.act_save_sel.setEnabled(has_files and has_sel)
         actions.apply_workspace_paths(self)
+        # First-run setup wizard (paths + optional mkpsxiso)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: actions.maybe_show_first_run_setup(self))
 
     def set_status(self, text: str):
         self.status_label.setText(text)
@@ -840,11 +859,189 @@ class GTArcExplorer(QMainWindow):
             self,
             "About GTExplorer",
             "<b>GTExplorer</b><br>"
-            "Gran Turismo 1 archive explorer<br><br>"
+            "Gran Turismo 1 (PlayStation) archive explorer<br><br>"
+            "Open, extract, preview, and repack GT-ARC / GT-ZIP archives.<br>"
+            "Supports TIM textures, CTEX, car models, nested ARCs, "
+            "REPLAY saves, text/message tables, and SPEC data.<br><br>"
             '<a href="https://github.com/JeevesGB/GTExplorer" style="color:#FF6B67;">'
             "github.com/JeevesGB/GTExplorer</a><br><br>"
-            "Open · extract · preview TIM/CTEX · nested ARC · REPLAY · SPEC tables",
+            "Use the <b>Help</b> button on the toolbar (or Help → User Guide) for the full guide.",
         )
+
+    def show_user_guide(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("GTExplorer — User Guide")
+        dlg.resize(780, 620)
+        dlg.setMinimumSize(560, 400)
+
+        layout = QVBoxLayout(dlg)
+        tabs = QTabWidget()
+        layout.addWidget(tabs)
+
+        def make_page(html: str) -> QWidget:
+            page = QWidget()
+            v = QVBoxLayout(page)
+            v.setContentsMargins(0, 0, 0, 0)
+            browser = QTextBrowser()
+            browser.setOpenExternalLinks(True)
+            browser.setHtml(html)
+            v.addWidget(browser)
+            return page
+
+        overview = """
+        <h2>Overview</h2>
+        <p><b>GTExplorer</b> opens Gran Turismo 1 <code>.DAT</code> / <code>.ARC</code> archives,
+        lets you preview assets (TIM textures, models, text, etc.), extract them losslessly,
+        edit files on disk, and pack them back into a playable archive.</p>
+        <p><b>Typical mod loop</b></p>
+        <ol>
+          <li><b>File → Open .DAT</b> — load the original archive (e.g. <code>ARCADE2.DAT</code>).</li>
+          <li>Optional: pick a region <b>Names</b> list in the toolbar so entries show real names.</li>
+          <li><b>Extract → Extract All</b> into a clean empty folder.</li>
+          <li>Edit files in that folder (replace a <code>.tim</code>, edit <code>.txt</code> messages, etc.).</li>
+          <li><b>Extract → Repack</b> — choose output path and compression options.</li>
+          <li>Test the new <code>.DAT</code> in-game or with an emulator.</li>
+        </ol>
+        <p>You can also <b>File → Open Folder</b> on an existing extract to browse and repack it
+        without re-extracting.</p>
+        """
+
+        extract_pack = """
+        <h2>Extract &amp; Pack</h2>
+        <h3>Extract</h3>
+        <ul>
+          <li><b>Extract All</b> — writes every entry plus a <code>manifest.txt</code> that
+              records order and compression type. Keep this file; packing uses it.</li>
+          <li><b>Extract Selected</b> (<code>Ctrl+E</code>) — only the rows you selected.</li>
+          <li><b>Extract TIMs</b> checkbox — also expands TIM packs into
+              <code>&lt;name&gt;_tims/</code> subfolders.</li>
+          <li><b>Extract samples</b> — expands INST/ENGN banks to WAV (and raw ADPCM).</li>
+        </ul>
+        <h3>Pack / Repack</h3>
+        <ul>
+          <li>Pack the <b>folder that contains the individual files</b>
+              (and preferably <code>manifest.txt</code>), not a parent folder.</li>
+          <li>Files must sit <b>directly</b> in that folder. Subfolders named
+              <code>*_tims</code> / <code>*_samples</code> are skipped (they are rebuilt
+              from the parent <code>.tpk</code> when present).</li>
+          <li>If <code>manifest.txt</code> is missing or incomplete, the tool falls back
+              to packing every packable file it finds, in sorted order.</li>
+          <li>Compression: <b>No</b> = GT-ZIP compressed (usual for game files);
+              <b>Yes</b> = store uncompressed. Level 4–6 is a good default.</li>
+          <li>After a successful pack, reopen the new <code>.DAT</code> and spot-check
+              a few entries (especially any TIM you changed).</li>
+        </ul>
+        <h3>If packing fails</h3>
+        <p>The error dialog now lists files/subdirs the tool can see. Common causes:</p>
+        <ul>
+          <li>Wrong folder selected (empty or only subfolders).</li>
+          <li>Files still inside a nested extract folder.</li>
+          <li>Manifest listing names that were renamed or deleted.</li>
+        </ul>
+        """
+
+        viewing = """
+        <h2>Viewing &amp; navigation</h2>
+        <ul>
+          <li>Click a row in the tree to preview it (TIM image, text, hex, model header, etc.).</li>
+          <li><b>Double-click</b> a Nested GT-ARC to open it. Use the breadcrumb
+              <b>Back</b> button to return to the parent.</li>
+          <li>Filter box (<code>Ctrl+F</code>) filters the tree by name/type.</li>
+          <li>Toolbar <b>Names</b> combo loads a region file list so indexes become
+              real asset names when known.</li>
+          <li><b>Tools → Load list…</b> — load a custom name list.</li>
+          <li>Drag-and-drop a <code>.DAT</code> or extract folder onto the window to open it.</li>
+        </ul>
+        <h3>Supported content (summary)</h3>
+        <table border="1" cellpadding="4" cellspacing="0">
+          <tr><th>Type</th><th>Ext</th><th>Notes</th></tr>
+          <tr><td>TIM texture</td><td>.tim</td><td>Preview, replace, re-encode</td></tr>
+          <tr><td>TIM pack</td><td>.tpk</td><td>Expand/rebuild with Extract TIMs</td></tr>
+          <tr><td>GT-CTEX / GT-CAR / GT-PS</td><td>.tex / .car / .ps</td><td>Models &amp; textures</td></tr>
+          <tr><td>Text / messages</td><td>.txt</td><td>Editable as plain text</td></tr>
+          <tr><td>Nested GT-ARC</td><td>.arc</td><td>Open Nested ARC</td></tr>
+          <tr><td>REPLAY save</td><td>—</td><td>Replay viewer</td></tr>
+          <tr><td>SPEC / COLOR / …</td><td>—</td><td>Tables; Export Strings</td></tr>
+        </table>
+        """
+
+        tim_tools = """
+        <h2>TIM tools</h2>
+        <p>Requires <b>Pillow</b> (<code>pip install Pillow</code>).</p>
+        <ul>
+          <li><b>Convert image to TIM…</b> — PNG/BMP → standalone <code>.tim</code>.</li>
+          <li><b>Re-encode selected TIM…</b> — re-encode the selected entry
+              (optionally match original VRAM/CLUT layout).</li>
+          <li><b>Replace selected TIM with image…</b> — inject a PNG into the
+              currently selected TIM entry (best when dimensions/bit depth match).</li>
+          <li><b>Batch convert folder to TIM…</b> — convert every image in a folder
+              with the same settings.</li>
+        </ul>
+        <p><b>Tip:</b> After replacing a TIM inside an extract folder, run <b>Repack</b>
+        so the change lands in the new <code>.DAT</code>. If you only replaced inside
+        the open archive in memory, extract or save the entry first.</p>
+        """
+
+        shortcuts = """
+        <h2>Shortcuts &amp; menus</h2>
+        <table border="1" cellpadding="4" cellspacing="0">
+          <tr><th>Shortcut</th><th>Action</th></tr>
+          <tr><td><code>Ctrl+O</code></td><td>Open .DAT / archive</td></tr>
+          <tr><td><code>Ctrl+Shift+O</code></td><td>Open extract folder</td></tr>
+          <tr><td><code>Ctrl+E</code></td><td>Extract selected</td></tr>
+          <tr><td><code>Ctrl+F</code></td><td>Focus filter</td></tr>
+          <tr><td><code>F1</code></td><td>This User Guide</td></tr>
+        </table>
+        <h3>Menu map</h3>
+        <ul>
+          <li><b>File</b> — Open archive, Open Nested ARC, Open Folder, Recent,
+              Save Selected, Open Extract Folder, Set workspace</li>
+          <li><b>Extract</b> — Extract All, Extract Selected, Export Strings, Repack</li>
+          <li><b>Diff</b> — Compare archive to an extract folder or another .DAT</li>
+          <li><b>Tools</b> — Load name list, TIM convert / re-encode / replace / batch</li>
+          <li><b>View</b> — Dark theme, Show log</li>
+          <li><b>Help</b> — User Guide, About</li>
+        </ul>
+        """
+
+        tips = """
+        <h2>Tips &amp; troubleshooting</h2>
+        <ul>
+          <li>Always work from a <b>copy</b> of game files. Keep the original
+              <code>.DAT</code> untouched.</li>
+          <li>Prefer a <b>fresh Extract All</b> before a big mod session so
+              <code>manifest.txt</code> matches the files on disk.</li>
+          <li>Do not rename files unless you also update <code>manifest.txt</code>
+              (or delete the manifest and accept sorted-order packing).</li>
+          <li>TIM replacements work best when width, height, and colour depth
+              match the original. Mismatched sizes can glitch in-game.</li>
+          <li>If the tree shows indexes (<code>000</code>, <code>001</code>…) instead
+              of names, select the correct region list in the toolbar or use
+              <b>Tools → Load list…</b>.</li>
+          <li>Nested archives: open them with <b>Open Nested ARC</b> or double-click,
+              extract/edit from there if needed, then pack the parent.</li>
+          <li>“No packable files found” → you selected a folder that has no
+              top-level asset files. Open the folder that actually contains the
+              <code>.tim</code> / <code>.car</code> / <code>.txt</code> files.</li>
+        </ul>
+        <p>Project page:
+        <a href="https://github.com/JeevesGB/GTExplorer">github.com/JeevesGB/GTExplorer</a></p>
+        """
+
+        tabs.addTab(make_page(overview), "Overview")
+        tabs.addTab(make_page(extract_pack), "Extract & Pack")
+        tabs.addTab(make_page(viewing), "Viewing")
+        tabs.addTab(make_page(tim_tools), "TIM tools")
+        tabs.addTab(make_page(shortcuts), "Shortcuts")
+        tabs.addTab(make_page(tips), "Tips")
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.reject)
+        buttons.accepted.connect(dlg.accept)
+        buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(dlg.accept)
+        layout.addWidget(buttons)
+
+        dlg.exec()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():

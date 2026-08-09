@@ -248,44 +248,98 @@ class GTArc:
                          force_uncompressed: bool = False,
                          compress_level: int = 6,
                          progress_cb=None):
+        """
+        Pack a folder of extracted files back into a GT-ARC / GT-ZIP archive.
+
+        Prefer order from manifest.txt when present and valid.
+        Fall back to scanning the folder if the manifest is missing,
+        incomplete, or references files that do not exist on disk.
+        """
         src = Path(src_dir)
-        manifest_path = src / "manifest.txt"
+        if not src.is_dir():
+            raise FileNotFoundError(f"Not a directory: {src}")
 
-        if manifest_path.exists():
-            lines = [l.strip() for l in manifest_path.read_text(encoding="utf-8").splitlines() if l.strip()]
-            idx = 0
-            if lines and lines[0].startswith("kind="):
-                idx = 1
-            content_type = int(lines[idx].split("=")[1], 0)
-            if force_uncompressed:
-                content_type = 0x0001
-            nfiles = int(lines[idx + 1].split("=")[1])
-            names = lines[idx + 2: idx + 2 + nfiles]
-        else:
-            content_type = 0x0001 if force_uncompressed else 0x8001
+        def is_packable(p: Path) -> bool:
+            if not p.is_file():
+                return False
+            if p.name.lower() == "manifest.txt":
+                return False
+            # Skip expanded TIM packs / sample banks (they are rebuilt from parent)
+            if any(part.endswith(("_tims", "_samples")) for part in p.parts):
+                return False
+            return True
 
-            def is_packable(p: Path) -> bool:
-                if not p.is_file():
-                    return False
-                if p.name.lower() == "manifest.txt":
-                    return False
-                if any(part.endswith(("_tims", "_samples")) for part in p.parts):
-                    return False
-                return True
-
+        def scan_folder_files() -> list:
             files = sorted(
                 [p for p in src.iterdir() if is_packable(p)],
-                key=lambda p: (p.stem.zfill(8) if p.stem.isdigit() else p.stem.lower(), p.suffix.lower())
+                key=lambda p: (
+                    p.stem.zfill(8) if p.stem.isdigit() else p.stem.lower(),
+                    p.suffix.lower(),
+                ),
             )
-            if not files:
-                raise FileNotFoundError("No packable files found in folder")
-            names = [p.name for p in files]
-            nfiles = len(names)
+            return [p.name for p in files]
 
+        content_type = 0x0001 if force_uncompressed else 0x8001
+        names = []
+
+        manifest_path = src / "manifest.txt"
+        if manifest_path.exists():
+            try:
+                lines = [
+                    l.strip()
+                    for l in manifest_path.read_text(encoding="utf-8").splitlines()
+                    if l.strip()
+                ]
+                idx = 0
+                if lines and lines[0].startswith("kind="):
+                    idx = 1
+                # content_type line
+                if idx < len(lines) and "content_type=" in lines[idx]:
+                    ct = int(lines[idx].split("=", 1)[1], 0)
+                    if not force_uncompressed:
+                        content_type = ct
+                    idx += 1
+                # nfiles line
+                nfiles_declared = None
+                if idx < len(lines) and lines[idx].startswith("nfiles="):
+                    nfiles_declared = int(lines[idx].split("=", 1)[1])
+                    idx += 1
+                # remaining lines are filenames
+                candidate_names = lines[idx:]
+                if nfiles_declared is not None:
+                    candidate_names = candidate_names[:nfiles_declared]
+
+                # Only keep names that actually exist on disk
+                valid = [n for n in candidate_names if (src / n).is_file()]
+                if valid:
+                    names = valid
+            except Exception:
+                # Bad / corrupt manifest → fall through to folder scan
+                names = []
+
+        if not names:
+            names = scan_folder_files()
+
+        if not names:
+            # Useful diagnostic instead of a silent failure
+            all_entries = list(src.iterdir())
+            file_names = [p.name for p in all_entries if p.is_file()]
+            dir_names = [p.name for p in all_entries if p.is_dir()]
+            raise FileNotFoundError(
+                "No packable files found in folder.\n\n"
+                f"Folder: {src}\n"
+                f"Files present: {file_names[:30]}{' …' if len(file_names) > 30 else ''}\n"
+                f"Subdirs: {dir_names[:10]}{' …' if len(dir_names) > 10 else ''}\n\n"
+                "Make sure the extracted .tim / .car / .tex / .txt files sit "
+                "directly in this folder (not inside a subfolder)."
+            )
+
+        nfiles = len(names)
         payloads = []
+
         for ni, name in enumerate(names):
             p = src / name
-            if not p.exists():
+            if not p.is_file():
                 raise FileNotFoundError(f"Missing file listed for pack: {name}")
 
             stem = Path(name).stem
@@ -293,10 +347,14 @@ class GTArc:
             if name.lower().endswith(".tpk") and tims_dir.is_dir():
                 if progress_cb:
                     progress_cb(ni + 1, nfiles, name, "rebuild-tpk")
-                tim_list = [(tp.name, tp.read_bytes()) for tp in sorted(tims_dir.glob("*.tim"))]
+                tim_list = [
+                    (tp.name, tp.read_bytes())
+                    for tp in sorted(tims_dir.glob("*.tim"))
+                ]
                 if not tim_list:
                     raise FileNotFoundError(f"No .tim files in {tims_dir}")
                 raw = build_tim_pack(tim_list)
+                # Keep on-disk .tpk consistent with rebuilt content
                 p.write_bytes(raw)
             else:
                 raw = p.read_bytes()
@@ -311,6 +369,7 @@ class GTArc:
             else:
                 payloads.append((raw, len(raw)))
 
+        # Build GT-ARC header (fixed 0x800-byte header region)
         header = bytearray()
         header += b"@(#)GT-ARC\0\0"
         header += struct.pack("<HH", content_type, nfiles)
@@ -319,6 +378,11 @@ class GTArc:
         for comp, decomp in payloads:
             header += struct.pack("<III", offset, len(comp), decomp)
             offset += len(comp)
+        if len(header) > data_start:
+            raise ValueError(
+                f"Too many files ({nfiles}) for fixed 0x800 header "
+                f"(header would be {len(header)} bytes)"
+            )
         header += b"\0" * (data_start - len(header))
 
         with open(out_path, "wb") as f:

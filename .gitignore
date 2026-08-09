@@ -7,3 +7,5 @@ GTExplorer.spec
 build.bat
 src++
 release
+dumpsxiso.exe
+mkpsxiso.exe 

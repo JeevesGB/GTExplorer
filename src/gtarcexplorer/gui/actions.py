@@ -428,16 +428,27 @@ def repack(win) -> None:
     if not ok:
         return
 
-    folder = win.extract_dir
+    # Prefer the folder currently open in the tree (Open Folder),
+    # then the last extract_dir, otherwise ask the user.
+    folder = None
+    if getattr(win, "arc", None) is not None and getattr(win.arc, "kind", None) == "folder":
+        p = getattr(win.arc, "path", None)
+        if p and Path(p).is_dir():
+            folder = Path(p)
+    if folder is None:
+        folder = win.extract_dir
     if not folder or not Path(folder).is_dir():
         folder = QFileDialog.getExistingDirectory(
             win, "Select folder to pack", win._last_dir("last_extract_dir")
         )
         if not folder:
             return
-        win.extract_dir = Path(folder)
+        folder = Path(folder)
+    else:
+        folder = Path(folder)
+    win.extract_dir = folder
 
-    if not (Path(folder) / "manifest.txt").exists():
+    if not (folder / "manifest.txt").exists():
         QMessageBox.information(
             win, "No manifest",
             "No manifest.txt found.\n"
@@ -815,43 +826,116 @@ def show_diff_dialog(win, rows, title: str) -> None:
     dlg.exec()
 
 
-def set_workspace(win) -> None:
+
+def project_root() -> Path:
+    """Repo / app root (folder that contains tools/, src/, runtool.bat)."""
+    import sys
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    # actions.py -> gui -> gtarcexplorer -> src -> root
+    return Path(__file__).resolve().parent.parent.parent.parent
+
+
+def tools_dir() -> Path:
+    return project_root() / "tools"
+
+
+def default_mkpsxiso_exe() -> str:
+    """Prefer tools/mkpsxiso(.exe) next to the app; else empty."""
+    td = tools_dir()
+    candidates = [
+        td / "mkpsxiso.exe",
+        td / "mkpsxiso",
+        td / "bin" / "mkpsxiso.exe",
+        td / "bin" / "mkpsxiso",
+    ]
+    for c in candidates:
+        if c.is_file():
+            return str(c)
+    return ""
+
+
+def set_workspace(win, first_run: bool = False) -> None:
+    """Workspace / first-run setup: working folders + optional mkpsxiso paths."""
+    from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import (
         QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
         QPushButton, QHBoxLayout, QFileDialog, QMessageBox, QLabel,
+        QVBoxLayout, QCheckBox, QGroupBox, QSizePolicy,
     )
 
     dlg = QDialog(win)
-    dlg.setWindowTitle("Set workspace")
-    dlg.setMinimumWidth(520)
-    form = QFormLayout(dlg)
+    dlg.setWindowTitle("Welcome — Setup" if first_run else "Setup / Workspace")
+    dlg.resize(640, 520)
+    dlg.setMinimumSize(560, 460)
 
-    def _row(default: str = ""):
+    root = QVBoxLayout(dlg)
+    root.setSpacing(12)
+    root.setContentsMargins(14, 14, 14, 14)
+
+    # ---- Header ----
+    title = QLabel("Welcome to GTExplorer" if first_run else "Workspace setup")
+    title.setStyleSheet("font-size: 15px; font-weight: 600;")
+    root.addWidget(title)
+
+    subtitle = QLabel(
+        "Tell the tool where your game files live and where to save mods. "
+        "Everything can be changed later from <b>File → Setup / Workspace…</b>."
+        if first_run else
+        "Paths for original archives, mod output, and optional disc rebuilding."
+    )
+    subtitle.setWordWrap(True)
+    subtitle.setStyleSheet("color: #aaa;")
+    root.addWidget(subtitle)
+
+    def _path_row(default: str = "", placeholder: str = ""):
         edit = QLineEdit(default)
-        btn = QPushButton("…")
-        btn.setFixedWidth(32)
+        edit.setPlaceholderText(placeholder)
+        edit.setMinimumWidth(320)
+        edit.setClearButtonEnabled(True)
+        btn = QPushButton("Browse…")
+        btn.setFixedWidth(80)
         row = QHBoxLayout()
+        row.setSpacing(6)
         row.addWidget(edit, stretch=1)
         row.addWidget(btn)
         return edit, btn, row
 
-    in_edit, in_btn, in_row = _row(
-        win.settings.value("workspace/input_dir", "", type=str) or ""
-    )
-    out_edit, out_btn, out_row = _row(
-        win.settings.value("workspace/output_dir", "", type=str) or ""
-    )
+    # ---- 1. Working folders ----
+    folders_box = QGroupBox("1. Working folders")
+    folders_lay = QVBoxLayout(folders_box)
+    folders_lay.setSpacing(8)
 
-    form.addRow(QLabel(
-        "Input folder = original game archives (.DAT / .ARC)\n"
-        "Output folder = extracts and packed mods (originals are never overwritten)."
-    ))
-    form.addRow("Input folder:", in_row)
-    form.addRow("Output folder:", out_row)
+    folders_help = QLabel(
+        "<b>Input</b> — folder with your original <code>.DAT</code> / <code>.ARC</code> files "
+        "(GTExplorer will not overwrite these).<br>"
+        "<b>Output</b> — folder for extracts and repacked mods "
+        "(created automatically if missing)."
+    )
+    folders_help.setWordWrap(True)
+    folders_help.setStyleSheet("color: #bbb; margin-bottom: 4px;")
+    folders_lay.addWidget(folders_help)
+
+    folders_form = QFormLayout()
+    folders_form.setSpacing(8)
+    folders_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+    in_edit, in_btn, in_row = _path_row(
+        win.settings.value("workspace/input_dir", "", type=str) or "",
+        placeholder=r"e.g. D:\GT1\GAMEFILES",
+    )
+    out_edit, out_btn, out_row = _path_row(
+        win.settings.value("workspace/output_dir", "", type=str) or "",
+        placeholder=r"e.g. D:\GT1\_mods",
+    )
+    folders_form.addRow("Input folder:", in_row)
+    folders_form.addRow("Output folder:", out_row)
+    folders_lay.addLayout(folders_form)
+    root.addWidget(folders_box)
 
     def browse_in():
         path = QFileDialog.getExistingDirectory(
-            dlg, "Input folder (game files)",
+            dlg, "Select input folder (original game archives)",
             in_edit.text() or win._last_dir(),
         )
         if path:
@@ -861,7 +945,7 @@ def set_workspace(win) -> None:
 
     def browse_out():
         path = QFileDialog.getExistingDirectory(
-            dlg, "Output folder (extracts / packs)",
+            dlg, "Select output folder (extracts and packs)",
             out_edit.text() or in_edit.text() or win._last_dir("last_extract_dir"),
         )
         if path:
@@ -870,35 +954,207 @@ def set_workspace(win) -> None:
     in_btn.clicked.connect(browse_in)
     out_btn.clicked.connect(browse_out)
 
-    buttons = QDialogButtonBox(
-        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    # ---- 2. mkpsxiso (optional) ----
+    mk_box = QGroupBox("2. Disc rebuild (optional)")
+    mk_lay = QVBoxLayout(mk_box)
+    mk_lay.setSpacing(8)
+
+    mk_enable = QCheckBox("I want to rebuild a full disc image (.bin / .cue) after packing")
+    mk_enable.setChecked(bool(win.settings.value("mkpsxiso/enabled", False, type=bool)))
+    mk_lay.addWidget(mk_enable)
+
+    tools_path = tools_dir()
+    mk_help = QLabel(
+        "Place the official "
+        "<a href='https://github.com/Lameguy64/mkpsxiso/releases'>mkpsxiso</a> "
+        f"binaries in <code>{tools_path}</code> "
+        "(see <code>tools/README.txt</code>).<br>"
+        "Dump your original disc once with <b>dumpsxiso</b> to produce a file tree and XML, "
+        "then fill in the paths below."
     )
+    mk_help.setWordWrap(True)
+    mk_help.setOpenExternalLinks(True)
+    mk_help.setStyleSheet("color: #bbb;")
+    mk_lay.addWidget(mk_help)
+
+    mk_form = QFormLayout()
+    mk_form.setSpacing(8)
+    mk_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+    saved_exe = win.settings.value("mkpsxiso/exe", "", type=str) or ""
+    if not saved_exe:
+        saved_exe = default_mkpsxiso_exe()
+
+    mk_exe_edit, mk_exe_btn, mk_exe_row = _path_row(
+        saved_exe, placeholder=str(tools_path / "mkpsxiso.exe")
+    )
+    mk_xml_edit, mk_xml_btn, mk_xml_row = _path_row(
+        win.settings.value("mkpsxiso/xml", "", type=str) or "",
+        placeholder=r"e.g. D:\GT1\gt1.xml",
+    )
+    mk_files_edit, mk_files_btn, mk_files_row = _path_row(
+        win.settings.value("mkpsxiso/files_dir", "", type=str) or "",
+        placeholder=r"e.g. D:\GT1\disc_files",
+    )
+    mk_out_edit, mk_out_btn, mk_out_row = _path_row(
+        win.settings.value("mkpsxiso/output_dir", "", type=str) or "",
+        placeholder=r"e.g. D:\GT1\_built",
+    )
+
+    mk_form.addRow("mkpsxiso program:", mk_exe_row)
+    mk_form.addRow("Project XML:", mk_xml_row)
+    mk_form.addRow("Disc files folder:", mk_files_row)
+    mk_form.addRow("Build output folder:", mk_out_row)
+    mk_lay.addLayout(mk_form)
+    root.addWidget(mk_box)
+
+    mk_widgets = [
+        mk_help, mk_exe_edit, mk_exe_btn, mk_xml_edit, mk_xml_btn,
+        mk_files_edit, mk_files_btn, mk_out_edit, mk_out_btn,
+    ]
+
+    def _set_mk_enabled(on: bool):
+        for w in mk_widgets:
+            w.setEnabled(on)
+
+    _set_mk_enabled(mk_enable.isChecked())
+    mk_enable.toggled.connect(_set_mk_enabled)
+
+    def browse_exe():
+        start = mk_exe_edit.text() or str(tools_dir())
+        path, _ = QFileDialog.getOpenFileName(
+            dlg, "Select mkpsxiso executable",
+            start,
+            "Executable (mkpsxiso.exe mkpsxiso);;All files (*.*)",
+        )
+        if path:
+            mk_exe_edit.setText(path)
+
+    def browse_xml():
+        path, _ = QFileDialog.getOpenFileName(
+            dlg, "Select disc project XML (from dumpsxiso)",
+            mk_xml_edit.text() or win._last_dir(),
+            "XML (*.xml);;All files (*.*)",
+        )
+        if path:
+            mk_xml_edit.setText(path)
+            if not mk_files_edit.text().strip():
+                p = Path(path)
+                cand = p.with_suffix("")
+                if cand.is_dir():
+                    mk_files_edit.setText(str(cand))
+                elif p.parent.is_dir():
+                    mk_files_edit.setText(str(p.parent))
+
+    def browse_files():
+        path = QFileDialog.getExistingDirectory(
+            dlg, "Select disc files folder (dumpsxiso extract)",
+            mk_files_edit.text() or win._last_dir(),
+        )
+        if path:
+            mk_files_edit.setText(path)
+
+    def browse_mk_out():
+        path = QFileDialog.getExistingDirectory(
+            dlg, "Select folder for built .bin / .cue",
+            mk_out_edit.text() or out_edit.text() or win._last_dir("last_extract_dir"),
+        )
+        if path:
+            mk_out_edit.setText(path)
+
+    mk_exe_btn.clicked.connect(browse_exe)
+    mk_xml_btn.clicked.connect(browse_xml)
+    mk_files_btn.clicked.connect(browse_files)
+    mk_out_btn.clicked.connect(browse_mk_out)
+
+    # ---- Buttons ----
+    root.addStretch(1)
+    if first_run:
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save & continue")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Skip for now")
+    else:
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
     buttons.accepted.connect(dlg.accept)
     buttons.rejected.connect(dlg.reject)
-    form.addRow(buttons)
+    root.addWidget(buttons)
 
-    if dlg.exec() != QDialog.DialogCode.Accepted:
+    result = dlg.exec()
+    if result != QDialog.DialogCode.Accepted:
+        if first_run:
+            win.settings.setValue("setup/completed", True)
         return
 
     in_dir = in_edit.text().strip()
     out_dir = out_edit.text().strip()
-    if not in_dir or not Path(in_dir).is_dir():
-        QMessageBox.warning(win, "Workspace", "Choose a valid input folder.")
+
+    if first_run and not in_dir:
+        win.settings.setValue("setup/completed", True)
+        win.set_status("Setup skipped — set folders later via File → Setup / Workspace…")
         return
-    if not out_dir:
+
+    if in_dir and not Path(in_dir).is_dir():
+        QMessageBox.warning(win, "Setup", "Input folder is not a valid directory.")
+        return
+    if in_dir and not out_dir:
         out_dir = str(Path(in_dir) / "_mods")
+    if out_dir:
+        try:
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            QMessageBox.warning(win, "Setup", f"Could not create output folder:\n{e}")
+            return
 
-    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    if in_dir:
+        win.settings.setValue("workspace/input_dir", in_dir)
+        win._workspace_input = in_dir
+        win._set_last_dir(in_dir)
+    if out_dir:
+        win.settings.setValue("workspace/output_dir", out_dir)
+        win._workspace_output = out_dir
+        win._set_last_dir(out_dir, "last_extract_dir")
+        win.extract_dir = Path(out_dir)
 
-    win.settings.setValue("workspace/input_dir", in_dir)
-    win.settings.setValue("workspace/output_dir", out_dir)
-    win._workspace_input = in_dir
-    win._workspace_output = out_dir
-    win._set_last_dir(in_dir)
-    win._set_last_dir(out_dir, "last_extract_dir")
+    mk_on = mk_enable.isChecked()
+    mk_exe = mk_exe_edit.text().strip() or default_mkpsxiso_exe()
+    win.settings.setValue("mkpsxiso/enabled", mk_on)
+    win.settings.setValue("mkpsxiso/exe", mk_exe)
+    win.settings.setValue("mkpsxiso/xml", mk_xml_edit.text().strip())
+    win.settings.setValue("mkpsxiso/files_dir", mk_files_edit.text().strip())
+    win.settings.setValue("mkpsxiso/output_dir", mk_out_edit.text().strip())
+    win.settings.setValue("setup/completed", True)
+
+    if mk_on and mk_exe and not Path(mk_exe).is_file():
+        QMessageBox.information(
+            win, "mkpsxiso not found",
+            f"mkpsxiso was not found at:\n{mk_exe}\n\n"
+            f"Download the official release and place it in:\n{tools_dir()}\n\n"
+            "You can still use extract/repack without disc rebuild.",
+        )
 
     refresh_input_file_list(win)
-    win.set_status(f"Workspace  •  in={in_dir}  •  out={out_dir}")
+    status_bits = []
+    if in_dir:
+        status_bits.append(f"in={in_dir}")
+    if out_dir:
+        status_bits.append(f"out={out_dir}")
+    if mk_on:
+        status_bits.append("mkpsxiso=on")
+    win.set_status(
+        "Setup  •  " + "  •  ".join(status_bits) if status_bits else "Setup saved"
+    )
+
+
+def maybe_show_first_run_setup(win) -> None:
+    """Show setup wizard once on first launch (or if never completed)."""
+    done = win.settings.value("setup/completed", False, type=bool)
+    if done:
+        return
+    set_workspace(win, first_run=True)
 
 
 def apply_workspace_paths(win) -> None:
