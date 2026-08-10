@@ -14,12 +14,12 @@ from ..utils.spec import is_spec_type, parse_spec_table, format_spec_preview
 from ..utils.namelist import parse_name_list
 from ..utils.replay import is_replay_save, parse_replay_save, format_replay_preview
 from ..utils.gthtml import is_gthtml, parse_gthtml, format_gthtml_preview
-
 from . import names, tim_tools, viewer, actions
+from .viewer import show_model_in_viewer, render_model_viewer, model_orbit, model_zoom
 
-from PyQt6.QtCore import Qt, QSize, QSettings, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QSettings, pyqtSignal, QEvent
 from PyQt6.QtGui import (
-    QAction, QFont, QIcon, QColor, QKeySequence, 
+    QAction, QFont, QIcon, QColor, QKeySequence, QMouseEvent, QWheelEvent
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -105,6 +105,9 @@ class GTArcExplorer(QMainWindow):
         self._workspace_input = None
         self._workspace_output = None 
         self._workspace_pack_out = None
+        self.viewer_label.setMouseTracking(True)
+        self._drag_last = None 
+        self.viewer_label.installEventFilter(self)
 
         self.progress_signal.connect(self._update_progress)
         self.finished_signal.connect(self._on_load_finished)
@@ -673,6 +676,28 @@ class GTArcExplorer(QMainWindow):
                 continue
             hay = " ".join(item.text(c).lower() for c in range(item.columnCount()))
             item.setHidden(text not in hay)
+
+    def eventFilter(self, obj, event):
+        if obj is self.viewer_label and getattr(self, "_viewer_mode", None) == "model":
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                self._drag_last = event.position().toPoint()
+                return True
+            if event.type() == QEvent.Type.MouseMove and self._drag_last is not None:
+                pos = event.position().toPoint()
+                dx = pos.x() - self._drag_last.x()
+                dy = pos.y() - self._drag_last.y()
+                self._drag_last = pos
+                model_orbit(self, d_yaw=dx * 0.4, d_pitch=-dy * 0.3)
+                return True
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                self._drag_last = None
+                return True
+            if event.type() == QEvent.Type.Wheel:
+                delta = event.angleDelta().y()
+                model_zoom(self, 0.9 if delta > 0 else 1.1)
+                return True
+        return super().eventFilter(obj, event)
+
 
     def _tree_context_menu(self, pos):
         items = self.tree.selectedItems()

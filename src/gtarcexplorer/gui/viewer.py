@@ -9,7 +9,8 @@ from PyQt6.QtWidgets import QMessageBox, QFileDialog, QTreeWidgetItem
 from ..utils.tim_image import decode_tim
 from ..utils.tim_pack import parse_tim_pack
 from ..utils.ctex import decode_ctex
-from ..utils.gtps import extract_vertices, bounds
+from ..utils.gtps import extract_vertices, bounds, GTPSModel, render_qimage, project_orthographic
+
 
 try:
     from PIL import Image
@@ -159,17 +160,89 @@ def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
     win._viewer_mode = "model"
     win._pack_tims = []
     win.tim_list.clear()
-    win._model_verts = extract_vertices(data)
-    if not win._model_verts:
-        win.viewer_info.setText(f"{label} – no vertices extracted")
+    win._viewer_image = None 
+
+    try: 
+        model = GTPSModel.from_bytes(data)
+    except Exception as e: 
+        win.viewer_info.setText(f"{label} - GT-PS parse error: {e}")
         win.viewer_label.clear()
-        return
-    xmin, xmax, ymin, ymax, zmin, zmax = bounds(win._model_verts)
+        win._model = None 
+        win._model_verts = [] 
+        return 
+
+    win._model = model 
+    win._model_verts = model.vertices 
+    win._model_yaw = 35.0 
+    win._model_pitch = 25.0 
+
+    lo, hi = model.bounds() 
     win.viewer_info.setText(
-        f"{label}  •  {len(win._model_verts):,} verts  •  "
-        f"X[{xmin:.0f},{xmax:.0f}] Y[{ymin:.0f},{ymax:.0f}] Z[{zmin:.0f},{zmax:.0f}]"
+        f"{label} • {model.vertex_count:,} verts • "
+        f"{len(model.runs)} runs • "
+        f"X[{lo[0]:.0f},{hi[0]:.0f}] Y[{lo[1]:.0f},{hi[1]:.0f}] Z[{lo[2]:.0f},{hi[2]:.0f}]"
     )
-    win.viewer_label.setText("3D model preview\n(point cloud not yet ported)")
+    render_model_viewer(win)
+
+def _get_viewer_label(win):
+    """Find the image label used by the Asset Viewer."""
+    for name in ("viewer_label", "viewerLabel", "img_label", "preview_label"):
+        lab = getattr(win, name, None)
+        if lab is not None:
+            return lab
+    return None
+
+
+def render_model_viewer(win) -> None:
+    model = getattr(win, "_model", None)
+    if model is None:
+        return
+
+    label = _get_viewer_label(win)
+    if label is None:
+        # Fallback: show text so we don't crash
+        info = getattr(win, "viewer_info", None)
+        if info is not None:
+            info.setText(
+                "Model loaded but no viewer_label on window – "
+                "check main_window.py builds self.viewer_label"
+            )
+        return
+
+    if getattr(win, "_viewer_scroll", None) is not None:
+        vp = win._viewer_scroll.viewport().size()
+        w = max(320, vp.width() - 8)
+        h = max(240, vp.height() - 8)
+    else:
+        w, h = 640, 480
+
+    model.camera.yaw_deg = getattr(win, "_model_yaw", 35.0)
+    model.camera.pitch_deg = getattr(win, "_model_pitch", 25.0)
+
+    try:
+        from PyQt6.QtGui import QPixmap
+        qimg = render_qimage(model, w, h, point_radius=0)
+        label.setPixmap(QPixmap.fromImage(qimg))
+        label.adjustSize()
+    except Exception as e:
+        info = getattr(win, "viewer_info", None)
+        if info is not None:
+            info.setText(f"Model render failed: {e}")
+        label.clear()
+def model_orbit(win, d_yaw: float = 0.0, d_pitch: float = 0.0) -> None: 
+    if getattr(win, "_viewer_mode", None) != "model":
+        return 
+    win._model_yaw = (getattr(win, "_model_yaw", 35.0) + d_yaw) % 360.0
+    win._model_pitch = max(-89.0, min(89.0, getattr(win, "_model_pitch", 25.0) + d_pitch))
+    render_model_viewer(win)
+
+def model_zoom(win, factor: float) -> None: 
+    model = getattr(win, "_model", None)
+    if model is None or getattr(win, "_viewer_mode", None) != "model":
+        return 
+    model.camera.distance = max(100.0, model.camera.distance * factor)
+    render_model_viewer(win)
+
 
 
 def export_tim_pack_pngs(win) -> None:
