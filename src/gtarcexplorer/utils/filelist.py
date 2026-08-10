@@ -38,13 +38,13 @@ def parse_filelist(path: str | Path) -> NameMap:
     return mapping
 
 def load_bundled(name: str = "filelist_pal_retail.txt") -> NameMap:
-    here = Path(__file__).resolve().parent / "filelists" / name
+    here = Path(__file__).resolve().parent.parent / "filelists" / name
     if not here.exists():
         raise FileNotFoundError(f"Bundled filelist not found: {here}")
     return parse_filelist(here)
 
 def bundled_lists() -> list:
-    d = Path(__file__).resolve().parent / "filelists"
+    d = Path(__file__).resolve().parent.parent / "filelists" 
     if not d.is_dir():
         return []
     return sorted(p.name for p in d.glob("filelist_*.txt"))

@@ -27,9 +27,15 @@ def apply_filelist(win) -> None:
         real = lookup(win.arc.name_map, win.arc.stem, f["index"])
         if real:
             f["label"] = Path(real).stem
-            if Path(real).suffix:
-                f["ext"] = Path(real).suffix
-            f["real_name"] = real
+
+            if f.get("type") == "TIM Pack":
+                f["ext"] = ".tpk"
+                f["real_name"] = f"{Path(real).stem}.tpk"
+            else:
+
+                if Path(real).suffix:
+                    f["ext"] = Path(real).suffix
+                f["real_name"] = real
         else:
             f["label"] = f.get("label") or f"{f['index']:03d}"
             f["real_name"] = None
@@ -296,3 +302,16 @@ def load_custom_filelist(win):
         win.populate_tree()
         named = sum(1 for f in win.arc.files if f.get("real_name"))
         win.set_status(f"Applied names from {Path(path).name}  •  {named} named")
+
+def normalize_entry_exit(f: dict) -> None:
+    t = f.get("type") or ""
+    if t != "TIM Pack":
+        return
+    stem = Path(f.get("real_name") or f.get("label") or f"{f['index']:03d}").stem
+    f["ext"] = ".tpk"
+    f["label"] = stem 
+    f["real_name"] = f"{stem}.tpk"
+
+def normalize_all_exits(win) -> None: 
+    for f in win.arc.files: 
+        normalize_entry_exit(f)

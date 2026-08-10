@@ -1102,6 +1102,7 @@ class GTArcExplorer(QMainWindow):
 
         self.filter_edit.clear()
         named, src = self._auto_scan_names()
+        names.normalize_all_exits(self)
         self.populate_tree()
         self._update_action_states()
         self._update_breadcrumb()

@@ -18,8 +18,8 @@ Extractor, viewer, and repacker for **Gran Turismo 1** (PlayStation) archive fil
 ![2](img/2.png)
 ![3](img/3.png)
 ![4](img/4.png)
-![5](img/5.png)
-![6](img/gif.gif)
+![5](img/3.gif)
+![6](img/2.jpg)
 
 ---
 

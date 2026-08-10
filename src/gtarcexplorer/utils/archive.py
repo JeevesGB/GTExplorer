@@ -184,9 +184,13 @@ class GTArc:
             stem_part = Path(real).stem
             list_ext = Path(real).suffix
             f["label"] = stem_part
-            if list_ext:
-                f["ext"] = list_ext
-            f["real_name"] = real
+            if tname == "TIM Pack":
+                f["ext"] = ".tpk"
+                f["real_name"] = f"{stem_part}.tpk"
+            else:
+                if list_ext:
+                    f["ext"] = list_ext
+                f["real_name"] = real
         else:
             f["label"] = f"{f['index']:03d}"
             f["real_name"] = None
