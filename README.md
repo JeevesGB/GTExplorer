@@ -1,4 +1,4 @@
-<div style="text-align: center;">
+<div align="center">
   <img src="img/gtexplorericon.png" width="300" alt="icon">
 </div>
 

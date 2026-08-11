@@ -7,7 +7,7 @@ from ..utils.archive import GTArc
 from ..utils.tim_pack import parse_tim_pack
 from ..utils.audio import parse_sample_bank
 from ..utils.tim_image import decode_tim
-from ..utils.gtps import parse_gtps_header, GTPSModel, render_qimage
+from ..utils.gtps import parse_gtps_header
 from ..utils.filelist import bundled_lists
 from ..utils.ctex import parse_ctex_header
 from ..utils.slt import parse_slt_index, decode_slt_page
@@ -16,6 +16,7 @@ from ..utils.namelist import parse_name_list
 from ..utils.messagetext import extract_message_strings
 from ..utils.replay import is_replay_save, parse_replay_save, format_replay_preview
 from ..utils.gthtml import is_gthtml, parse_gthtml, format_gthtml_preview
+from ..utils.gtenv import parse_gtenv, format_gtenv_preview
 from . import names, tim_tools, viewer, actions
 from .viewer import show_model_in_viewer, render_model_viewer, model_orbit, model_zoom
 
@@ -1279,6 +1280,14 @@ class GTArcExplorer(QMainWindow):
                     self.preview_text.append(format_gthtml_preview(parsed))
                 except Exception as e:
                     self.preview_text.append(f"GTHTML parse error: {e}")
+                    self._hex_dump(data[:256])
+
+            elif f["type"] == "GT-ENV System Config":
+                try:
+                    parsed = parse_gtenv(data)
+                    self.preview_text.append(format_gtenv_preview(parsed, len(data)))
+                except Exception as e:
+                    self.preview_text.append(f"GTENV parse error: {e}")
                     self._hex_dump(data[:256])
 
             elif f["type"] == "Nested GT-ARC" or f.get("ext") == ".arc":

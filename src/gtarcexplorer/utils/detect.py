@@ -14,6 +14,7 @@ _PREFIX_MAGICS = [
     (b"@(#)GT-ZIP", "GT-ZIP", ".gtzip"),
     (b"@(#)USEDCAR", "Used Car Data", ".usedcar"),
     (b"@(#)GTHTML", "GT HTML", ".gthtml"),
+    (b"@(#)GTENV", "GT-ENV System Config", ".gtenv"),
     # Car / tuning part tables (CARINF-style)
     (b"@(#)ADJUST", "Align Adjustment", ".adjust"),
     (b"@(#)BALANCE", "Balance Weight", ".balance"),
