@@ -916,7 +916,6 @@ def _ask_setup_mode(win) -> str | None:
     return choice["value"]
 
 
-
 def _apply_and_refresh(win, new_paths: UserPaths) -> None:
     win._user_paths = new_paths
     if new_paths.extracted_dir:
