@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QMessageBox, QFileDialog, QTreeWidgetItem
 from ..utils.tim_image import decode_tim
 from ..utils.tim_pack import parse_tim_pack
 from ..utils.ctex import decode_ctex
+from ..utils.slt import decode_slt_page
 from ..utils.gtps import extract_vertices, bounds, GTPSModel, render_qimage, project_orthographic
 
 
@@ -156,33 +157,63 @@ def render_ctex(win, label: str = "") -> None:
         win.viewer_label.clear()
 
 
+def show_slt_in_viewer(win, data: bytes, label: str = "") -> None:
+    win._viewer_mode = "slt"
+    win._pack_tims = []
+    win._model_verts = []
+    win._ctex_data = None
+    win.tim_list.clear()
+    if not HAS_PIL:
+        win.viewer_info.setText("Pillow not installed – cannot display images")
+        return
+    try:
+        img, info = decode_slt_page(data)
+        win._viewer_image = img.convert("RGBA")
+        # SLT pages are only 128px wide; zoom in by default so they're legible.
+        win._viewer_scale = 3.0
+        win.viewer_info.setText(
+            f"{label}  •  {info['width']}x{info['height']}  •  8-bit grayscale menu image"
+        )
+        render_viewer(win)
+    except Exception as e:
+        win.viewer_info.setText(f"SLT decode failed: {e}")
+        win.viewer_label.clear()
+
+
 def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
     win._viewer_mode = "model"
     win._pack_tims = []
     win.tim_list.clear()
-    win._viewer_image = None 
+    win._viewer_image = None
 
-    try: 
+    try:
         model = GTPSModel.from_bytes(data)
-    except Exception as e: 
-        win.viewer_info.setText(f"{label} - GT-PS parse error: {e}")
+    except Exception as e:
+        win.viewer_info.setText(f"{label} – parse error: {e}")
         win.viewer_label.clear()
-        win._model = None 
-        win._model_verts = [] 
-        return 
+        return
 
-    win._model = model 
-    win._model_verts = model.vertices 
-    win._model_yaw = 35.0 
-    win._model_pitch = 25.0 
+    win._model = model
+    win._model_yaw = 35.0
+    win._model_pitch = 25.0
 
-    lo, hi = model.bounds() 
+    lo, hi = model.bounds()
     win.viewer_info.setText(
-        f"{label} • {model.vertex_count:,} verts • "
-        f"{len(model.runs)} runs • "
+        f"{label}  •  {model.vertex_count:,} verts  •  "
         f"X[{lo[0]:.0f},{hi[0]:.0f}] Y[{lo[1]:.0f},{hi[1]:.0f}] Z[{lo[2]:.0f},{hi[2]:.0f}]"
     )
-    render_model_viewer(win)
+
+    w, h = 640, 480
+    if win._viewer_scroll is not None:
+        vp = win._viewer_scroll.viewport().size()
+        w = max(320, vp.width() - 8)
+        h = max(240, vp.height() - 8)
+
+    model.camera.yaw_deg = win._model_yaw
+    model.camera.pitch_deg = win._model_pitch
+    qimg = render_qimage(model, w, h)
+    win.viewer_label.setPixmap(QPixmap.fromImage(qimg))
+    win.viewer_label.adjustSize()
 
 def _get_viewer_label(win):
     """Find the image label used by the Asset Viewer."""
@@ -229,6 +260,7 @@ def render_model_viewer(win) -> None:
         if info is not None:
             info.setText(f"Model render failed: {e}")
         label.clear()
+
 def model_orbit(win, d_yaw: float = 0.0, d_pitch: float = 0.0) -> None: 
     if getattr(win, "_viewer_mode", None) != "model":
         return 

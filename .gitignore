@@ -9,4 +9,7 @@ src++
 release
 dumpsxiso.exe
 mkpsxiso.exe 
-GTPS_RESEARCH.md
+doc/GTPS_RESEARCH.md
+scripts 
+suggested.txt
+menu_img_suggested.txt

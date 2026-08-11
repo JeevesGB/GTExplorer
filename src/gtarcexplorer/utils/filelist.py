@@ -6,7 +6,7 @@ from typing import Dict, Optional, Tuple
 NameMap = Dict[Tuple[str, int], str]
 
 _UNKNOWN_RE = re.compile(
-    r"[\\/]([^\\/]+)[\\/]_unknown(\d+)\.[^\\/\s]+$",
+    r"[\\/]([^\\/]+)[\\/]_unknown(\d+)(?:\.[^\\/\s]+)?$",
     re.IGNORECASE,
 )
 _DEST_RE = re.compile(

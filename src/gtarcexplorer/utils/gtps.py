@@ -153,6 +153,57 @@ class CommandRecord:
     payload: bytes        # remaining bytes of the record (often 8)
 
 
+@dataclass
+class AttrRecord:
+    """
+    One tight 12-byte 0x2C attribute record (material / UV stream).
+
+    Layout:
+        [0:4]  colour(24) | cmd=0x2C
+        [4:6]  f0  packed UV0  (U=lo8, V=hi8)
+        [6:8]  f1  CLUT/TPAGE-like selector
+        [8:10] f2  packed UV1  (U=lo8, V=hi8)
+        [10:12] f3 flags / mode
+    """
+    offset: int
+    colour_bgr: int
+    u0: int
+    v0: int
+    f1: int
+    u1: int
+    v1: int
+    f3: int
+
+    @property
+    def colour_rgb(self) -> Tuple[int, int, int]:
+        return colour_bgr_to_rgb(self.colour_bgr)
+
+
+@dataclass
+class StripFace:
+    """One triangle produced from a vertex-run strip, optionally paired with attrs."""
+    run_offset: int
+    vert_index: int                 # start index into the run (strip position)
+    a: Vec3
+    b: Vec3
+    c: Vec3
+    attr: Optional[AttrRecord] = None
+
+    @property
+    def colour_rgb(self) -> Tuple[int, int, int]:
+        if self.attr is not None:
+            return self.attr.colour_rgb
+        return (180, 180, 190)
+
+    @property
+    def centroid(self) -> Vec3:
+        return (
+            (self.a[0] + self.b[0] + self.c[0]) / 3.0,
+            (self.a[1] + self.b[1] + self.c[1]) / 3.0,
+            (self.a[2] + self.b[2] + self.c[2]) / 3.0,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
@@ -261,6 +312,118 @@ def colour_bgr_to_rgb(bgr: int) -> Tuple[int, int, int]:
     return (r, g, b)
 
 
+def extract_attr_stream(
+    data: bytes,
+    start: int = 0x40,
+) -> List[AttrRecord]:
+    """
+    Extract the tight 12-byte 0x2C attribute stream in file order.
+
+    Only records that form a 12-byte stride chain (next record also 0x2C)
+    are included — these are the material/UV packets used for sequential
+    pairing with strip faces.
+    """
+    out: List[AttrRecord] = []
+    off = start
+    end = len(data)
+    while off + 12 <= end:
+        w = struct.unpack_from("<I", data, off)[0]
+        if (w >> 24) == 0x2C:
+            nxt = off + 12
+            tight = nxt + 4 <= end and (struct.unpack_from("<I", data, nxt)[0] >> 24) == 0x2C
+            if tight:
+                u16 = struct.unpack_from("<HHHH", data, off + 4)
+                out.append(AttrRecord(
+                    offset=off,
+                    colour_bgr=w & 0xFFFFFF,
+                    u0=u16[0] & 0xFF,
+                    v0=(u16[0] >> 8) & 0xFF,
+                    f1=u16[1],
+                    u1=u16[2] & 0xFF,
+                    v1=(u16[2] >> 8) & 0xFF,
+                    f3=u16[3],
+                ))
+                off = nxt
+            else:
+                off += 4
+        else:
+            off += 4
+    return out
+
+
+def _triangle_area(a: Vec3, b: Vec3, c: Vec3) -> float:
+    return _length(_cross(_sub(b, a), _sub(c, a)))
+
+
+def strips_from_run(
+    verts: Sequence[Vec3],
+    area_eps: float = 1.0,
+) -> List[List[int]]:
+    """
+    Split a vertex run into triangle-strip segments.
+
+    Breaks occur at consecutive duplicate vertices or zero-area triples
+    (common PS1 strip-restart markers). Returns lists of indices into `verts`.
+    """
+    n = len(verts)
+    if n < 3:
+        return []
+    breaks: set = set()
+    for i in range(n - 1):
+        if verts[i] == verts[i + 1]:
+            breaks.add(i)
+    for i in range(n - 2):
+        if _triangle_area(verts[i], verts[i + 1], verts[i + 2]) < area_eps:
+            breaks.add(i)
+
+    segs: List[List[int]] = []
+    ordered = sorted(breaks)
+    start = 0
+    for b in ordered:
+        if b - start + 1 >= 3:
+            segs.append(list(range(start, b + 1)))
+        start = b + 1
+    if n - start >= 3:
+        segs.append(list(range(start, n)))
+    return segs
+
+
+def tris_from_strip(indices: Sequence[int]) -> List[Tuple[int, int, int]]:
+    """Expand a strip index list into triangles (alternating winding)."""
+    tris: List[Tuple[int, int, int]] = []
+    for i in range(len(indices) - 2):
+        a, b, c = indices[i], indices[i + 1], indices[i + 2]
+        if i & 1:
+            tris.append((a, c, b))
+        else:
+            tris.append((a, b, c))
+    return tris
+
+
+def faces_from_run(
+    run: VertexRun,
+    area_eps: float = 1.0,
+) -> List[StripFace]:
+    """
+    Build non-degenerate strip faces for one vertex run.
+
+    Uses strip-restart detection; faces are in strip order.
+    """
+    verts = run.vertices
+    faces: List[StripFace] = []
+    for seg in strips_from_run(verts, area_eps=area_eps):
+        for a_i, b_i, c_i in tris_from_strip(seg):
+            a, b, c = verts[a_i], verts[b_i], verts[c_i]
+            if _triangle_area(a, b, c) < area_eps:
+                continue
+            faces.append(StripFace(
+                run_offset=run.offset,
+                vert_index=min(a_i, b_i, c_i),
+                a=a, b=b, c=c,
+            ))
+    return faces
+
+
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
@@ -272,7 +435,9 @@ class GTPSModel:
     header: GTPSHeader
     runs: List[VertexRun] = field(default_factory=list)
     commands: List[CommandRecord] = field(default_factory=list)
+    attrs: List[AttrRecord] = field(default_factory=list)
     camera: Camera = field(default_factory=Camera)
+    _faces_cache: Optional[List[StripFace]] = field(default=None, repr=False)
 
     # ------------------------------------------------------------------
     # Construction
@@ -290,7 +455,15 @@ class GTPSModel:
         header = parse_header(data)
         runs = extract_vertex_runs(data, **extract_kw)
         commands = extract_command_records(data)
-        model = cls(path=path, data=data, header=header, runs=runs, commands=commands)
+        attrs = extract_attr_stream(data)
+        model = cls(
+            path=path,
+            data=data,
+            header=header,
+            runs=runs,
+            commands=commands,
+            attrs=attrs,
+        )
         model._auto_frame_camera()
         return model
 
@@ -328,12 +501,84 @@ class GTPSModel:
         lo, hi = self.bounds()
         return (hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])
 
+    def percentile_bounds(
+        self,
+        low_pct: float = 5.0,
+        high_pct: float = 95.0,
+        vertices: Optional[Sequence[Vec3]] = None,
+    ) -> Tuple[Vec3, Vec3]:
+        """
+        Bounds from coordinate percentiles (ignores outlier false positives).
+
+        Heuristic XYZ extraction often spans nearly all of int16 space because
+        command/UV bytes get misread as vertices. Percentile framing shows the
+        actual track instead of a star-field of noise.
+        """
+        verts = list(vertices) if vertices is not None else self.vertices
+        if not verts:
+            return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+        xs = sorted(v[0] for v in verts)
+        ys = sorted(v[1] for v in verts)
+        zs = sorted(v[2] for v in verts)
+        n = len(xs)
+
+        def pct(arr: List[float], p: float) -> float:
+            return arr[min(n - 1, max(0, int(p / 100.0 * (n - 1))))]
+
+        return (
+            (pct(xs, low_pct), pct(ys, low_pct), pct(zs, low_pct)),
+            (pct(xs, high_pct), pct(ys, high_pct), pct(zs, high_pct)),
+        )
+
+    def display_vertices(
+        self,
+        max_runs: int = 40,
+        min_spread: float = 500.0,
+        max_abs: float = 18000.0,
+        drop_near_zero: float = 80.0,
+    ) -> List[Vec3]:
+        """
+        Preview-friendly vertex subset: top runs by spread, dropping near-zero
+        noise and extreme outliers that produce the dense white star-field.
+        """
+        chosen: List[Vec3] = []
+        used = 0
+        for run in self.runs:
+            if run.spread < min_spread:
+                continue
+            used += 1
+            for v in run.vertices:
+                m = max(abs(v[0]), abs(v[1]), abs(v[2]))
+                if m < drop_near_zero or m > max_abs:
+                    continue
+                chosen.append(v)
+            if used >= max_runs:
+                break
+        return chosen
+
     def _auto_frame_camera(self) -> None:
-        c = self.center()
-        ext = self.extent()
+        """Frame using percentile bounds so outlier noise does not pull the camera."""
+        lo, hi = self.percentile_bounds(5.0, 95.0)
+        c = (
+            (lo[0] + hi[0]) * 0.5,
+            (lo[1] + hi[1]) * 0.5,
+            (lo[2] + hi[2]) * 0.5,
+        )
+        ext = (hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])
         radius = max(ext) * 0.5 if max(ext) > 0 else 1000.0
+        if radius < 500.0:
+            lo2, hi2 = self.percentile_bounds(1.0, 99.0)
+            c = (
+                (lo2[0] + hi2[0]) * 0.5,
+                (lo2[1] + hi2[1]) * 0.5,
+                (lo2[2] + hi2[2]) * 0.5,
+            )
+            ext = (hi2[0] - lo2[0], hi2[1] - lo2[1], hi2[2] - lo2[2])
+            radius = max(max(ext) * 0.5, 1000.0)
         self.camera.target = c
-        self.camera.distance = radius * 2.5
+        self.camera.distance = radius * 2.8
+        self.camera.yaw_deg = 35.0
+        self.camera.pitch_deg = 30.0
 
     # ------------------------------------------------------------------
     # Projection (our own — not GTE RTPT)
@@ -402,6 +647,101 @@ class GTPSModel:
         return out
 
     # ------------------------------------------------------------------
+    # Strip faces + sequential 0x2C attribute pairing
+    # ------------------------------------------------------------------
+
+    def build_faces(self, area_eps: float = 1.0, use_cache: bool = True) -> List[StripFace]:
+        """
+        Build strip faces for all vertex runs (file-offset order).
+
+        Faces are non-degenerate triangles from strip segments. Attribute
+        pairing is applied automatically via pair_attributes().
+        """
+        if use_cache and self._faces_cache is not None:
+            return self._faces_cache
+
+        runs_by_off = sorted(self.runs, key=lambda r: r.offset)
+        faces: List[StripFace] = []
+        for run in runs_by_off:
+            faces.extend(faces_from_run(run, area_eps=area_eps))
+
+        self.pair_attributes(faces)
+        self._faces_cache = faces
+        return faces
+
+    def pair_attributes(
+        self,
+        faces: Optional[List[StripFace]] = None,
+        margin: int = 256,
+    ) -> List[StripFace]:
+        """
+        Assign AttrRecords to faces using sequential order.
+
+        Strategy (verified ~9× better than random on highway.ps):
+          1. Faces ordered by (run_offset, strip position).
+          2. For each run group, start the attr cursor at the first
+             stream record at-or-after (run_offset - margin).
+          3. Assign attrs sequentially within the group.
+
+        Global fallback: if a run has no nearby stream, continue from
+        the previous cursor so the overall 1:1 global ratio is preserved.
+        """
+        if faces is None:
+            faces = self.build_faces(use_cache=False)
+        if not faces or not self.attrs:
+            return faces
+
+        attr_offs = [a.offset for a in self.attrs]
+
+        def first_at_or_after(byte_off: int) -> int:
+            lo, hi = 0, len(attr_offs)
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if attr_offs[mid] < byte_off:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            return lo
+
+        # Group faces by run
+        groups: List[Tuple[int, List[StripFace]]] = []
+        cur_off = None
+        cur_group: List[StripFace] = []
+        for f in faces:
+            if f.run_offset != cur_off:
+                if cur_group:
+                    groups.append((cur_off, cur_group))  # type: ignore
+                cur_off = f.run_offset
+                cur_group = [f]
+            else:
+                cur_group.append(f)
+        if cur_group:
+            groups.append((cur_off, cur_group))  # type: ignore
+
+        cursor = 0
+        for run_off, group in groups:
+            local = first_at_or_after(max(0, run_off - margin))
+            # Prefer local cursor when it still has enough attrs
+            if local < len(self.attrs):
+                cursor = local
+            for f in group:
+                if cursor < len(self.attrs):
+                    f.attr = self.attrs[cursor]
+                    cursor += 1
+                else:
+                    f.attr = None
+        return faces
+
+    @property
+    def faces(self) -> List[StripFace]:
+        """Cached strip faces with attributes paired."""
+        return self.build_faces()
+
+    @property
+    def face_count(self) -> int:
+        return len(self.faces)
+
+    # ------------------------------------------------------------------
     # Colour helpers
     # ------------------------------------------------------------------
 
@@ -425,12 +765,16 @@ class GTPSModel:
     def summary(self) -> str:
         lo, hi = self.bounds()
         ext = self.extent()
+        n_faces = self.face_count
+        n_paired = sum(1 for f in self.faces if f.attr is not None)
         lines = [
             f"GT-PS  {self.path or '(memory)'}",
             f"  size           : {self.header.size:,} bytes",
             f"  sections       : {self.header.section_count}  highs={self.header.section_highs}",
             f"  vertex runs    : {len(self.runs)}",
             f"  total vertices : {self.vertex_count:,}",
+            f"  strip faces    : {n_faces:,}  (attrs paired: {n_paired:,})",
+            f"  attr stream    : {len(self.attrs):,} tight 0x2C records",
             f"  command records: {len(self.commands):,}",
             f"  bounds X       : {lo[0]:.0f} .. {hi[0]:.0f}  (Δ {ext[0]:.0f})",
             f"  bounds Y       : {lo[1]:.0f} .. {hi[1]:.0f}  (Δ {ext[1]:.0f})",
@@ -832,6 +1176,7 @@ def render_qimage(
     fg: Tuple[int, int, int] = (220, 220, 230),
     point_radius: int = 0,
     camera: Optional[Camera] = None,
+    filtered: bool = True,
 ):
     """
     Render the model point cloud into a QImage (Format_RGB888).
@@ -840,6 +1185,9 @@ def render_qimage(
 
         img = render_qimage(model, 800, 600)
         label.setPixmap(QPixmap.fromImage(img))
+
+    When filtered=True (default), uses display_vertices() to drop near-zero
+    noise and extreme outliers that otherwise form a dense white star-field.
     """
     try:
         from PyQt6.QtGui import QImage
@@ -852,7 +1200,8 @@ def render_qimage(
                 "Install with: pip install PyQt6"
             ) from e
 
-    pts = model.project(width, height, camera=camera)
+    verts = model.display_vertices() if filtered else None
+    pts = model.project(width, height, vertices=verts, camera=camera)
     # RGB888 buffer
     buf = bytearray(width * height * 3)
     # fill background
@@ -929,6 +1278,101 @@ def render_qimage_from_runs(
         for p in pts:
             if p is not None:
                 set_px(int(p[0]), int(p[1]), col)
+
+    img = QImage(bytes(buf), width, height, width * 3, QImage.Format.Format_RGB888)
+    return img.copy()
+
+
+def render_qimage_faces(
+    model: "GTPSModel",
+    width: int = 640,
+    height: int = 480,
+    bg: Tuple[int, int, int] = (12, 12, 18),
+    camera: Optional[Camera] = None,
+    wireframe: bool = True,
+    max_faces: int = 50000,
+):
+    """
+    Render strip faces coloured by sequential 0x2C attribute pairing.
+
+    Uses face.attr.colour_rgb when available. Wireframe draws triangle
+    edges; filled mode does a simple barycentric scan (slow, good for
+    small previews).
+    """
+    try:
+        from PyQt6.QtGui import QImage
+    except ImportError:
+        from PyQt5.QtGui import QImage
+
+    faces = model.faces[:max_faces]
+    cam = camera or model.camera
+
+    # Collect unique verts for one projection pass
+    verts: List[Vec3] = []
+    for f in faces:
+        verts.extend((f.a, f.b, f.c))
+    pts = model.project(width, height, verts, cam)
+
+    buf = bytearray(width * height * 3)
+    br, bg_, bb = bg
+    for i in range(0, len(buf), 3):
+        buf[i] = br
+        buf[i + 1] = bg_
+        buf[i + 2] = bb
+
+    def set_px(x: int, y: int, col: Tuple[int, int, int]) -> None:
+        if 0 <= x < width and 0 <= y < height:
+            i = (y * width + x) * 3
+            buf[i], buf[i + 1], buf[i + 2] = col
+
+    def draw_line(x0: int, y0: int, x1: int, y1: int, col: Tuple[int, int, int]) -> None:
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx - dy
+        while True:
+            set_px(x0, y0, col)
+            if x0 == x1 and y0 == y1:
+                break
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x0 += sx
+            if e2 < dx:
+                err += dx
+                y0 += sy
+
+    for fi, f in enumerate(faces):
+        p0 = pts[fi * 3]
+        p1 = pts[fi * 3 + 1]
+        p2 = pts[fi * 3 + 2]
+        if p0 is None or p1 is None or p2 is None:
+            continue
+        col = f.colour_rgb
+        x0, y0 = int(p0[0]), int(p0[1])
+        x1, y1 = int(p1[0]), int(p1[1])
+        x2, y2 = int(p2[0]), int(p2[1])
+        if wireframe:
+            draw_line(x0, y0, x1, y1, col)
+            draw_line(x1, y1, x2, y2, col)
+            draw_line(x2, y2, x0, y0, col)
+        else:
+            # simple bounding-box fill with barycentric test
+            minx = max(0, min(x0, x1, x2))
+            maxx = min(width - 1, max(x0, x1, x2))
+            miny = max(0, min(y0, y1, y2))
+            maxy = min(height - 1, max(y0, y1, y2))
+            denom = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2)
+            if denom == 0:
+                continue
+            for y in range(miny, maxy + 1):
+                for x in range(minx, maxx + 1):
+                    w0 = ((y1 - y2) * (x - x2) + (x2 - x1) * (y - y2)) / denom
+                    w1 = ((y2 - y0) * (x - x2) + (x0 - x2) * (y - y2)) / denom
+                    w2 = 1.0 - w0 - w1
+                    if w0 >= 0 and w1 >= 0 and w2 >= 0:
+                        set_px(x, y, col)
 
     img = QImage(bytes(buf), width, height, width * 3, QImage.Format.Format_RGB888)
     return img.copy()

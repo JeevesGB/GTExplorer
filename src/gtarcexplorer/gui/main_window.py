@@ -7,11 +7,13 @@ from ..utils.archive import GTArc
 from ..utils.tim_pack import parse_tim_pack
 from ..utils.audio import parse_sample_bank
 from ..utils.tim_image import decode_tim
-from ..utils.gtps import parse_gtps_header
+from ..utils.gtps import parse_gtps_header, GTPSModel, render_qimage
 from ..utils.filelist import bundled_lists
 from ..utils.ctex import parse_ctex_header
+from ..utils.slt import parse_slt_index, decode_slt_page
 from ..utils.spec import is_spec_type, parse_spec_table, format_spec_preview
 from ..utils.namelist import parse_name_list
+from ..utils.messagetext import extract_message_strings
 from ..utils.replay import is_replay_save, parse_replay_save, format_replay_preview
 from ..utils.gthtml import is_gthtml, parse_gthtml, format_gthtml_preview
 from . import names, tim_tools, viewer, actions
@@ -42,6 +44,8 @@ TYPE_COLORS = {
     "TIM Texture":       "#5dade2",
     "TIM Pack":          "#3498db",
     "GT-CTEX Texture":   "#9b59b6",
+    "GT Menu Image (SLT)": "#e91e63",
+    "SLT Index (32B)":   "#c2185b",
     "Nested GT-ARC":     "#e67e22",
     "GT Replay Save":    "#e74c3c",
     "Filename List":     "#1abc9c",
@@ -820,6 +824,9 @@ class GTArcExplorer(QMainWindow):
     def show_ctex_in_viewer(self, data, label=""):
         viewer.show_ctex_in_viewer(self, data, label)
 
+    def show_slt_in_viewer(self, data, label=""):
+        viewer.show_slt_in_viewer(self, data, label)
+
     def ctex_shift_clut(self, delta):
         viewer.ctex_shift_clut(self, delta)
 
@@ -1238,7 +1245,22 @@ class GTArcExplorer(QMainWindow):
                             break
                 else:
                     try:
-                        self.preview_text.append(data[:8000].decode("utf-8", errors="replace"))
+                        strings = extract_message_strings(data)
+                        if strings:
+                            self.preview_text.append(
+                                f"Text / Messages – {len(strings)} strings\n"
+                            )
+                            for i, s in enumerate(strings):
+                                self.preview_text.append(f"{i:4d}  {s}")
+                                if i >= 1999:
+                                    remaining = len(strings) - 2000
+                                    if remaining > 0:
+                                        self.preview_text.append(f"... ({remaining} more)")
+                                    break
+                        else:
+                            self.preview_text.append(
+                                data[:8000].decode("utf-8", errors="replace")
+                            )
                     except Exception:
                         self.preview_text.append(repr(data[:200]))
 
@@ -1291,6 +1313,30 @@ class GTArcExplorer(QMainWindow):
                     self.preview_text.append(f"CTEX header: {e}")
                 self.show_ctex_in_viewer(data, f["label"] + f["ext"])
                 self._switch_canvas(CANVAS_VIEWER)
+
+            elif f["type"] == "GT Menu Image (SLT)":
+                try:
+                    _, info = decode_slt_page(data)
+                    self.preview_text.append(
+                        f"SLT menu image  •  {info['width']}x{info['height']}  •  8-bit grayscale\n"
+                    )
+                except Exception as e:
+                    self.preview_text.append(f"SLT decode error: {e}")
+                self.show_slt_in_viewer(data, f["label"] + f["ext"])
+                self._switch_canvas(CANVAS_VIEWER)
+
+            elif f["type"] == "SLT Index (32B)":
+                try:
+                    idx = parse_slt_index(data)
+                    self.preview_text.append("SLT index block (32 bytes, 16 x u16 LE)\n")
+                    self.preview_text.append(str(idx["values"]))
+                    self.preview_text.append(
+                        "\n\nField meanings unconfirmed - likely references/sizes for "
+                        "the sibling page files (e.g. tvr-muffler1/2/3.slt)."
+                    )
+                except Exception as e:
+                    self.preview_text.append(f"SLT index parse error: {e}")
+                self._hex_dump(data)
 
             elif is_spec_type(f["type"]):
                 try:

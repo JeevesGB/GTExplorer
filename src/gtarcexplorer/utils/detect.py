@@ -1,5 +1,6 @@
 import struct
 from .replay import detect_replay
+from .slt import is_slt_page, is_slt_index
 
 # (magic_bytes, type_name, extension)
 # Order matters: longer / more specific magics first where needed.
@@ -67,6 +68,12 @@ def detect_type(data: bytes) -> tuple:
             name = data[4:20].split(b"\0")[0]
             if b".tim" in name.lower():
                 return ("TIM Pack", ".tpk")
+
+    if is_slt_page(data):
+        return ("GT Menu Image (SLT)", ".slt")
+
+    if is_slt_index(data) and not data.startswith(b"@(#)"):
+        return ("SLT Index (32B)", ".slt")
 
     if len(data) < 2_000_000:
         sample = data[:4096]

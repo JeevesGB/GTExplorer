@@ -8826,3 +8826,41 @@
 .\MENU_RAW\_unknown0005\_unknown1040.gthtml .\MENU_RAW\_menu_htm\vs-course.htm
 .\MENU_RAW\_unknown0005\_unknown1041.gthtml .\MENU_RAW\_menu_htm\vs.htm
 .\MENU_RAW\_unknown0005\_unknown1042.gthtml .\MENU_RAW\_menu_htm\wash.htm
+# idx 0000  (836 bytes)  '0 - 1000m | 0 - 400m | 0-1000'
+.\MESSAGES\_unknown0.txt   .\MESSAGES\_0_1000m_0_400m_01000_0400.txt
+# idx 0001  (836 bytes)  '0 - 1000m | 0 - 400m | 0-1000'
+.\MESSAGES\_unknown1.txt   .\MESSAGES\_0_1000m_0_400m_01000_0400_2.txt
+# idx 0002  (836 bytes)  '0 - 1000 m | 0 - 400 m | 0-1000'
+.\MESSAGES\_unknown2.txt   .\MESSAGES\_0_1000_m_0_400_m_01000_0400.txt
+# idx 0003  (836 bytes)  '0 - 1000 m | 0 - 400 m | 0-1000'
+.\MESSAGES\_unknown3.txt   .\MESSAGES\_0_1000_m_0_400_m_01000_0400_2.txt
+# idx 0004  (836 bytes)  '0 - 1000m | 0 - 400m | 0-1000'
+.\MESSAGES\_unknown4.txt   .\MESSAGES\_0_1000m_0_400m_01000_0400_3.txt
+# idx 0005  (836 bytes)  '0-1000 m | 0-400 m | 0-1000'
+.\MESSAGES\_unknown5.txt   .\MESSAGES\_01000_m_0400_m_01000_0400.txt
+# idx 0006  (5,350 bytes)  'Off | On | Save Replay'
+.\MESSAGES\_unknown6.txt   .\MESSAGES\_off_on_save_replay_delete_re.txt
+# idx 0007  (5,350 bytes)  'Off | On | Save Replay'
+.\MESSAGES\_unknown7.txt   .\MESSAGES\_off_on_save_replay_delete_re_2.txt
+# idx 0008  (5,350 bytes)  'Off | On | Enregistrer ralenti'
+.\MESSAGES\_unknown8.txt   .\MESSAGES\_off_on_enregistrer_ralenti_s.txt
+# idx 0009  (5,350 bytes)  'Aus | An | Video speichern'
+.\MESSAGES\_unknown9.txt   .\MESSAGES\_aus_an_video_speichern_video.txt
+# idx 0010  (5,350 bytes)  'Off | On | Salvare replay'
+.\MESSAGES\_unknown10.txt   .\MESSAGES\_off_on_salvare_replay_cancel.txt
+# idx 0011  (5,350 bytes)  'Des. | Act. | Guardar replay'
+.\MESSAGES\_unknown11.txt   .\MESSAGES\_des_act_guardar_replay_elimi.txt
+# idx 0012  (2,393 bytes)  'Engine Balance Adjustment | Brake Controller | Displacement Increase'
+.\MESSAGES\_unknown12.txt   .\MESSAGES\_engine_balance_adjustment_br.txt
+# idx 0013  (2,393 bytes)  'Balancing the engine for | Break controller for | Bore increase kit'
+.\MESSAGES\_unknown13.txt   .\MESSAGES\_balancing_the_engine_for_bre.txt
+# idx 0014  (2,393 bytes)  "Equilibrage du moteur | Répartiteur de freinage | Kit d'augm. du diamétre d'alésage"
+.\MESSAGES\_unknown14.txt   .\MESSAGES\_equilibrage_du_moteur_rparti.txt
+# idx 0015  (2,393 bytes)  'Motor-Feineinstellung für | Bremssteuerung für | Bohrungsvergrößerungssatz'
+.\MESSAGES\_unknown15.txt   .\MESSAGES\_motorfeineinstellung_fr_brem.txt
+# idx 0016  (2,393 bytes)  'Bilanciamento del motore per | Controller freni per | Kit aumento diametro'
+.\MESSAGES\_unknown16.txt   .\MESSAGES\_bilanciamento_del_motore_per.txt
+# idx 0017  (2,393 bytes)  'Balanceado del motor | Controlador de freno | Aum. de diám.cilíndrico'
+.\MESSAGES\_unknown17.txt   .\MESSAGES\_balanceado_del_motor_control.txt
+
+
