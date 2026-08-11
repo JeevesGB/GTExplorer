@@ -231,6 +231,10 @@ class GTArcExplorer(QMainWindow):
 
         self.act_export_strings = QAction("Export Strings", self)
         self.act_repack = QAction("Repack", self)
+        self.act_repack_tpk = QAction("Repack TIM Pack .tpk", self)
+        self.act_repack_tpk.setToolTip("Rebuild selected .tpk from it's *_tims folder")
+        self.act_pack_tpk = QAction("Pack folder to .tpk", self)
+        self.act_pack_tpk.setToolTip("Build a .tpk from a folder of .tim files")
         self.act_folder = QAction("Open Extract Folder", self)
         self.act_diff_folder = QAction("Diff vs folder…", self)
         self.act_diff_dat = QAction("Diff vs another .DAT…", self)
@@ -285,6 +289,9 @@ class GTArcExplorer(QMainWindow):
         m_extract.addAction(self.act_extract_sel)
         m_extract.addAction(self.act_export_strings)
         m_extract.addAction(self.act_repack)
+        m_extract.addSeparator()
+        m_extract.addAction(self.act_repack_tpk)
+        m_extract.addAction(self.act_pack_tpk)
 
         m_diff = menubar.addMenu("&Diff")
         m_diff.addAction(self.act_diff_folder)
@@ -322,6 +329,7 @@ class GTArcExplorer(QMainWindow):
         self.chk_inst.setToolTip("Also extract samples from INST/ENGN")
         toolbar.addWidget(self.chk_tims)
         toolbar.addWidget(self.chk_inst)
+        toolbar.addAction(self.act_repack_tpk)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -629,6 +637,8 @@ class GTArcExplorer(QMainWindow):
         self.act_build_disc.triggered.connect(self.build_disc)
         self.act_open_tools.triggered.connect(self.open_tools_folder)
         self.input_list.itemClicked.connect(lambda *_: self.on_input_file_clicked())
+        self.act_repack_tpk.triggered.connect(lambda: actions.repack_selected_tpk(self))
+        self.act_pack_tpk.triggered.connect(lambda: actions.pack_folder_to_tpk(self))
 
     def _update_action_states(self):
         has_files = bool(self.arc.files)

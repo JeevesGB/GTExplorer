@@ -196,8 +196,7 @@ class GTArc:
             f["real_name"] = None
         return f["data"]
 
-    def extract_all(self, out_dir: str, indices=None, expand_tim_packs=False,
-                    expand_inst_banks=False, progress_cb=None):
+    def extract_all(self, out_dir: str, indices=None, expand_tim_packs=False, expand_inst_banks=False, progress_cb=None):
 
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -222,30 +221,41 @@ class GTArc:
             extra = ""
             if expand_tim_packs and f["type"] == "TIM Pack":
                 tims = parse_tim_pack(data)
-                sub = out / f"{f['label']}_tims"
+                # Folder name must match pack_from_folder: <file_stem>_tims
+                pack_stem = Path(name).stem
+                sub = out / f"{pack_stem}_tims"
                 sub.mkdir(exist_ok=True)
+                order_names = []
                 for tname, tdata in tims:
-                    safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in tname)
+                    safe = "".join(
+                        c if c.isalnum() or c in "._-" else "_" for c in tname
+                    )
                     if not safe.lower().endswith(".tim"):
                         safe += ".tim"
                     (sub / safe).write_bytes(tdata)
+                    order_names.append(safe)
+                (sub / "tim_order.txt").write_text(
+                    "\n".join(order_names) + "\n", encoding="utf-8"
+                )
                 extra += f" + {len(tims)} TIMs"
 
             if expand_inst_banks and f["type"] in ("Sound Instrument", "Engine Sound"):
-                sub = out / f"{f['label']}_samples"
+                sub = out / f"{Path(name).stem}_samples"
                 count = expand_sample_bank(data, sub)
                 extra += f" + {count} samples"
 
             if progress_cb:
                 progress_cb(n + 1, len(indices), name + extra)
 
+        # Optional convenience file — not required for repack
         with open(out / "manifest.txt", "w", encoding="utf-8") as m:
             m.write(f"kind={self.kind}\n")
             m.write(f"content_type=0x{self.content_type:04x}\n")
-            m.write(f"nfiles={len(self.files)}\n")
+            m.write(f"nfiles={len(indices)}\n")
             for name in manifest:
                 m.write(name + "\n")
         return out
+
 
     @staticmethod
     def pack_from_folder(src_dir: str, out_path: str,
@@ -253,11 +263,13 @@ class GTArc:
                          compress_level: int = 6,
                          progress_cb=None):
         """
-        Pack a folder of extracted files back into a GT-ARC / GT-ZIP archive.
+        Pack a folder of extracted files back into a GT-ARC archive.
 
-        Prefer order from manifest.txt when present and valid.
-        Fall back to scanning the folder if the manifest is missing,
-        incomplete, or references files that do not exist on disk.
+        manifest.txt is optional. If present and valid, its order is used;
+        otherwise every packable file in the folder is packed (sorted).
+
+        For each *.tpk, if a matching <stem>_tims/ folder exists, the TPK is
+        rebuilt from the .tim files in that folder before packing.
         """
         src = Path(src_dir)
         if not src.is_dir():
@@ -266,10 +278,7 @@ class GTArc:
         def is_packable(p: Path) -> bool:
             if not p.is_file():
                 return False
-            if p.name.lower() == "manifest.txt":
-                return False
-            # Skip expanded TIM packs / sample banks (they are rebuilt from parent)
-            if any(part.endswith(("_tims", "_samples")) for part in p.parts):
+            if p.name.lower() in ("manifest.txt", "tim_order.txt"):
                 return False
             return True
 
@@ -283,49 +292,68 @@ class GTArc:
             )
             return [p.name for p in files]
 
+        def load_tims_for_pack(tims_dir: Path) -> list:
+            """Prefer tim_order.txt for original order; else sorted *.tim."""
+            order_file = tims_dir / "tim_order.txt"
+            if order_file.is_file():
+                names = [
+                    ln.strip()
+                    for ln in order_file.read_text(encoding="utf-8").splitlines()
+                    if ln.strip() and not ln.strip().startswith("#")
+                ]
+                tim_list = []
+                for n in names:
+                    tp = tims_dir / n
+                    if not tp.is_file() and not n.lower().endswith(".tim"):
+                        tp = tims_dir / (n + ".tim")
+                    if not tp.is_file():
+                        raise FileNotFoundError(
+                            f"tim_order.txt lists '{n}' but it is missing in {tims_dir}"
+                        )
+                    tim_list.append((tp.name, tp.read_bytes()))
+                return tim_list
+            return [
+                (tp.name, tp.read_bytes())
+                for tp in sorted(tims_dir.glob("*.tim"))
+            ]
+
         content_type = 0x0001 if force_uncompressed else 0x8001
         names = []
 
+        # Optional manifest — use only when it lists files that exist
         manifest_path = src / "manifest.txt"
-        if manifest_path.exists():
+        if manifest_path.is_file():
             try:
                 lines = [
-                    l.strip()
-                    for l in manifest_path.read_text(encoding="utf-8").splitlines()
-                    if l.strip()
+                    ln.strip()
+                    for ln in manifest_path.read_text(encoding="utf-8").splitlines()
+                    if ln.strip()
                 ]
                 idx = 0
-                if lines and lines[0].startswith("kind="):
-                    idx = 1
-                # content_type line
-                if idx < len(lines) and "content_type=" in lines[idx]:
-                    ct = int(lines[idx].split("=", 1)[1], 0)
-                    if not force_uncompressed:
-                        content_type = ct
+                if idx < len(lines) and lines[idx].startswith("kind="):
                     idx += 1
-                # nfiles line
+                if idx < len(lines) and "content_type=" in lines[idx]:
+                    if not force_uncompressed:
+                        content_type = int(lines[idx].split("=", 1)[1], 0)
+                    idx += 1
                 nfiles_declared = None
                 if idx < len(lines) and lines[idx].startswith("nfiles="):
                     nfiles_declared = int(lines[idx].split("=", 1)[1])
                     idx += 1
-                # remaining lines are filenames
                 candidate_names = lines[idx:]
                 if nfiles_declared is not None:
                     candidate_names = candidate_names[:nfiles_declared]
-
-                # Only keep names that actually exist on disk
                 valid = [n for n in candidate_names if (src / n).is_file()]
                 if valid:
                     names = valid
             except Exception:
-                # Bad / corrupt manifest → fall through to folder scan
                 names = []
 
+        # No manifest (or unusable) → scan folder
         if not names:
             names = scan_folder_files()
 
         if not names:
-            # Useful diagnostic instead of a silent failure
             all_entries = list(src.iterdir())
             file_names = [p.name for p in all_entries if p.is_file()]
             dir_names = [p.name for p in all_entries if p.is_dir()]
@@ -334,8 +362,8 @@ class GTArc:
                 f"Folder: {src}\n"
                 f"Files present: {file_names[:30]}{' …' if len(file_names) > 30 else ''}\n"
                 f"Subdirs: {dir_names[:10]}{' …' if len(dir_names) > 10 else ''}\n\n"
-                "Make sure the extracted .tim / .car / .tex / .txt files sit "
-                "directly in this folder (not inside a subfolder)."
+                "Put the extracted files directly in this folder "
+                "(not only inside subfolders)."
             )
 
         nfiles = len(names)
@@ -348,17 +376,15 @@ class GTArc:
 
             stem = Path(name).stem
             tims_dir = src / f"{stem}_tims"
+
+            # Rebuild TPK from <stem>_tims when present
             if name.lower().endswith(".tpk") and tims_dir.is_dir():
                 if progress_cb:
                     progress_cb(ni + 1, nfiles, name, "rebuild-tpk")
-                tim_list = [
-                    (tp.name, tp.read_bytes())
-                    for tp in sorted(tims_dir.glob("*.tim"))
-                ]
+                tim_list = load_tims_for_pack(tims_dir)
                 if not tim_list:
                     raise FileNotFoundError(f"No .tim files in {tims_dir}")
                 raw = build_tim_pack(tim_list)
-                # Keep on-disk .tpk consistent with rebuilt content
                 p.write_bytes(raw)
             else:
                 raw = p.read_bytes()
@@ -373,7 +399,7 @@ class GTArc:
             else:
                 payloads.append((raw, len(raw)))
 
-        # Build GT-ARC header (fixed 0x800-byte header region)
+        # GT-ARC header (fixed 0x800-byte header region)
         header = bytearray()
         header += b"@(#)GT-ARC\0\0"
         header += struct.pack("<HH", content_type, nfiles)
@@ -389,9 +415,9 @@ class GTArc:
             )
         header += b"\0" * (data_start - len(header))
 
-        with open(out_path, "wb") as f:
-            f.write(header)
+        with open(out_path, "wb") as fh:
+            fh.write(header)
             for comp, _ in payloads:
-                f.write(comp)
+                fh.write(comp)
 
         return out_path

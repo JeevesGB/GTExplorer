@@ -25,6 +25,7 @@ from ..utils.replay import is_replay_save
 from ..utils.spec import is_spec_type, export_spec_strings
 from ..utils import user_paths as up_mod
 from ..utils.user_paths import UserPaths
+from ..utils.tim_pack import parse_tim_pack, build_tim_pack
 from . import names
 
 ARCHIVE_GLOBS = ("*.dat", "*.DAT", "*.arc", "*.ARC")
@@ -1594,3 +1595,160 @@ def open_tools_folder(win) -> None:
         os.system(f'open "{td}"')
     else:
         os.system(f'xdg-open "{td}"')
+
+def repack_selected_tpk(win) -> None:
+    """Rebuild selected TIM Pack entry from <stem>_tims folder on disk."""
+    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+    from pathlib import Path
+    from ..utils.tim_pack import parse_tim_pack, build_tim_pack
+
+    items = win.tree.selectedItems()
+    if not items:
+        QMessageBox.information(win, "Repack TPK", "Select a TIM Pack entry in the tree.")
+        return
+
+    idx = int(items[0].text(0))
+    f = win.arc.files[idx]
+    data = win.arc.get_data(idx)
+
+    if f.get("type") != "TIM Pack" and not parse_tim_pack(data):
+        QMessageBox.warning(win, "Repack TPK", "Selected entry is not a TIM Pack.")
+        return
+
+    # Prefer workspace extract folder
+    label = f.get("label") or f"{idx:03d}"
+    stem = Path(f.get("real_name") or (label + ".tpk")).stem
+
+    candidates = []
+    if win.extract_dir:
+        candidates.append(Path(win.extract_dir) / f"{stem}_tims")
+        candidates.append(Path(win.extract_dir) / f"{label}_tims")
+    # also next to a previously extracted .tpk if user points at it
+
+    tims_dir = next((p for p in candidates if p.is_dir()), None)
+    if tims_dir is None:
+        start = str(win.extract_dir or win._last_dir())
+        chosen = QFileDialog.getExistingDirectory(
+            win,
+            f"Folder of .tim files for {stem}.tpk (e.g. {stem}_tims)",
+            start,
+        )
+        if not chosen:
+            return
+        tims_dir = Path(chosen)
+
+    # Load TIMs (prefer order file)
+    order_file = tims_dir / "tim_order.txt"
+    if order_file.is_file():
+        names = [
+            ln.strip()
+            for ln in order_file.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+        tim_list = []
+        for n in names:
+            tp = tims_dir / n
+            if not tp.is_file() and not n.lower().endswith(".tim"):
+                tp = tims_dir / (n + ".tim")
+            if not tp.is_file():
+                QMessageBox.critical(
+                    win, "Repack TPK", f"Missing TIM listed in tim_order.txt:\n{n}"
+                )
+                return
+            tim_list.append((tp.name, tp.read_bytes()))
+    else:
+        files = sorted(tims_dir.glob("*.tim"))
+        if not files:
+            QMessageBox.critical(win, "Repack TPK", f"No .tim files in:\n{tims_dir}")
+            return
+        tim_list = [(p.name, p.read_bytes()) for p in files]
+
+    try:
+        raw = build_tim_pack(tim_list)
+    except Exception as e:
+        QMessageBox.critical(win, "Repack TPK", str(e))
+        return
+
+    # Update in-memory archive entry
+    f["data"] = raw
+    f["type"] = "TIM Pack"
+    f["ext"] = ".tpk"
+    f["decomp_size"] = len(raw)
+    f["comp_size"] = len(raw)
+
+    # Optional: also write .tpk next to the _tims folder
+    out_tpk = tims_dir.parent / f"{stem}.tpk"
+    try:
+        out_tpk.write_bytes(raw)
+    except OSError:
+        out_tpk = None
+
+    win.set_status(
+        f"Rebuilt TPK #{idx} from {tims_dir.name} ({len(tim_list)} TIM(s))"
+        + (f" → {out_tpk.name}" if out_tpk else "")
+    )
+    QMessageBox.information(
+        win,
+        "Repack TPK",
+        f"Rebuilt TIM Pack from:\n{tims_dir}\n\n"
+        f"{len(tim_list)} texture(s)\n"
+        f"Size: {len(raw):,} bytes\n\n"
+        "In-memory archive entry updated.\n"
+        "Use Extract → Repack to write a new .DAT if needed."
+        + (f"\n\nAlso saved:\n{out_tpk}" if out_tpk else ""),
+    )
+    # Refresh preview
+    if hasattr(win, "on_select"):
+        win.on_select()
+
+
+def pack_folder_to_tpk(win) -> None:
+    folder = QFileDialog.getExistingDirectory(
+        win, "Folder containing .tim files", str(win.extract_dir or win._last_dir())
+    )
+    if not folder:
+        return
+    folder = Path(folder)
+
+    order_file = folder / "tim_order.txt"
+    if order_file.is_file():
+        names = [
+            ln.strip()
+            for ln in order_file.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+        tim_list = []
+        for n in names:
+            tp = folder / n
+            if not tp.is_file() and not n.lower().endswith(".tim"):
+                tp = folder / (n + ".tim")
+            if not tp.is_file():
+                QMessageBox.critical(win, "Pack TPK", f"Missing: {n}")
+                return
+            tim_list.append((tp.name, tp.read_bytes()))
+    else:
+        files = sorted(folder.glob("*.tim"))
+        if not files:
+            QMessageBox.critical(win, "Pack TPK", f"No .tim files in:\n{folder}")
+            return
+        tim_list = [(p.name, p.read_bytes()) for p in files]
+
+    default_name = folder.name.replace("_tims", "") + ".tpk"
+    out, _ = QFileDialog.getSaveFileName(
+        win,
+        "Save TIM Pack",
+        str(folder.parent / default_name),
+        "TIM Pack (*.tpk);;All (*.*)",
+    )
+    if not out:
+        return
+
+    try:
+        raw = build_tim_pack(tim_list)
+        Path(out).write_bytes(raw)
+    except Exception as e:
+        QMessageBox.critical(win, "Pack TPK", str(e))
+        return
+
+    win.set_status(f"Packed {len(tim_list)} TIM(s) → {out}")
+    QMessageBox.information(win, "Pack TPK", f"Saved:\n{out}\n\n{len(tim_list)} texture(s)")
