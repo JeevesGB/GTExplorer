@@ -4,20 +4,9 @@ import sys
 from pathlib import Path
 
 from ..utils.archive import GTArc
-from ..utils.tim_pack import parse_tim_pack
-from ..utils.audio import parse_sample_bank
-from ..utils.tim_image import decode_tim
-from ..utils.gtps import parse_gtps_header
 from ..utils.filelist import bundled_lists
-from ..utils.ctex import parse_ctex_header
-from ..utils.slt import parse_slt_index, decode_slt_page
-from ..utils.spec import is_spec_type, parse_spec_table, format_spec_preview
-from ..utils.namelist import parse_name_list
-from ..utils.messagetext import extract_message_strings
-from ..utils.replay import is_replay_save, parse_replay_save, format_replay_preview
-from ..utils.gthtml import is_gthtml, parse_gthtml, format_gthtml_preview
-from ..utils.gtenv import parse_gtenv, format_gtenv_preview
 from . import names, tim_tools, viewer, actions
+from . import preview, help_dialog, actions_tpk
 from .viewer import show_model_in_viewer, render_model_viewer, model_orbit, model_zoom
 
 from PyQt6.QtCore import Qt, QSize, QSettings, pyqtSignal, QEvent
@@ -329,7 +318,9 @@ class GTArcExplorer(QMainWindow):
         self.chk_inst.setToolTip("Also extract samples from INST/ENGN")
         toolbar.addWidget(self.chk_tims)
         toolbar.addWidget(self.chk_inst)
+        toolbar.addSeparator()
         toolbar.addAction(self.act_repack_tpk)
+        toolbar.addAction(self.act_pack_tpk)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -637,8 +628,8 @@ class GTArcExplorer(QMainWindow):
         self.act_build_disc.triggered.connect(self.build_disc)
         self.act_open_tools.triggered.connect(self.open_tools_folder)
         self.input_list.itemClicked.connect(lambda *_: self.on_input_file_clicked())
-        self.act_repack_tpk.triggered.connect(lambda: actions.repack_selected_tpk(self))
-        self.act_pack_tpk.triggered.connect(lambda: actions.pack_folder_to_tpk(self))
+        self.act_repack_tpk.triggered.connect(lambda: actions_tpk.repack_selected_tpk(self))
+        self.act_pack_tpk.triggered.connect(lambda: actions_tpk.pack_folder_to_tpk(self))
 
     def _update_action_states(self):
         has_files = bool(self.arc.files)
@@ -674,6 +665,15 @@ class GTArcExplorer(QMainWindow):
         self.act_diff_folder.setEnabled(has_files)
         self.act_diff_dat.setEnabled(has_files)
         self.act_save_sel.setEnabled(has_files and has_sel)
+        is_tpk = False
+        if has_sel and has_files:
+            try:
+                idx = int(self.tree.selectedItems()[0].text(0))
+                is_tpk = self.arc.files[idx].get("type") == "TIM Pack"
+            except Exception:
+                pass
+        self.act_repack_tpk.setEnabled(is_tpk)
+
         actions.apply_workspace_paths(self)
         # First-run setup wizard (paths + optional mkpsxiso)
         from PyQt6.QtCore import QTimer
@@ -921,218 +921,10 @@ class GTArcExplorer(QMainWindow):
             act.triggered.connect(lambda checked=False, p=path: self._open_path(p))
 
     def show_about(self):
-        QMessageBox.about(
-            self,
-            "About GTExplorer",
-            "<b>GTExplorer</b><br>"
-            "Gran Turismo 1 (PlayStation) archive explorer<br><br>"
-            "Open, extract, preview, and repack GT-ARC / GT-ZIP archives.<br>"
-            "Supports TIM textures, CTEX, car models, nested ARCs, "
-            "REPLAY saves, text/message tables, and SPEC data.<br><br>"
-            '<a href="https://github.com/JeevesGB/GTExplorer" style="color:#FF6B67;">'
-            "github.com/JeevesGB/GTExplorer</a><br><br>"
-            "Use the <b>Help</b> button on the toolbar (or Help → User Guide) for the full guide.",
-        )
+        help_dialog.show_about(self)
 
     def show_user_guide(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("GTExplorer — User Guide")
-        dlg.resize(780, 620)
-        dlg.setMinimumSize(560, 400)
-
-        layout = QVBoxLayout(dlg)
-        tabs = QTabWidget()
-        layout.addWidget(tabs)
-
-        def make_page(html: str) -> QWidget:
-            dlg.resize(800, 640)
-            page = QWidget()
-            v = QVBoxLayout(page)
-            v.setContentsMargins(0, 0, 0, 0)
-            browser = QTextBrowser()
-            browser.setOpenExternalLinks(True)
-            browser.setHtml(html)
-            v.addWidget(browser)
-            return page
-
-        overview = """
-        <h2>Overview</h2>
-        <p><b>GTExplorer</b> opens Gran Turismo 1 <code>.DAT</code> / <code>.ARC</code> archives,
-        lets you preview assets (TIM textures, models, text, etc.), extract them losslessly,
-        edit files on disk, and pack them back into a playable archive.</p>
-        <p><b>Typical mod loop</b></p>
-        <ol>
-          <li><b>File → Open .DAT</b> — load the original archive (e.g. <code>ARCADE2.DAT</code>).</li>
-          <li>Optional: pick a region <b>Names</b> list in the toolbar so entries show real names.</li>
-          <li><b>Extract → Extract All</b> into a clean empty folder.</li>
-          <li>Edit files in that folder (replace a <code>.tim</code>, edit <code>.txt</code> messages, etc.).</li>
-          <li><b>Extract → Repack</b> — choose output path and compression options.</li>
-          <li>Test the new <code>.DAT</code> in-game or with an emulator.</li>
-        </ol>
-        <p>You can also <b>File → Open Folder</b> on an existing extract to browse and repack it
-        without re-extracting.</p>
-        """
-
-        workspace = """
-        <h2>Workspace &amp; first-time setup</h2>
-        <p>On first launch, GTExplorer asks you to set up five working folders
-        (next to the app, or anywhere you choose):</p>
-        <ul>
-          <li><b>Disk</b> — original disc images (<code>.bin</code> / <code>.cue</code>)</li>
-          <li><b>ORIGINAL FILES</b> — dumped game archives; shown in the left Input list</li>
-          <li><b>EXTRACTED</b> — where extracts are written for editing</li>
-          <li><b>Modified Disks</b> — rebuilt images from mkpsxiso</li>
-          <li><b>tools</b> — optional <code>mkpsxiso.exe</code> / <code>dumpsxiso.exe</code></li>
-        </ul>
-        <p>Paths are stored in <code>user_paths.json</code> next to the app
-        (the file is kept; <b>Clear paths</b> only blanks the values inside it).</p>
-        <ul>
-          <li><b>File → Setup / Workspace…</b> — change folders, enable disc tools,
-              <b>Fill defaults</b>, or <b>Clear paths</b></li>
-          <li><b>File → Clear saved paths…</b> — clear path fields in
-              <code>user_paths.json</code> (does not delete folders on disk)</li>
-        </ul>
-        <p>After setup, click an archive in <b>ORIGINAL FILES</b> (Input list) to open it,
-        or use <b>File → Open</b>.</p>
-        """
-
-        extract_pack = """
-        <h2>Extract &amp; Pack</h2>
-        <h3>Extract</h3>
-        <ul>
-          <li><b>Extract All</b> — writes every entry plus a <code>manifest.txt</code> that
-              records order and compression type. Keep this file; packing uses it.</li>
-          <li><b>Extract Selected</b> (<code>Ctrl+E</code>) — only the rows you selected.</li>
-          <li><b>Extract TIMs</b> checkbox — also expands TIM packs into
-              <code>&lt;name&gt;_tims/</code> subfolders.</li>
-          <li><b>Extract samples</b> — expands INST/ENGN banks to WAV (and raw ADPCM).</li>
-        </ul>
-        <h3>Pack / Repack</h3>
-        <ul>
-          <li>Pack the <b>folder that contains the individual files</b>
-              (and preferably <code>manifest.txt</code>), not a parent folder.</li>
-          <li>Files must sit <b>directly</b> in that folder. Subfolders named
-              <code>*_tims</code> / <code>*_samples</code> are skipped (they are rebuilt
-              from the parent <code>.tpk</code> when present).</li>
-          <li>If <code>manifest.txt</code> is missing or incomplete, the tool falls back
-              to packing every packable file it finds, in sorted order.</li>
-          <li>Compression: <b>No</b> = GT-ZIP compressed (usual for game files);
-              <b>Yes</b> = store uncompressed. Level 4–6 is a good default.</li>
-          <li>After a successful pack, reopen the new <code>.DAT</code> and spot-check
-              a few entries (especially any TIM you changed).</li>
-        </ul>
-        <h3>If packing fails</h3>
-        <p>The error dialog now lists files/subdirs the tool can see. Common causes:</p>
-        <ul>
-          <li>Wrong folder selected (empty or only subfolders).</li>
-          <li>Files still inside a nested extract folder.</li>
-          <li>Manifest listing names that were renamed or deleted.</li>
-        </ul>
-        """
-
-        viewing = """
-        <h2>Viewing &amp; navigation</h2>
-        <ul>
-          <li>Click a row in the tree to preview it (TIM image, text, hex, model header, etc.).</li>
-          <li><b>Double-click</b> a Nested GT-ARC to open it. Use the breadcrumb
-              <b>Back</b> button to return to the parent.</li>
-          <li>Filter box (<code>Ctrl+F</code>) filters the tree by name/type.</li>
-          <li>Toolbar <b>Names</b> combo loads a region file list so indexes become
-              real asset names when known.</li>
-          <li><b>Tools → Load list…</b> — load a custom name list.</li>
-          <li>Drag-and-drop a <code>.DAT</code> or extract folder onto the window to open it.</li>
-        </ul>
-        <h3>Supported content (summary)</h3>
-        <table border="1" cellpadding="4" cellspacing="0">
-          <tr><th>Type</th><th>Ext</th><th>Notes</th></tr>
-          <tr><td>TIM texture</td><td>.tim</td><td>Preview, replace, re-encode</td></tr>
-          <tr><td>TIM pack</td><td>.tpk</td><td>Expand/rebuild with Extract TIMs</td></tr>
-          <tr><td>GT-CTEX / GT-CAR / GT-PS</td><td>.tex / .car / .ps</td><td>Models &amp; textures</td></tr>
-          <tr><td>Text / messages</td><td>.txt</td><td>Editable as plain text</td></tr>
-          <tr><td>Nested GT-ARC</td><td>.arc</td><td>Open Nested ARC</td></tr>
-          <tr><td>REPLAY save</td><td>—</td><td>Replay viewer</td></tr>
-          <tr><td>SPEC / COLOR / …</td><td>—</td><td>Tables; Export Strings</td></tr>
-        </table>
-        """
-
-        tim_tools = """
-        <h2>TIM tools</h2>
-        <p>Requires <b>Pillow</b> (<code>pip install Pillow</code>).</p>
-        <ul>
-          <li><b>Convert image to TIM…</b> — PNG/BMP → standalone <code>.tim</code>.</li>
-          <li><b>Re-encode selected TIM…</b> — re-encode the selected entry
-              (optionally match original VRAM/CLUT layout).</li>
-          <li><b>Replace selected TIM with image…</b> — inject a PNG into the
-              currently selected TIM entry (best when dimensions/bit depth match).</li>
-          <li><b>Batch convert folder to TIM…</b> — convert every image in a folder
-              with the same settings.</li>
-        </ul>
-        <p><b>Tip:</b> After replacing a TIM inside an extract folder, run <b>Repack</b>
-        so the change lands in the new <code>.DAT</code>. If you only replaced inside
-        the open archive in memory, extract or save the entry first.</p>
-        """
-
-        shortcuts = """
-        <h2>Shortcuts &amp; menus</h2>
-        <table border="1" cellpadding="4" cellspacing="0">
-          <tr><th>Shortcut</th><th>Action</th></tr>
-          <tr><td><code>Ctrl+O</code></td><td>Open .DAT / archive</td></tr>
-          <tr><td><code>Ctrl+Shift+O</code></td><td>Open extract folder</td></tr>
-          <tr><td><code>Ctrl+E</code></td><td>Extract selected</td></tr>
-          <tr><td><code>Ctrl+F</code></td><td>Focus filter</td></tr>
-          <tr><td><code>F1</code></td><td>This User Guide</td></tr>
-        </table>
-        <h3>Menu map</h3>
-        <ul>
-          <li><b>File</b> — Open archive, Open Nested ARC, Open Folder, Recent,
-              Save Selected, Open Extract Folder, Set workspace, Clear saved paths</li>
-          <li><b>Extract</b> — Extract All, Extract Selected, Export Strings, Repack</li>
-          <li><b>Diff</b> — Compare archive to an extract folder or another .DAT</li>
-          <li><b>Tools</b> — Load name list, TIM convert / re-encode / replace / batch</li>
-          <li><b>View</b> — Dark theme, Show log</li>
-          <li><b>Help</b> — User Guide, About</li>
-        </ul>
-        """
-
-        tips = """
-        <h2>Tips &amp; troubleshooting</h2>
-        <ul>
-          <li>Always work from a <b>copy</b> of game files. Keep the original
-              <code>.DAT</code> untouched.</li>
-          <li>Prefer a <b>fresh Extract All</b> before a big mod session so
-              <code>manifest.txt</code> matches the files on disk.</li>
-          <li>Do not rename files unless you also update <code>manifest.txt</code>
-              (or delete the manifest and accept sorted-order packing).</li>
-          <li>TIM replacements work best when width, height, and colour depth
-              match the original. Mismatched sizes can glitch in-game.</li>
-          <li>If the tree shows indexes (<code>000</code>, <code>001</code>…) instead
-              of names, select the correct region list in the toolbar or use
-              <b>Tools → Load list…</b>.</li>
-          <li>Nested archives: open them with <b>Open Nested ARC</b> or double-click,
-              extract/edit from there if needed, then pack the parent.</li>
-          <li>“No packable files found” → you selected a folder that has no
-              top-level asset files. Open the folder that actually contains the
-              <code>.tim</code> / <code>.car</code> / <code>.txt</code> files.</li>
-        </ul>
-        <p>Project page:
-        <a href="https://github.com/JeevesGB/GTExplorer">github.com/JeevesGB/GTExplorer</a></p>
-        """
-
-        tabs.addTab(make_page(overview), "Overview")
-        tabs.addTab(make_page(workspace), "Workspace")
-        tabs.addTab(make_page(extract_pack), "Extract & Pack")
-        tabs.addTab(make_page(viewing), "Viewing")
-        tabs.addTab(make_page(tim_tools), "TIM tools")
-        tabs.addTab(make_page(shortcuts), "Shortcuts")
-        tabs.addTab(make_page(tips), "Tips")
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(dlg.reject)
-        buttons.accepted.connect(dlg.accept)
-        buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(dlg.accept)
-        layout.addWidget(buttons)
-
-        dlg.exec()
+        help_dialog.show_user_guide(self)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -1243,192 +1035,10 @@ class GTArcExplorer(QMainWindow):
                 pass
 
     def show_preview(self, idx: int):
-        try:
-            data = self.arc.get_data(idx)
-            f = self.arc.files[idx]
-
-            self.preview_info.setText(
-                f"#{idx}  •  {f['type']}  •  {len(data):,} bytes  •  {f['ext']}"
-            )
-            self.preview_text.clear()
-            self.preview_text.append(f"Type     : {f['type']}")
-            self.preview_text.append(f"Extension: {f['ext']}")
-            self.preview_text.append(f"Size     : {len(data):,} bytes\n")
-
-            if is_replay_save(data) or f.get("type") == "GT Replay Save":
-                try:
-                    save = parse_replay_save(data)
-                    self.preview_text.append(format_replay_preview(save))
-                except Exception as e:
-                    self.preview_text.append(f"REPLAY.DAT parse error: {e}")
-                    self._hex_dump(data[:256])
-                return
-
-            if f["type"] == "TIM Pack":
-                tims = parse_tim_pack(data)
-                self.preview_text.append(f"TIM Pack – {len(tims)} textures\n")
-                for name, tim in tims:
-                    self.preview_text.append(f"{name:<20} {len(tim):>10,}")
-                self.show_pack_in_viewer(data)
-                self._switch_canvas(CANVAS_VIEWER)
-
-            elif f["type"] in ("Filename List", "Text / Messages"):
-                names_list = parse_name_list(data)
-                if names_list:
-                    self.preview_text.append(f"Filename list – {len(names_list)} entries\n")
-                    self.preview_text.append(f"{'Idx':>4}  Name")
-                    self.preview_text.append("-" * 40)
-                    for i, nm in enumerate(names_list):
-                        self.preview_text.append(f"{i:4d}  {nm}")
-                        if i >= 499:
-                            self.preview_text.append(f"... ({len(names_list) - 500} more)")
-                            break
-                else:
-                    try:
-                        strings = extract_message_strings(data)
-                        if strings:
-                            self.preview_text.append(
-                                f"Text / Messages – {len(strings)} strings\n"
-                            )
-                            for i, s in enumerate(strings):
-                                self.preview_text.append(f"{i:4d}  {s}")
-                                if i >= 1999:
-                                    remaining = len(strings) - 2000
-                                    if remaining > 0:
-                                        self.preview_text.append(f"... ({remaining} more)")
-                                    break
-                        else:
-                            self.preview_text.append(
-                                data[:8000].decode("utf-8", errors="replace")
-                            )
-                    except Exception:
-                        self.preview_text.append(repr(data[:200]))
-
-            elif f["type"] == "TIM Texture":
-                self._viewer_mode = "tim"
-                self.tim_list.clear()
-                self._pack_tims = []
-                self._model_verts = []
-                self._ctex_data = None
-                self.show_in_viewer(data, f["label"] + f["ext"])
-                self._switch_canvas(CANVAS_VIEWER)
-
-            elif f["type"] == "GT HTML" or is_gthtml(data):
-                try:
-                    parsed = parse_gthtml(data)
-                    self.preview_text.append(format_gthtml_preview(parsed))
-                except Exception as e:
-                    self.preview_text.append(f"GTHTML parse error: {e}")
-                    self._hex_dump(data[:256])
-
-            elif f["type"] == "GT-ENV System Config":
-                try:
-                    parsed = parse_gtenv(data)
-                    self.preview_text.append(format_gtenv_preview(parsed, len(data)))
-                except Exception as e:
-                    self.preview_text.append(f"GTENV parse error: {e}")
-                    self._hex_dump(data[:256])
-
-            elif f["type"] == "Nested GT-ARC" or f.get("ext") == ".arc":
-                try:
-                    import struct
-                    if not data.startswith(b"@(#)GT-ARC"):
-                        raise ValueError("Not a GT-ARC")
-                    ct, nfiles = struct.unpack_from("<HH", data, 0x0C)
-                    self.preview_text.append("Nested GT-ARC")
-                    self.preview_text.append(
-                        f"Content type : 0x{ct:04X}  "
-                        f"({'compressed' if ct == 0x8001 else 'uncompressed'})"
-                    )
-                    self.preview_text.append(f"Files        : {nfiles}")
-                    self.preview_text.append("")
-                    self.preview_text.append(
-                        "Double-click the entry or use 'Open Nested ARC' to browse it."
-                    )
-                except Exception as e:
-                    self.preview_text.append(f"Nested ARC preview error: {e}")
-                    self._hex_dump(data[:256])
-
-            elif f["type"] == "GT-CTEX Texture":
-                try:
-                    hdr = parse_ctex_header(data)
-                    self.preview_text.append(
-                        f"GT-CTEX  name={hdr['name']!r}  "
-                        f"palettes={hdr['palette_count']}  "
-                        f"{hdr['width']}x{hdr['height']} 4bpp\n"
-                    )
-                except Exception as e:
-                    self.preview_text.append(f"CTEX header: {e}")
-                self.show_ctex_in_viewer(data, f["label"] + f["ext"])
-                self._switch_canvas(CANVAS_VIEWER)
-
-            elif f["type"] == "GT Menu Image (SLT)":
-                try:
-                    _, info = decode_slt_page(data)
-                    self.preview_text.append(
-                        f"SLT menu image  •  {info['width']}x{info['height']}  •  8-bit grayscale\n"
-                    )
-                except Exception as e:
-                    self.preview_text.append(f"SLT decode error: {e}")
-                self.show_slt_in_viewer(data, f["label"] + f["ext"])
-                self._switch_canvas(CANVAS_VIEWER)
-
-            elif f["type"] == "SLT Index (32B)":
-                try:
-                    idx = parse_slt_index(data)
-                    self.preview_text.append("SLT index block (32 bytes, 16 x u16 LE)\n")
-                    self.preview_text.append(str(idx["values"]))
-                    self.preview_text.append(
-                        "\n\nField meanings unconfirmed - likely references/sizes for "
-                        "the sibling page files (e.g. tvr-muffler1/2/3.slt)."
-                    )
-                except Exception as e:
-                    self.preview_text.append(f"SLT index parse error: {e}")
-                self._hex_dump(data)
-
-            elif is_spec_type(f["type"]):
-                try:
-                    parsed = parse_spec_table(data)
-                    self.preview_text.append(format_spec_preview(parsed))
-                except Exception as e:
-                    self.preview_text.append(f"Spec parse error: {e}")
-                    self._hex_dump(data[:256])
-
-            elif f["type"] == "GT-PS Model":
-                self.preview_text.append("GT-PS course / track model\n")
-                try:
-                    hdr = parse_gtps_header(data)
-                    self.preview_text.append(f"Size        : {hdr['size']:,} bytes")
-                    self.preview_text.append(f"Field 0x1C  : {hdr['field_1c']}")
-                except Exception as e:
-                    self.preview_text.append(f"Header: {e}")
-                self.show_model_in_viewer(data, f["label"] + f["ext"])
-                self._switch_canvas(CANVAS_VIEWER)
-
-            elif f["type"] in ("Sound Instrument", "Engine Sound"):
-                _, samples = parse_sample_bank(data)
-                self.preview_text.append(f"{f['type']} – {len(samples)} ADPCM samples\n")
-                for i, (s, e) in enumerate(samples):
-                    frames = (e - s) // 16
-                    dur = frames * 28 / 22050
-                    self.preview_text.append(
-                        f"{i:4d}  0x{s:08x}  {e-s:8d}  {dur:9.3f}s"
-                    )
-
-            else:
-                self.preview_text.append("=== Hex dump (first 256 bytes) ===")
-                self._hex_dump(data[:256])
-
-        except Exception as e:
-            self.preview_text.clear()
-            self.preview_text.append(f"Preview error: {e}")
+        preview.show_preview(self, idx)
 
     def _hex_dump(self, chunk: bytes):
-        for i in range(0, len(chunk), 16):
-            line = chunk[i:i + 16]
-            hx = " ".join(f"{b:02x}" for b in line)
-            asc = "".join(chr(b) if 32 <= b < 127 else "." for b in line)
-            self.preview_text.append(f"{i:04x}  {hx:<48}  {asc}")
+        preview.hex_dump(self, chunk)
 
 
 def run():
