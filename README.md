@@ -2,8 +2,6 @@
   <img src="img/gtexplorericon.png" width="300" alt="icon">
 </div>
 
-# GTExplorer
-
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![PyQt](https://img.shields.io/badge/UI-PyQt6-41CD52.svg)](https://www.riverbankcomputing.com/software/pyqt/)
@@ -12,7 +10,7 @@
 [![Last commit](https://img.shields.io/github/last-commit/JeevesGB/GTExplorer)](https://github.com/JeevesGB/GTExplorer/commits/main)
 [![GitHub release](https://img.shields.io/github/v/release/JeevesGB/GTExplorer)](https://github.com/JeevesGB/GTExplorer/releases)
 
-Extractor, viewer, and repacker for **Gran Turismo 1** (PlayStation) archive files — with optional full disc dump/rebuild via [mkpsxiso](https://github.com/Lameguy64/mkpsxiso).
+GTExplorer is an extractor, viewer, and repacker for **Gran Turismo 1** (PlayStation) archive files — with optional full disc dump/rebuild via [mkpsxiso](https://github.com/Lameguy64/mkpsxiso).
 
 ![1](img/1.png)
 ![2](img/2.png)
