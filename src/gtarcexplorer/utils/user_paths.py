@@ -29,11 +29,9 @@ FOLDER_FIELDS = [f for f, _, _ in FOLDER_SPECS]
 def app_root() -> Path:
     """Folder the GTExplorer executable / repo lives in."""
     if getattr(sys, "frozen", False):
-        meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            return Path(meipass)
+        # Always next to the .exe (portable), never _MEIPASS temp
         return Path(sys.executable).resolve().parent
-    # utils/user_paths.py -> utils -> gtarcexplorer -> src -> root
+    # Dev: utils/user_paths.py → utils → gtarcexplorer → src → repo root
     return Path(__file__).resolve().parent.parent.parent.parent
 
 
