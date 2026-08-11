@@ -10,7 +10,7 @@ from ..utils.tim_image import decode_tim
 from ..utils.tim_pack import parse_tim_pack
 from ..utils.ctex import decode_ctex
 from ..utils.slt import decode_slt_page
-from ..utils.gtps import extract_vertices, bounds, GTPSModel, render_qimage, project_orthographic
+from ..utils.gtps import extract_vertices, bounds, GTPSModel,render_qimage, render_qimage_faces, project_orthographic
 
 
 try:
@@ -211,7 +211,7 @@ def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
 
     model.camera.yaw_deg = win._model_yaw
     model.camera.pitch_deg = win._model_pitch
-    qimg = render_qimage(model, w, h)
+    qimg = render_qimage_faces(model, w, h, wireframe=True, max_faces=30000)
     win.viewer_label.setPixmap(QPixmap.fromImage(qimg))
     win.viewer_label.adjustSize()
 

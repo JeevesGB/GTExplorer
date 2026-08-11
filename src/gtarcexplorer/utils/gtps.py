@@ -1,19 +1,3 @@
-"""
-gtps.py — Standalone Gran Turismo 1 GT-PS geometry library
-
-Parses GT-PS track/scenery files, extracts object-space vertices,
-and provides a simple camera + projection for model viewing.
-
-Does NOT emulate the PS1 GTE. Projection is a modern look-at /
-perspective matrix suitable for OpenGL, matplotlib, or any renderer.
-
-Usage:
-    from gtps import GTPSModel
-    model = GTPSModel.from_file("highway.ps")
-    verts = model.vertices          # list of (x, y, z) float
-    screen = model.project(width=800, height=600)
-"""
-
 from __future__ import annotations
 
 import math
@@ -26,9 +10,7 @@ Vec3 = Tuple[float, float, float]
 Vec2 = Tuple[float, float]
 
 
-# ---------------------------------------------------------------------------
-# Math helpers (no external deps)
-# ---------------------------------------------------------------------------
+# Math helpers
 
 def _sub(a: Vec3, b: Vec3) -> Vec3:
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
@@ -65,13 +47,9 @@ def _normalize(v: Vec3) -> Vec3:
     return (v[0] / L, v[1] / L, v[2] / L)
 
 
-# ---------------------------------------------------------------------------
-# Camera
-# ---------------------------------------------------------------------------
 
 @dataclass
 class Camera:
-    """Simple orbit-style camera."""
 
     target: Vec3 = (0.0, 0.0, 0.0)
     distance: float = 5000.0
@@ -95,10 +73,7 @@ class Camera:
         return _add(self.target, offset)
 
     def look_at_matrix(self) -> Tuple[Vec3, Vec3, Vec3, Vec3]:
-        """
-        Returns (eye, forward, right, up) orthonormal basis.
-        forward points from eye toward target.
-        """
+
         eye = self.eye()
         forward = _normalize(_sub(self.target, eye))
         world_up = (0.0, 1.0, 0.0)
@@ -110,9 +85,6 @@ class Camera:
         return eye, forward, right, up
 
 
-# ---------------------------------------------------------------------------
-# GT-PS structures
-# ---------------------------------------------------------------------------
 
 @dataclass
 class GTPSHeader:
@@ -135,7 +107,6 @@ class GTPSHeader:
 
 @dataclass
 class VertexRun:
-    """A contiguous run of object-space int16 vertices."""
     offset: int
     count: int
     vertices: List[Vec3]
@@ -146,7 +117,6 @@ class VertexRun:
 
 @dataclass
 class CommandRecord:
-    """A GPU-style colour + command word (template, not a full packet)."""
     offset: int
     command: int          # high byte, e.g. 0x2C
     colour_bgr: int       # 24-bit BGR
@@ -155,16 +125,7 @@ class CommandRecord:
 
 @dataclass
 class AttrRecord:
-    """
-    One tight 12-byte 0x2C attribute record (material / UV stream).
 
-    Layout:
-        [0:4]  colour(24) | cmd=0x2C
-        [4:6]  f0  packed UV0  (U=lo8, V=hi8)
-        [6:8]  f1  CLUT/TPAGE-like selector
-        [8:10] f2  packed UV1  (U=lo8, V=hi8)
-        [10:12] f3 flags / mode
-    """
     offset: int
     colour_bgr: int
     u0: int
@@ -181,7 +142,6 @@ class AttrRecord:
 
 @dataclass
 class StripFace:
-    """One triangle produced from a vertex-run strip, optionally paired with attrs."""
     run_offset: int
     vert_index: int                 # start index into the run (strip position)
     a: Vec3
@@ -202,11 +162,6 @@ class StripFace:
             (self.a[1] + self.b[1] + self.c[1]) / 3.0,
             (self.a[2] + self.b[2] + self.c[2]) / 3.0,
         )
-
-
-# ---------------------------------------------------------------------------
-# Parser
-# ---------------------------------------------------------------------------
 
 def parse_header(data: bytes) -> GTPSHeader:
     if len(data) < 0x30 or not data.startswith(b"@(#)GT-PS"):
@@ -237,10 +192,7 @@ def extract_vertex_runs(
     max_coord: int = 25000,
     start: int = 0x40,
 ) -> List[VertexRun]:
-    """
-    Scan for contiguous runs of plausible int16 XYZ triples.
-    Returns runs sorted by spread (largest first).
-    """
+
     runs: List[VertexRun] = []
     i = start
     end = len(data) - 6
@@ -285,7 +237,6 @@ def extract_command_records(
     start: int = 0x40,
     end: Optional[int] = None,
 ) -> List[CommandRecord]:
-    """Collect aligned GPU-style command+colour words."""
     if end is None:
         end = len(data)
     cmds = set(commands)
@@ -294,7 +245,6 @@ def extract_command_records(
         w = struct.unpack_from("<I", data, off)[0]
         cmd = (w >> 24) & 0xFF
         if cmd in cmds:
-            # payload: try 8 bytes (dominant 12-byte record size) if present
             payload = data[off + 4 : off + 12] if off + 12 <= len(data) else data[off + 4 : off + 4]
             out.append(CommandRecord(
                 offset=off,
@@ -316,13 +266,7 @@ def extract_attr_stream(
     data: bytes,
     start: int = 0x40,
 ) -> List[AttrRecord]:
-    """
-    Extract the tight 12-byte 0x2C attribute stream in file order.
 
-    Only records that form a 12-byte stride chain (next record also 0x2C)
-    are included — these are the material/UV packets used for sequential
-    pairing with strip faces.
-    """
     out: List[AttrRecord] = []
     off = start
     end = len(data)
@@ -359,12 +303,7 @@ def strips_from_run(
     verts: Sequence[Vec3],
     area_eps: float = 1.0,
 ) -> List[List[int]]:
-    """
-    Split a vertex run into triangle-strip segments.
 
-    Breaks occur at consecutive duplicate vertices or zero-area triples
-    (common PS1 strip-restart markers). Returns lists of indices into `verts`.
-    """
     n = len(verts)
     if n < 3:
         return []
@@ -389,7 +328,6 @@ def strips_from_run(
 
 
 def tris_from_strip(indices: Sequence[int]) -> List[Tuple[int, int, int]]:
-    """Expand a strip index list into triangles (alternating winding)."""
     tris: List[Tuple[int, int, int]] = []
     for i in range(len(indices) - 2):
         a, b, c = indices[i], indices[i + 1], indices[i + 2]
@@ -404,11 +342,7 @@ def faces_from_run(
     run: VertexRun,
     area_eps: float = 1.0,
 ) -> List[StripFace]:
-    """
-    Build non-degenerate strip faces for one vertex run.
 
-    Uses strip-restart detection; faces are in strip order.
-    """
     verts = run.vertices
     faces: List[StripFace] = []
     for seg in strips_from_run(verts, area_eps=area_eps):
@@ -423,11 +357,6 @@ def faces_from_run(
             ))
     return faces
 
-
-# ---------------------------------------------------------------------------
-# Model
-# ---------------------------------------------------------------------------
-
 @dataclass
 class GTPSModel:
     path: Optional[str]
@@ -438,10 +367,6 @@ class GTPSModel:
     attrs: List[AttrRecord] = field(default_factory=list)
     camera: Camera = field(default_factory=Camera)
     _faces_cache: Optional[List[StripFace]] = field(default=None, repr=False)
-
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
 
     @classmethod
     def from_file(cls, path: str | Path, **extract_kw) -> "GTPSModel":
@@ -467,13 +392,8 @@ class GTPSModel:
         model._auto_frame_camera()
         return model
 
-    # ------------------------------------------------------------------
-    # Aggregated geometry
-    # ------------------------------------------------------------------
-
     @property
     def vertices(self) -> List[Vec3]:
-        """All vertices from all runs, concatenated."""
         out: List[Vec3] = []
         for r in self.runs:
             out.extend(r.vertices)
@@ -507,13 +427,6 @@ class GTPSModel:
         high_pct: float = 95.0,
         vertices: Optional[Sequence[Vec3]] = None,
     ) -> Tuple[Vec3, Vec3]:
-        """
-        Bounds from coordinate percentiles (ignores outlier false positives).
-
-        Heuristic XYZ extraction often spans nearly all of int16 space because
-        command/UV bytes get misread as vertices. Percentile framing shows the
-        actual track instead of a star-field of noise.
-        """
         verts = list(vertices) if vertices is not None else self.vertices
         if not verts:
             return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
@@ -537,10 +450,6 @@ class GTPSModel:
         max_abs: float = 18000.0,
         drop_near_zero: float = 80.0,
     ) -> List[Vec3]:
-        """
-        Preview-friendly vertex subset: top runs by spread, dropping near-zero
-        noise and extreme outliers that produce the dense white star-field.
-        """
         chosen: List[Vec3] = []
         used = 0
         for run in self.runs:
@@ -557,7 +466,6 @@ class GTPSModel:
         return chosen
 
     def _auto_frame_camera(self) -> None:
-        """Frame using percentile bounds so outlier noise does not pull the camera."""
         lo, hi = self.percentile_bounds(5.0, 95.0)
         c = (
             (lo[0] + hi[0]) * 0.5,
@@ -580,10 +488,6 @@ class GTPSModel:
         self.camera.yaw_deg = 35.0
         self.camera.pitch_deg = 30.0
 
-    # ------------------------------------------------------------------
-    # Projection (our own — not GTE RTPT)
-    # ------------------------------------------------------------------
-
     def project(
         self,
         width: int = 800,
@@ -591,13 +495,7 @@ class GTPSModel:
         vertices: Optional[Sequence[Vec3]] = None,
         camera: Optional[Camera] = None,
     ) -> List[Optional[Vec2]]:
-        """
-        Project object-space vertices to 2D pixel coordinates.
 
-        Returns a list the same length as `vertices`; entries are
-        (px, py) or None if the point is behind the near plane.
-        Origin is top-left, Y grows downward (image convention).
-        """
         cam = camera or self.camera
         verts = list(vertices) if vertices is not None else self.vertices
         if not verts:
@@ -638,7 +536,6 @@ class GTPSModel:
         max_runs: int = 20,
         camera: Optional[Camera] = None,
     ) -> List[Tuple[VertexRun, List[Optional[Vec2]]]]:
-        """Project the top-N vertex runs separately (useful for coloured display)."""
         cam = camera or self.camera
         out = []
         for run in self.runs[:max_runs]:
@@ -646,17 +543,7 @@ class GTPSModel:
             out.append((run, pts))
         return out
 
-    # ------------------------------------------------------------------
-    # Strip faces + sequential 0x2C attribute pairing
-    # ------------------------------------------------------------------
-
     def build_faces(self, area_eps: float = 1.0, use_cache: bool = True) -> List[StripFace]:
-        """
-        Build strip faces for all vertex runs (file-offset order).
-
-        Faces are non-degenerate triangles from strip segments. Attribute
-        pairing is applied automatically via pair_attributes().
-        """
         if use_cache and self._faces_cache is not None:
             return self._faces_cache
 
@@ -674,18 +561,6 @@ class GTPSModel:
         faces: Optional[List[StripFace]] = None,
         margin: int = 256,
     ) -> List[StripFace]:
-        """
-        Assign AttrRecords to faces using sequential order.
-
-        Strategy (verified ~9× better than random on highway.ps):
-          1. Faces ordered by (run_offset, strip position).
-          2. For each run group, start the attr cursor at the first
-             stream record at-or-after (run_offset - margin).
-          3. Assign attrs sequentially within the group.
-
-        Global fallback: if a run has no nearby stream, continue from
-        the previous cursor so the overall 1:1 global ratio is preserved.
-        """
         if faces is None:
             faces = self.build_faces(use_cache=False)
         if not faces or not self.attrs:
@@ -734,16 +609,11 @@ class GTPSModel:
 
     @property
     def faces(self) -> List[StripFace]:
-        """Cached strip faces with attributes paired."""
         return self.build_faces()
 
     @property
     def face_count(self) -> int:
         return len(self.faces)
-
-    # ------------------------------------------------------------------
-    # Colour helpers
-    # ------------------------------------------------------------------
 
     def nearest_command_colour(self, offset: int, window: int = 64) -> Optional[Tuple[int, int, int]]:
         """RGB colour of the command record nearest to a file offset."""
@@ -757,10 +627,6 @@ class GTPSModel:
         if best is None:
             return None
         return colour_bgr_to_rgb(best.colour_bgr)
-
-    # ------------------------------------------------------------------
-    # Summary
-    # ------------------------------------------------------------------
 
     def summary(self) -> str:
         lo, hi = self.bounds()
@@ -784,11 +650,6 @@ class GTPSModel:
         ]
         return "\n".join(lines)
 
-
-# ---------------------------------------------------------------------------
-# Minimal ASCII / PPM preview (no third-party deps)
-# ---------------------------------------------------------------------------
-
 def render_ppm(
     model: GTPSModel,
     path: str,
@@ -796,10 +657,7 @@ def render_ppm(
     height: int = 480,
     point_radius: int = 0,
 ) -> None:
-    """
-    Write a binary PPM preview of the projected point cloud.
-    White points on black background.
-    """
+
     pts = model.project(width, height)
     # RGB buffer
     buf = bytearray(width * height * 3)
@@ -824,11 +682,6 @@ def render_ppm(
         f.write(f"P6\n{width} {height}\n255\n".encode("ascii"))
         f.write(buf)
 
-
-# ---------------------------------------------------------------------------
-# CLI demo
-# ---------------------------------------------------------------------------
-
 def _demo() -> None:
     import sys
     paths = sys.argv[1:] or [
@@ -844,7 +697,6 @@ def _demo() -> None:
         print(model.summary())
         print()
 
-        # quick projection stats
         pts = model.project(800, 600)
         visible = sum(1 for p in pts if p is not None)
         print(f"  projected {visible}/{len(pts)} vertices into 800x600 view")
@@ -881,20 +733,16 @@ GTE_ONE = 4096  # 1.0 in 1.3.12
 
 
 def gte_i16_to_float(v: int) -> float:
-    """Convert a 1.3.12 GTE matrix element to float."""
     return v / float(GTE_ONE)
 
 
 def gte_float_to_i16(v: float) -> int:
-    """Convert float to saturated 1.3.12 int16."""
     x = int(round(v * GTE_ONE))
     return max(-32768, min(32767, x))
 
 
 @dataclass
 class GTEMatrix3:
-    """3×3 rotation matrix in GTE 1.3.12 storage order."""
-    # Row-major float copy for easy math; also keep raw int16s.
     m: Tuple[Tuple[float, float, float], Tuple[float, float, float], Tuple[float, float, float]]
 
     @classmethod
@@ -934,11 +782,6 @@ class GTEMatrix3:
 
 @dataclass
 class GTETransform:
-    """
-    Software model of the GTE rotation + translation + perspective path.
-    Useful for comparing against original game behaviour; the GTPSModel
-    viewer does NOT depend on this.
-    """
     rotation: GTEMatrix3 = field(default_factory=GTEMatrix3.identity)
     trx: float = 0.0
     try_: float = 0.0
@@ -949,11 +792,6 @@ class GTETransform:
     sf: int = 1               # shift fraction flag
 
     def rtps(self, v: Vec3) -> Tuple[float, float, float]:
-        """
-        Rotate-translate-perspective for one vertex.
-        Returns (screen_x, screen_y, screen_z).
-        Screen XY are in roughly -1024..1023 style units before any display scale.
-        """
         # 1) R · V + TR   (with the GTE's *0x1000 on TR when sf=1)
         r = self.rotation.mul_vec(v)
         # Hardware: MAC = TR*1000h + RT*V ; IR = MAC >> (sf*12)
@@ -974,11 +812,6 @@ class GTETransform:
 
     def rtpt(self, verts: Sequence[Vec3]) -> List[Tuple[float, float, float]]:
         return [self.rtps(v) for v in verts]
-
-
-# ===========================================================================
-# OpenGL helpers (optional — requires PyOpenGL)
-# ===========================================================================
 
 _OPENGL_VERT = """
 #version 330 core
@@ -1005,10 +838,7 @@ def build_mvp_matrix(
     width: int,
     height: int,
 ) -> List[float]:
-    """
-    Build a column-major 4×4 MVP matrix (OpenGL convention) from our Camera.
-    Returns 16 floats suitable for glUniformMatrix4fv(..., False, ...).
-    """
+
     eye, forward, right, up = camera.look_at_matrix()
     # View matrix (world → view). Rows are right, up, -forward.
     # Column-major storage.
@@ -1056,18 +886,6 @@ def build_mvp_matrix(
 
 
 class GLPointCloudRenderer:
-    """
-    Minimal OpenGL point-cloud renderer for GTPSModel.
-
-    Requires: PyOpenGL, an active OpenGL 3.3+ context (e.g. from QOpenGLWidget).
-
-    Typical use inside QOpenGLWidget:
-        self.renderer = GLPointCloudRenderer()
-        self.renderer.upload(model.vertices)
-        ...
-        self.renderer.draw(model.camera, w, h)
-    """
-
     def __init__(self) -> None:
         self._vao = None
         self._vbo = None
@@ -1085,7 +903,6 @@ class GLPointCloudRenderer:
             ) from e
 
     def init_gl(self) -> None:
-        """Call once with a current GL context."""
         self._require_gl()
         from OpenGL import GL
         from OpenGL.GL import shaders
@@ -1099,7 +916,6 @@ class GLPointCloudRenderer:
         self._ready = True
 
     def upload(self, vertices: Sequence[Vec3]) -> None:
-        """Upload vertex positions (call with current GL context)."""
         self._require_gl()
         from OpenGL import GL
         import array
@@ -1128,7 +944,6 @@ class GLPointCloudRenderer:
         height: int,
         color: Tuple[float, float, float] = (0.9, 0.9, 0.95),
     ) -> None:
-        """Draw the uploaded point cloud."""
         if not self._ready or self._count == 0:
             return
         self._require_gl()
@@ -1163,11 +978,6 @@ class GLPointCloudRenderer:
             pass
         self._ready = False
 
-
-# ===========================================================================
-# PyQt / QImage helper (optional — requires PyQt5 or PyQt6)
-# ===========================================================================
-
 def render_qimage(
     model: "GTPSModel",
     width: int = 640,
@@ -1178,17 +988,6 @@ def render_qimage(
     camera: Optional[Camera] = None,
     filtered: bool = True,
 ):
-    """
-    Render the model point cloud into a QImage (Format_RGB888).
-
-    Works with PyQt5 or PyQt6. Returns a QImage instance.
-
-        img = render_qimage(model, 800, 600)
-        label.setPixmap(QPixmap.fromImage(img))
-
-    When filtered=True (default), uses display_vertices() to drop near-zero
-    noise and extreme outliers that otherwise form a dense white star-field.
-    """
     try:
         from PyQt6.QtGui import QImage
     except ImportError:
@@ -1244,10 +1043,6 @@ def render_qimage_from_runs(
     bg: Tuple[int, int, int] = (12, 12, 18),
     camera: Optional[Camera] = None,
 ):
-    """
-    Colour each vertex run differently for visual segmentation.
-    Returns QImage.
-    """
     try:
         from PyQt6.QtGui import QImage
     except ImportError:
@@ -1292,13 +1087,6 @@ def render_qimage_faces(
     wireframe: bool = True,
     max_faces: int = 50000,
 ):
-    """
-    Render strip faces coloured by sequential 0x2C attribute pairing.
-
-    Uses face.attr.colour_rgb when available. Wireframe draws triangle
-    edges; filled mode does a simple barycentric scan (slow, good for
-    small previews).
-    """
     try:
         from PyQt6.QtGui import QImage
     except ImportError:
@@ -1377,11 +1165,6 @@ def render_qimage_faces(
     img = QImage(bytes(buf), width, height, width * 3, QImage.Format.Format_RGB888)
     return img.copy()
 
-
-# ===========================================================================
-# Backward-compatible API (original GTExplorer gtps.py surface)
-# ===========================================================================
-
 def parse_gtps_header(data: bytes) -> dict:
     """Original API: return header fields as a plain dict."""
     h = parse_header(data)
@@ -1397,9 +1180,6 @@ def parse_gtps_header(data: bytes) -> dict:
 
 
 def extract_vertices(data: bytes, max_verts: int = 80000) -> List[Vec3]:
-    """
-    Original API: return a deduplicated list of vertices (largest runs first).
-    """
     runs = extract_vertex_runs(data, min_verts=40, min_spread=200.0)
     verts: List[Vec3] = []
     seen = set()
@@ -1416,7 +1196,6 @@ def extract_vertices(data: bytes, max_verts: int = 80000) -> List[Vec3]:
 
 
 def bounds(verts: List[Vec3]):
-    """Original API: (minx, maxx, miny, maxy, minz, maxz)."""
     if not verts:
         return (0, 0, 0, 0, 0, 0)
     xs = [v[0] for v in verts]
@@ -1426,7 +1205,6 @@ def bounds(verts: List[Vec3]):
 
 
 def gtps_stats(data: bytes) -> dict:
-    """Original API: header + vertex count + bounds/extent dict."""
     hdr = parse_gtps_header(data)
     verts = extract_vertices(data)
     b = bounds(verts)
@@ -1447,7 +1225,6 @@ def gtps_stats(data: bytes) -> dict:
 
 
 def format_gtps_preview(data: bytes) -> str:
-    """Original API: multi-line text summary for the asset viewer."""
     try:
         s = gtps_stats(data)
     except Exception as e:
@@ -1478,7 +1255,6 @@ def project_orthographic(
     pitch_deg: float = 30.0,
     margin: float = 0.08,
 ) -> List[Tuple[float, float]]:
-    """Original API: simple orthographic orbit projection."""
     if not verts:
         return []
     yaw = math.radians(yaw_deg)
