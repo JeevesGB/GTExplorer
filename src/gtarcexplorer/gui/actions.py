@@ -9,9 +9,15 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QApplication, QMessageBox, QFileDialog, QInputDialog,
-    QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QDialogButtonBox, QLabel, QAbstractItemView, QTreeWidgetItem,
+    QApplication, QMessageBox, 
+    QFileDialog, QInputDialog,
+    QDialog, QVBoxLayout, 
+    QTableWidget, QTableWidgetItem,
+    QDialogButtonBox, QLabel, 
+    QAbstractItemView, QTreeWidgetItem,
+    QCheckBox, QGroupBox,
+    QPushButton, QHBoxLayout,
+    QFormLayout, QLineEdit,   
 )
 
 from ..utils.archive import GTArc
@@ -857,40 +863,46 @@ def effective_tools_dir(win) -> Path:
 
 
 def _ask_setup_mode(win) -> str | None:
-    """First step of first-time setup: 'auto', 'manual', or None (cancelled)."""
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
-
     dlg = QDialog(win)
     dlg.setWindowTitle("Welcome to GTExplorer")
-    dlg.setMinimumWidth(440)
+    dlg.setMinimumWidth(480)
     lay = QVBoxLayout(dlg)
-    lay.setSpacing(12)
-    lay.setContentsMargins(16, 16, 16, 16)
+    lay.setSpacing(14)
+    lay.setContentsMargins(20, 20, 20, 16)
 
-    title = QLabel("First time setup")
-    title.setStyleSheet("font-size: 15px; font-weight: 600;")
+    title = QLabel("First-time Setup")
+    title.setStyleSheet("font-size: 16px; font-weight: 600;")
     lay.addWidget(title)
 
     msg = QLabel(
-        "GTExplorer uses five working folders:<br>"
-        "<b>Disk</b>, <b>ORIGINAL FILES</b>, <b>EXTRACTED</b>, "
-        "<b>Modified Disks</b>, and <b>tools</b>.<br><br>"
-        "Would you like GTExplorer to create these automatically, "
-        "or would you rather choose your own paths?"
+        "GTExplorer needs five working folders next to the app (or anywhere you choose):"
+        "<ul style='margin-top:6px;margin-bottom:6px;'>"
+        "<li><b>Disk</b> — original disc images (.bin / .cue)</li>"
+        "<li><b>ORIGINAL FILES</b> — dumped game archives (.DAT / .ARC)</li>"
+        "<li><b>EXTRACTED</b> — archive extracts for editing</li>"
+        "<li><b>Modified Disks</b> — rebuilt disc images</li>"
+        "<li><b>tools</b> — optional mkpsxiso / dumpsxiso</li>"
+        "</ul>"
+        "Create them automatically under the app folder, or pick your own paths."
     )
     msg.setWordWrap(True)
     lay.addWidget(msg)
 
-    choice = {"value": None}
+    choice = {"value" : None}
 
     def pick(v):
         choice["value"] = v
         dlg.accept()
 
     row = QHBoxLayout()
+    row.setSpacing(8)
     btn_auto = QPushButton("Create Automatically")
-    btn_manual = QPushButton("Choose Manually")
-    btn_cancel = QPushButton("Cancel")
+    btn_auto.setDefault(True)
+    btn_auto.setMinimumHeight(32)
+    btn_manual = QPushButton("Create Manually")
+    btn_manual.setMinimumHeight(32)
+    btn_cancel = QPushButton("Skip for now")
+    btn_cancel.setProperty("class","secondary")
     btn_auto.clicked.connect(lambda: pick("auto"))
     btn_manual.clicked.connect(lambda: pick("manual"))
     btn_cancel.clicked.connect(dlg.reject)
@@ -904,6 +916,7 @@ def _ask_setup_mode(win) -> str | None:
     return choice["value"]
 
 
+
 def _apply_and_refresh(win, new_paths: UserPaths) -> None:
     win._user_paths = new_paths
     if new_paths.extracted_dir:
@@ -913,31 +926,44 @@ def _apply_and_refresh(win, new_paths: UserPaths) -> None:
 
 
 def _show_folder_guide(win, new_paths: UserPaths, created: list[str]) -> None:
-    from PyQt6.QtWidgets import QMessageBox
-
-    lines = ["Your GTExplorer working folders:", ""]
+    lines = ["Workspace folders are ready:", ""]
     for field_name, folder_name, desc in up_mod.FOLDER_SPECS:
         path = getattr(new_paths, field_name, "")
-        lines.append(f"{folder_name}\n  {path}\n  {desc}\n")
+        lines.append(f"{folder_name}\n{path}")
     if created:
-        lines.append(f"Created {len(created)} new folder(s).")
-    QMessageBox.information(win, "Workspace folders", "\n".join(lines))
+        lines.append("")
+        lines.append(f"Created {len(created)} folder(s).")
+        QMessageBox.information(win, "Workspace ready", "\n".join(lines))
+
+def clear_workspace_paths(win) -> None: 
+    reply = QMessageBox.question(
+        win,
+        "Clear saved paths?",
+        "This clears all folder and tool paths saved in user_paths.json. \n\n"
+        "The file itself is kept. Folders on disk are not deleted.\n"
+        "You can run Setup again afterwards.",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    )     
+    if reply != QMessageBox.StandardButton.Yes:
+        return
+
+    win._user_paths = up_mod.clear_user_paths()
+    win.extract_dir = None 
+    win._workspace_pack_out = None 
+    if hasattr(win, "input_list"):
+        win.input_list.clear() 
+
+    win.set_status("Paths cleared")
+    QMessageBox.information(
+        win,
+        "Paths cleared",
+        "Saved paths were cleared in user_paths.json.\n\n"
+        "Use File -> Setup / Workspace to set them again.",
+    )
 
 
 def set_workspace(win, first_run: bool = False) -> None:
-    """First-time / setup wizard.
-
-    Lets the user choose to auto-create the five GTExplorer working folders
-    (Disk, ORIGINAL FILES, EXTRACTED, Modified Disks, tools) or pick their
-    own paths manually, plus optional dumpsxiso/mkpsxiso settings. Saves the
-    result to user_paths.json next to the app.
-    """
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import (
-        QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
-        QPushButton, QHBoxLayout, QFileDialog, QMessageBox, QLabel,
-        QVBoxLayout, QCheckBox, QGroupBox,
-    )
 
     existing = up_mod.load_user_paths() or UserPaths()
 

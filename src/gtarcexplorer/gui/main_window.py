@@ -241,6 +241,8 @@ class GTArcExplorer(QMainWindow):
 
         self.act_workspace = QAction("Setup / Workspace…", self)
         self.act_workspace.setToolTip("Working folders and optional mkpsxiso paths")
+        self.act_clear_paths = QAction("Clear saved paths.", self)
+        self.act_clear_paths.setToolTip("Clear user_paths.json and reset workspace paths")
         self.act_dump_disc = QAction("Dump disc (dumpsxiso)…", self)
         self.act_dump_disc.setToolTip("Extract a .bin/.cue to files + rebuild XML")
         self.act_build_disc = QAction("Build disc (mkpsxiso)…", self)
@@ -276,6 +278,7 @@ class GTArcExplorer(QMainWindow):
         m_file.addAction(self.act_folder)
         m_file.addSeparator()
         m_file.addAction(self.act_workspace)
+        m_file.addAction(self.act_clear_paths)
 
         m_extract = menubar.addMenu("&Extract")
         m_extract.addAction(self.act_extract)
@@ -621,6 +624,7 @@ class GTArcExplorer(QMainWindow):
         self.btn_nav_back.clicked.connect(self.nav_back)
         self.act_theme.triggered.connect(self.toggle_theme)
         self.act_workspace.triggered.connect(self.set_workspace)
+        self.act_clear_paths.triggered.connect(lambda: actions.clear_workspace_paths(self))
         self.act_dump_disc.triggered.connect(self.dump_disc)
         self.act_build_disc.triggered.connect(self.build_disc)
         self.act_open_tools.triggered.connect(self.open_tools_folder)
@@ -931,6 +935,7 @@ class GTArcExplorer(QMainWindow):
         layout.addWidget(tabs)
 
         def make_page(html: str) -> QWidget:
+            dlg.resize(800, 640)
             page = QWidget()
             v = QVBoxLayout(page)
             v.setContentsMargins(0, 0, 0, 0)
@@ -956,6 +961,29 @@ class GTArcExplorer(QMainWindow):
         </ol>
         <p>You can also <b>File → Open Folder</b> on an existing extract to browse and repack it
         without re-extracting.</p>
+        """
+
+        workspace = """
+        <h2>Workspace &amp; first-time setup</h2>
+        <p>On first launch, GTExplorer asks you to set up five working folders
+        (next to the app, or anywhere you choose):</p>
+        <ul>
+          <li><b>Disk</b> — original disc images (<code>.bin</code> / <code>.cue</code>)</li>
+          <li><b>ORIGINAL FILES</b> — dumped game archives; shown in the left Input list</li>
+          <li><b>EXTRACTED</b> — where extracts are written for editing</li>
+          <li><b>Modified Disks</b> — rebuilt images from mkpsxiso</li>
+          <li><b>tools</b> — optional <code>mkpsxiso.exe</code> / <code>dumpsxiso.exe</code></li>
+        </ul>
+        <p>Paths are stored in <code>user_paths.json</code> next to the app
+        (the file is kept; <b>Clear paths</b> only blanks the values inside it).</p>
+        <ul>
+          <li><b>File → Setup / Workspace…</b> — change folders, enable disc tools,
+              <b>Fill defaults</b>, or <b>Clear paths</b></li>
+          <li><b>File → Clear saved paths…</b> — clear path fields in
+              <code>user_paths.json</code> (does not delete folders on disk)</li>
+        </ul>
+        <p>After setup, click an archive in <b>ORIGINAL FILES</b> (Input list) to open it,
+        or use <b>File → Open</b>.</p>
         """
 
         extract_pack = """
@@ -1047,7 +1075,7 @@ class GTArcExplorer(QMainWindow):
         <h3>Menu map</h3>
         <ul>
           <li><b>File</b> — Open archive, Open Nested ARC, Open Folder, Recent,
-              Save Selected, Open Extract Folder, Set workspace</li>
+              Save Selected, Open Extract Folder, Set workspace, Clear saved paths</li>
           <li><b>Extract</b> — Extract All, Extract Selected, Export Strings, Repack</li>
           <li><b>Diff</b> — Compare archive to an extract folder or another .DAT</li>
           <li><b>Tools</b> — Load name list, TIM convert / re-encode / replace / batch</li>
@@ -1081,6 +1109,7 @@ class GTArcExplorer(QMainWindow):
         """
 
         tabs.addTab(make_page(overview), "Overview")
+        tabs.addTab(make_page(workspace), "Workspace")
         tabs.addTab(make_page(extract_pack), "Extract & Pack")
         tabs.addTab(make_page(viewing), "Viewing")
         tabs.addTab(make_page(tim_tools), "TIM tools")

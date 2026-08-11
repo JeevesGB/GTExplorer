@@ -27,11 +27,8 @@ FOLDER_FIELDS = [f for f, _, _ in FOLDER_SPECS]
 
 
 def app_root() -> Path:
-    """Folder the GTExplorer executable / repo lives in."""
     if getattr(sys, "frozen", False):
-        # Always next to the .exe (portable), never _MEIPASS temp
         return Path(sys.executable).resolve().parent
-    # Dev: utils/user_paths.py → utils → gtarcexplorer → src → repo root
     return Path(__file__).resolve().parent.parent.parent.parent
 
 
@@ -87,6 +84,21 @@ def save_user_paths(up: UserPaths) -> None:
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps(up.as_dict(), indent=2), encoding="utf-8")
 
+def clear_user_paths() -> UserPaths:
+    existing = load_user_paths() or UserPaths()
+    up = UserPaths(
+        disk_dir="",
+        original_files_dir="",
+        extracted_dir="",
+        modified_disks_dir="",
+        tools_dir="",
+        mkpsxiso_exe="",
+        mkpsxiso_enabled=False,
+        last_dump_image=getattr(existing, "last_dump_image", "") or "",
+        last_dump_xml=getattr(existing, "last_dump_xml", "") or "",
+    )
+    save_user_paths(up)  
+    return up
 
 def default_auto_paths(root: Optional[Path] = None) -> UserPaths:
     """Paths used when the user chooses 'Create Automatically'."""
