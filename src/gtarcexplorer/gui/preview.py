@@ -205,3 +205,5 @@ def show_preview(win, idx: int) -> None:
     except Exception as e:
         win.preview_text.clear()
         win.preview_text.append(f"Preview error: {e}")
+    def header_info(self) -> dict:
+        return parse_gtps_header(self.raw)
