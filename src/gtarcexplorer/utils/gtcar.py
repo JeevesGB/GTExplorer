@@ -470,7 +470,7 @@ class GTCarModel:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "GTCarModel":
-        if not data.startswith(b"@(#-)GT-CAR"):
+        if not data.startswith(b"@(#)GT-CAR"):
             raise ValueError("Not a GT-CAR file (missing magic)")
 
         f = io.BytesIO(data)
@@ -554,7 +554,7 @@ class GTCarModel:
             out.write(f"mtllib {mtl_path.name}\n\n")
 
             first_v = 1
-            
+
             first_n = 1
             first_vt = 1
 

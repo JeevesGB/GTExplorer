@@ -1,3 +1,9 @@
+"""
+Fast software rasterizer for GT1 car models (LOD0) + GT-CTEX textures.
+
+Optimised with NumPy. Draws into a QImage for the Asset Viewer.
+"""
+
 from __future__ import annotations
 
 import math
@@ -11,8 +17,8 @@ except ImportError:
     try:
         from PyQt5.QtGui import QImage, QColor
     except ImportError:
-        QImage = None  #- type: ignore
-        QColor = None  #- type: ignore
+        QImage = None  # type: ignore
+        QColor = None  # type: ignore
 
 try:
     from .gtcar import (
@@ -40,12 +46,12 @@ def _project_batch(
     cos_y, sin_y = math.cos(yaw), math.sin(yaw)
     cos_p, sin_p = math.cos(pitch), math.sin(pitch)
 
-    #- Yaw around Y (negated so +mouse-x = rotate model left-to-right naturally)
+    # Yaw around Y (negated so +mouse-x = rotate model left-to-right naturally)
     rx = p[:, 0] * cos_y - p[:, 2] * sin_y
     rz = p[:, 0] * sin_y + p[:, 2] * cos_y
     ry = p[:, 1]
 
-    #- Pitch around X
+    # Pitch around X
     ry2 = ry * cos_p - rz * sin_p
     rz2 = ry * sin_p + rz * cos_p
 
@@ -79,7 +85,7 @@ def _raster_triangle(
     area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
     if abs(area) < 1e-4:
         return
-    #- Flip winding if needed so front faces pass
+    # Flip winding if needed so front faces pass
     if area < 0:
         x1, y1, z1, x2, y2, z2 = x2, y2, z2, x1, y1, z1
         if uvs is not None:
@@ -95,7 +101,7 @@ def _raster_triangle(
     a = ((x1 - XX) * (y2 - YY) - (x2 - XX) * (y1 - YY)) * inv_area
     b = ((x2 - XX) * (y0 - YY) - (x0 - XX) * (y2 - YY)) * inv_area
     c = 1.0 - a - b
-    #- Slightly inclusive edges so adjacent tris share pixels (kills hairline cracks)
+    # Slightly inclusive edges so adjacent tris share pixels (kills hairline cracks)
     eps = 1e-4
     mask = (a >= -eps) & (b >= -eps) & (c >= -eps)
     if not mask.any():
@@ -113,7 +119,7 @@ def _raster_triangle(
         th, tw = tex.shape[0], tex.shape[1]
         u = a * uvs[0, 0] + b * uvs[1, 0] + c * uvs[2, 0]
         v = a * uvs[0, 1] + b * uvs[1, 1] + c * uvs[2, 1]
-        #- UVs are texel coords into the 256x256 atlas (small islands per panel).
+        # UVs are texel coords into the 256x256 atlas (small islands per panel).
         ui = np.clip(np.rint(u).astype(np.int32) % tw, 0, tw - 1)
         vi = np.clip(np.rint(v).astype(np.int32) % th, 0, th - 1)
         samples = tex[vi, ui]
@@ -155,7 +161,7 @@ def render_car_qimage(
         [[v.x, v.y, v.z] for v in lod.vertices], dtype=np.float64
     ) * scale_factor
 
-    #- Build object-id → index map once (huge speedup vs list.index per face)
+    # Build object-id → index map once (huge speedup vs list.index per face)
     v_id_map = {id(v): i for i, v in enumerate(lod.vertices)}
 
     lo = verts.min(axis=0)
@@ -198,10 +204,10 @@ def render_car_qimage(
     def pick_tex(pidx: int):
         if not palettes:
             return None
-        #- Model PaletteIndex selects a CLUT on the shared 4bpp atlas
+        # Model PaletteIndex selects a CLUT on the shared 4bpp atlas
         if pidx in palettes:
             return palettes[pidx]
-        #- Fallback: CLUT within first set
+        # Fallback: CLUT within first set
         if (pidx % 16) in palettes:
             return palettes[pidx % 16]
         keys = list(palettes.keys())
@@ -279,10 +285,10 @@ def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict
     IMAGE_OFF = 0x60
     IMAGE_SIZE = 256 * 256 // 2
     PAL_OFF = 0x8060
-    PAL_STRIDE = 512  #- 16 CLUTs * 16 colours * 2 bytes
+    PAL_STRIDE = 512  # 16 CLUTs * 16 colours * 2 bytes
     WIDTH, HEIGHT = 256, 256
 
-    if len(ctex_data) < IMAGE_OFF + IMAGE_SIZE or not ctex_data.startswith(b"@(#-)GT-CTEX"):
+    if len(ctex_data) < IMAGE_OFF + IMAGE_SIZE or not ctex_data.startswith(b"@(#)GT-CTEX"):
         raise ValueError("Not a GT-CTEX file")
 
     _, set_count = struct.unpack_from("<HH", ctex_data, 0x0C)
@@ -297,7 +303,7 @@ def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict
     img_bytes = ctex_data[IMAGE_OFF: IMAGE_OFF + IMAGE_SIZE]
     palettes = {}
 
-    #- Prefer project decoder when available (handles edge cases)
+    # Prefer project decoder when available (handles edge cases)
     decode_ctex = None
     try:
         from gtarcexplorer.utils.ctex import decode_ctex as _dc
@@ -320,14 +326,14 @@ def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict
                     arr = np.array(im, dtype=np.uint8)
                     arr[..., 3] = 255
                     palettes[key] = arr
-                    #- Also index by clut alone for models that store 0-15
+                    # Also index by clut alone for models that store 0-15
                     if set_idx == 0:
                         palettes[clut_idx] = arr
                     continue
                 except Exception:
                     pass
 
-            #- Manual path
+            # Manual path
             pal_off = PAL_OFF + set_idx * PAL_STRIDE + clut_idx * 32
             palette = []
             for i in range(16):
