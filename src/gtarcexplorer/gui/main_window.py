@@ -29,7 +29,6 @@ try:
 except ImportError:
     HAS_PIL = False
 
-
 TYPE_COLORS = {
     "TIM Texture":       "#5dade2",
     "TIM Pack":          "#3498db",
@@ -51,7 +50,6 @@ TYPE_COLORS = {
 CANVAS_PREVIEW = 0
 CANVAS_STRUCTURE = 1
 CANVAS_VIEWER = 2
-
 
 class GTArcExplorer(QMainWindow):
     progress_signal = pyqtSignal(int, int)
@@ -75,6 +73,9 @@ class GTArcExplorer(QMainWindow):
         self.extract_dir: Path | None = None
         self._custom_filelist_path: str | None = None
         self._theme = "dark"
+
+        self._car_name_map: dict[str, str] = {}
+        self._load_car_names()
 
         self._viewer_image = None
         self._viewer_scale = 1.0
@@ -189,7 +190,6 @@ class GTArcExplorer(QMainWindow):
                 return Path(meipass)
             return Path(sys.executable).resolve().parent
         return Path(__file__).resolve().parent.parent.parent
-
 
     def _build_ui(self):
         central = QWidget()
@@ -592,7 +592,6 @@ class GTArcExplorer(QMainWindow):
         d = str(p if p.is_dir() else p.parent)
         self.settings.setValue(key, d)
 
-
     def _connect_signals(self):
         self.act_open.triggered.connect(self.open_archive)
         self.act_open_nested.triggered.connect(self.open_nested_arc)
@@ -706,29 +705,35 @@ class GTArcExplorer(QMainWindow):
             item.setHidden(text not in hay)
 
     def eventFilter(self, obj, event):
-        if obj is self.viewer_label and getattr(self, "_viewer_mode", None) in ("model","car"):
+        if obj is self.viewer_label and getattr(self, "_viewer_mode", None) in ("model", "car"):
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 self._drag_last = event.position().toPoint()
                 return True
+
             if event.type() == QEvent.Type.MouseMove and self._drag_last is not None:
                 pos = event.position().toPoint()
                 dx = pos.x() - self._drag_last.x()
                 dy = pos.y() - self._drag_last.y()
                 self._drag_last = pos
-                model_orbit(self, d_yaw=-dx * 0.4, d_pitch=-dy * 0.3)
+                # flip signs here to invert orbit
+                model_orbit(self, d_yaw=dx * 0.4, d_pitch=dy * 0.3)
                 return True
+
             if event.type() == QEvent.Type.MouseButtonRelease:
                 self._drag_last = None
                 if getattr(self, "_viewer_mode", None) == "car":
                     from .viewer import render_car_viewer
-                    render_car_viewer(self, low_quality=False)  # full quality
+                    render_car_viewer(self, low_quality=False)
                 return True
+
             if event.type() == QEvent.Type.Wheel:
                 delta = event.angleDelta().y()
-                model_zoom(self, 0.9 if delta > 0 else 1.1)
+                factor = 1.15 if delta > 0 else (1.0 / 1.15)
+                from .viewer import viewer_zoom
+                viewer_zoom(self, factor)
                 return True
-        return super().eventFilter(obj, event)
 
+        return super().eventFilter(obj, event)
 
     def _tree_context_menu(self, pos):
         items = self.tree.selectedItems()
@@ -825,6 +830,31 @@ class GTArcExplorer(QMainWindow):
 
     def _apply_filelist(self):
         names.apply_filelist(self)
+
+    def _load_car_names(self):
+        self._car_name_map = {}
+        path = self.app_root() / "data" / "car_names_pal.txt"
+        if not path.exists():
+            # fallback next to the package
+            path = Path(__file__).resolve().parent.parent / "data" / "car_names_pal.txt"
+        if not path.exists():
+            return
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            code, name = line.split("=", 1)
+            self._car_name_map[code.strip().lower()] = name.strip()
+
+    def _display_name(self, f: dict) -> str:
+        code = (f.get("real_name") or f.get("label") or "").rsplit(".", 1)[0]
+        base = code.replace("_night", "").lower()
+        pretty = self._car_name_map.get(base) or self._car_name_map.get(code.lower())
+        if pretty:
+            suffix = " (night)" if "_night" in code.lower() else ""
+            return pretty + suffix
+        return f.get("real_name") or f.get("label") or f"{f['index']:03d}"
+    
 
     def _auto_scan_names(self):
         return names.auto_scan_names(self)
@@ -1040,7 +1070,7 @@ class GTArcExplorer(QMainWindow):
         self.tree.setSortingEnabled(False)
         self.tree.clear()
         for f in self.arc.files:
-            name = f.get("real_name") or f.get("label") or f"{f['index']:03d}"
+            name = self._display_name(f)
             size = (
                 len(f["data"]) if f.get("data") is not None
                 else (f.get("decomp_size") or "?")
@@ -1098,14 +1128,12 @@ class GTArcExplorer(QMainWindow):
     def show_car_in_viewer(self, data, label="", tex_data=None):
         viewer.show_car_in_viewer(self,data,label,tex_data=tex_data)
 
-
 def run():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     window = GTArcExplorer()
     window.show()
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     run()

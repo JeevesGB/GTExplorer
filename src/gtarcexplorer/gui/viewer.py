@@ -15,7 +15,6 @@ except ImportError:
 from ..utils.gtps import GTPSModel, render_qimage_faces
 
 
-
 def _get_viewer_label(win):
     return getattr(win, "viewer_label", None)
 
@@ -55,9 +54,7 @@ def _viewer_size(win) -> tuple[int, int]:
     return 640, 480
 
 
-
 def show_in_viewer(win, data: bytes, label: str = "") -> None:
-    """Single TIM texture."""
     win._viewer_mode = "image"
     win._pack_tims = []
     if hasattr(win, "tim_list"):
@@ -66,17 +63,27 @@ def show_in_viewer(win, data: bytes, label: str = "") -> None:
     try:
         from ..utils.tim_image import tim_to_image
         im = tim_to_image(data)
-        pix = _pil_to_qpixmap(im)
-        _set_image(win, pix, f"{label}  •  {im.width}×{im.height}")
     except Exception:
         try:
             from ..utils.tim_image import decode_tim
-            im = decode_tim(data)
-            pix = _pil_to_qpixmap(im)
-            _set_image(win, pix, f"{label}  •  {im.width}×{im.height}")
-        except Exception as e2:
-            _clear_viewer(win, f"{label} – TIM error: {e2}")
+            result = decode_tim(data)
+            im = result[0] if isinstance(result, tuple) else result
+        except Exception as e:
+            _clear_viewer(win, f"{label} – TIM error: {e}")
+            return
 
+    if isinstance(im, tuple):
+        im = im[0]
+
+    try:
+        pix = _pil_to_qpixmap(im)
+        _set_image(win, pix, f"{label}  •  {im.width}×{im.height}")
+    except Exception as e:
+        _clear_viewer(win, f"{label} – TIM error: {e}")
+
+def tim_to_image(data: bytes):
+    img, _info = decode_tim(data)
+    return img
 
 def show_pack_in_viewer(win, data: bytes) -> None:
     """TIM pack – fill left list; show first texture if present."""
@@ -133,7 +140,6 @@ def export_tim_pack_pngs(win) -> None:
     pack = getattr(win, "_pack_tims", None)
     if not pack:
         return
-
 
 
 def show_ctex_in_viewer(win, data: bytes, label: str = "") -> None:
@@ -434,32 +440,37 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
     if model is None or label is None:
         return
 
-    w, h = _viewer_size(win)
-    if low_quality:
-        w, h = max(160, w // 2), max(120, h // 2)
-
+    vp_w, vp_h = _viewer_size(win)
     zoom = float(getattr(win, "_car_zoom", 1.0) or 1.0)
+
+    # Internal render resolution (higher = sharper, slower)
+    scale = 1.0 if low_quality else 2.0
+    base_w = max(320, int(vp_w * scale))
+    base_h = max(240, int(vp_h * scale))
+    # Cap so drag stays usable
+    base_w = min(base_w, 1280 if low_quality else 1920)
+    base_h = min(base_h, 960 if low_quality else 1440)
+
     try:
         from ..utils.gtcar_render import render_car_qimage
         qimg = render_car_qimage(
             model,
-            width=w,
-            height=h,
+            width=base_w,
+            height=base_h,
             yaw_deg=getattr(win, "_model_yaw", 40.0),
             pitch_deg=getattr(win, "_model_pitch", 18.0),
             tex_images=getattr(win, "_car_tex_images", None),
             lod_index=0,
         )
         pix = QPixmap.fromImage(qimg)
-        if abs(zoom - 1.0) > 0.05:
-            pix = pix.scaled(
-                max(64, int(pix.width() * zoom)),
-                max(64, int(pix.height() * zoom)),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+        target_w = max(64, int(vp_w * zoom))
+        target_h = max(64, int(vp_h * zoom))
+        pix = pix.scaled(
+            target_w, target_h,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         label.setPixmap(pix)
-        label.adjustSize()
     except Exception as e:
         if hasattr(win, "viewer_info"):
             win.viewer_info.setText(f"Car render failed: {e}")

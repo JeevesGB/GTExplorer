@@ -1,8 +1,3 @@
-"""
-Fast software rasterizer for GT1 car models (LOD0) + GT-CTEX textures.
-
-Optimised with NumPy. Draws into a QImage for the Asset Viewer.
-"""
 
 from __future__ import annotations
 
@@ -123,7 +118,10 @@ def _raster_triangle(
         ui = np.clip(np.rint(u).astype(np.int32) % tw, 0, tw - 1)
         vi = np.clip(np.rint(v).astype(np.int32) % th, 0, th - 1)
         samples = tex[vi, ui]
-        colour_buf[min_y:max_y + 1, min_x:max_x + 1][nearer] = samples[..., :3][nearer]
+        # Palette entry 0 is transparent on PS1
+        visible = nearer & (samples[..., 3] > 0)
+        if visible.any():
+            colour_buf[min_y:max_y + 1, min_x:max_x + 1][visible] = samples[..., :3][visible]
     else:
         colour_buf[min_y:max_y + 1, min_x:max_x + 1][nearer] = solid_rgb
 
@@ -238,10 +236,10 @@ def render_car_qimage(
         idxs = [v_index(poly.v0), v_index(poly.v1), v_index(poly.v2)]
         if is_quad and poly.v3 is not None:
             idxs.append(v_index(poly.v3))
-        col = (140, 140, 150)
-        if poly.face_colour:
-            fc = poly.face_colour
-            col = (fc & 0xFF, (fc >> 8) & 0xFF, (fc >> 16) & 0xFF)
+        fc = poly.face_colour or 0
+        if fc == 0:
+            return
+        col = (fc & 0xFF, (fc >> 8) & 0xFF, (fc >> 16) & 0xFF)
         tris = [(0, 1, 2)]
         if len(idxs) == 4:
             tris.append((0, 2, 3))
@@ -249,14 +247,15 @@ def render_car_qimage(
             pts = projected[[idxs[a], idxs[b], idxs[c]]]
             _raster_triangle(colour, zbuf, pts, None, None, solid_rgb=col)
 
-    for p in lod.triangles:
-        draw_solid(p, False)
-    for p in lod.quads:
-        draw_solid(p, True)
+    # Textured first so lights/decals are not covered by solid fillers
     for p in lod.uv_triangles:
         draw_uv(p, False)
     for p in lod.uv_quads:
         draw_uv(p, True)
+    for p in lod.triangles:
+        draw_solid(p, False)
+    for p in lod.quads:
+        draw_solid(p, True)
 
     bgra = np.empty((h, w, 4), dtype=np.uint8)
     bgra[..., 0] = colour[..., 2]
@@ -298,7 +297,8 @@ def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict
         r = (c & 0x1F) << 3
         g = ((c >> 5) & 0x1F) << 3
         b = ((c >> 10) & 0x1F) << 3
-        return (r, g, b, 255)
+        a = 0 if c == 0 else 255
+        return (r, g, b, a)
 
     img_bytes = ctex_data[IMAGE_OFF: IMAGE_OFF + IMAGE_SIZE]
     palettes = {}
@@ -324,7 +324,7 @@ def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict
                     if im.mode != "RGBA":
                         im = im.convert("RGBA")
                     arr = np.array(im, dtype=np.uint8)
-                    arr[..., 3] = 255
+                    arr[..., 3] = np.where(np.all(arr[..., :3] == 0, axis=-1), 0, 255).astype(np.uint8)
                     palettes[key] = arr
                     # Also index by clut alone for models that store 0-15
                     if set_idx == 0:

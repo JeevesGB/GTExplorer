@@ -274,3 +274,8 @@ def convert_file_to_tim(
     data = encode_tim(img, bpp=bpp, **kwargs)
     dst.write_bytes(data)
     return dst
+
+def tim_to_image(data: bytes):
+    img, _info = decode_tim(data)
+    return img 
+
