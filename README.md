@@ -66,7 +66,7 @@ GTExplorer does **not** ship `mkpsxiso`. To dump or build full disc images:
 
 **Windows**
 ```bat
-runtool.bat
+run.bat
 ```
 
 **From the repo root**
