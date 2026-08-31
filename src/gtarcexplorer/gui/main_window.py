@@ -42,6 +42,7 @@ TYPE_COLORS = {
     "Text / Messages":   "#1abc9c",
     "GT HTML":           "#16a085",
     "GT-PS Model":       "#f39c12",
+    "GT-CAR Model":      "#60e622",
     "Sound Instrument":  "#2ecc71",
     "Engine Sound":      "#27ae60",
     "Unknown":           "#95a5a6",
@@ -257,6 +258,8 @@ class GTArcExplorer(QMainWindow):
         self.act_replace_tim.setToolTip("Load a PNG/image and inject it into the selected TIM entry")
         self.act_batch_tim = QAction("Batch convert folder to TIM…", self)
         self.act_batch_tim.setToolTip("Convert every image in a folder to TIM with the same settings")
+        self.act_export_car_obj = QAction("Export car model to OBJ", self)
+        self.act_export_car_obj.setToolTip("Convert selected GT-CAR (.car) to Wavefront OBJ + MTL")
 
         menubar = self.menuBar()
 
@@ -297,6 +300,9 @@ class GTArcExplorer(QMainWindow):
         m_tools.addAction(self.act_reencode_tim)
         m_tools.addAction(self.act_replace_tim)
         m_tools.addAction(self.act_batch_tim)
+        m_tools.addSeparator()
+        m_tools.addAction(self.act_export_car_obj)
+
 
         m_view = menubar.addMenu("&View")
         m_view.addAction(self.act_theme)
@@ -600,6 +606,7 @@ class GTArcExplorer(QMainWindow):
         self.act_reencode_tim.triggered.connect(self.reencode_selected_tim)
         self.act_replace_tim.triggered.connect(self.replace_selected_with_image)
         self.act_batch_tim.triggered.connect(self.batch_convert_folder)
+        self.act_export_car_obj.triggered.connect(self.export_car_obj)
         self.act_repack.triggered.connect(self.repack)
         self.act_folder.triggered.connect(self.open_extract_folder)
         self.act_load_list.triggered.connect(self.load_custom_filelist)
@@ -637,6 +644,7 @@ class GTArcExplorer(QMainWindow):
         has_sel = bool(sel)
         is_nested = False
         is_tim = False
+        is_car = False
         if has_sel:
             try:
                 f = self.arc.files[int(sel[0].text(0))]
@@ -654,6 +662,7 @@ class GTArcExplorer(QMainWindow):
         self.act_replace_tim.setEnabled(has_files and is_tim and HAS_PIL)
         self.act_convert_tim.setEnabled(HAS_PIL)
         self.act_batch_tim.setEnabled(HAS_PIL)
+        self.act_export_car_obj.setEnabled(has_files and is_car)
         self.act_open_nested.setEnabled(has_files and is_nested)
         self.act_extract.setEnabled(has_files)
         self.act_extract_sel.setEnabled(has_files and has_sel)
@@ -734,6 +743,7 @@ class GTArcExplorer(QMainWindow):
         act_copy_path = menu.addAction("Copy path / index")
         act_reencode = menu.addAction("Re-encode as TIM…")
         act_replace = menu.addAction("Replace with image…")
+        act_export_car = menu.addAction("Export to OBJ")
 
         try:
             f = self.arc.files[int(items[0].text(0))]
@@ -746,10 +756,12 @@ class GTArcExplorer(QMainWindow):
             )
             act_reencode.setEnabled(is_tim and HAS_PIL)
             act_replace.setEnabled(is_tim and HAS_PIL)
+            act_export_car.setEnabled(is_car)
         except Exception:
             act_nested.setEnabled(False)
             act_reencode.setEnabled(False)
             act_replace.setEnabled(False)
+            act_export_car.setEnabled(False)
 
         chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
         if chosen is None:
@@ -778,6 +790,8 @@ class GTArcExplorer(QMainWindow):
             self.reencode_selected_tim()
         elif chosen is act_replace:
             self.replace_selected_with_image()
+        elif chosen is act_export_car:
+            self.export_car_obj()
 
     def set_workspace(self):
         actions.set_workspace(self)
@@ -850,6 +864,44 @@ class GTArcExplorer(QMainWindow):
 
     def export_tim_pack_pngs(self):
         viewer.export_tim_pack_pngs(self)
+
+    def export_car_obj(self):
+        items = self.tree.selectedItems()
+        if not items:
+            QMessageBox.information(self, "Nothing selected", "Select a GT-CAR model first.")
+            return
+
+        idx = int(items[0].text(0))
+        f = self.arc.files[idx]
+        if f.get("type") != "GT-CAR Model" and (f.get("ext") or "").lower() != ".car":
+            QMessageBox.information(self, "Not a car model", "Selected entry is not a GT-CAR (.car) file.")
+            return
+
+        data = self.arc.get_data(idx)
+        try:
+            from ..utils.gtcar import GTCarModel
+            model = GTCarModel.from_bytes(data)
+        except Exception as e:
+            QMessageBox.critical(self, "Parse error", f"Could not parse .car:\n{e}")
+            return
+
+        default_name = (f.get("real_name") or f.get("label") or "car").rsplit(".", 1)[0] + ".obj"
+        start_dir = str(self.extract_dir) if self.extract_dir else self._last_dir("last_extract_dir")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export OBJ", str(Path(start_dir) / default_name), "Wavefront OBJ (*.obj)"
+        )
+        if not path:
+            return
+
+        try:
+            model.export_obj(path)
+            self.set_status(f"Exported {Path(path).name}")
+            QMessageBox.information(
+                self, "Export complete",
+                f"Wrote:\n{path}\n{Path(path).with_suffix('.mtl')}\n\n{model.summary()}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Export failed", str(e))
 
     def open_archive(self):
         actions.open_archive(self)
