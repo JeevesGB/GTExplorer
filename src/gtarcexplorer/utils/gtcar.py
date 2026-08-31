@@ -554,6 +554,7 @@ class GTCarModel:
             out.write(f"mtllib {mtl_path.name}\n\n")
 
             first_v = 1
+            
             first_n = 1
             first_vt = 1
 
