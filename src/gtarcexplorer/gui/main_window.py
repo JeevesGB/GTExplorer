@@ -706,7 +706,7 @@ class GTArcExplorer(QMainWindow):
             item.setHidden(text not in hay)
 
     def eventFilter(self, obj, event):
-        if obj is self.viewer_label and getattr(self, "_viewer_mode", None) == "model":
+        if obj is self.viewer_label and getattr(self, "_viewer_mode", None) in ("model","car"):
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 self._drag_last = event.position().toPoint()
                 return True
@@ -715,10 +715,13 @@ class GTArcExplorer(QMainWindow):
                 dx = pos.x() - self._drag_last.x()
                 dy = pos.y() - self._drag_last.y()
                 self._drag_last = pos
-                model_orbit(self, d_yaw=dx * 0.4, d_pitch=-dy * 0.3)
+                model_orbit(self, d_yaw=-dx * 0.4, d_pitch=-dy * 0.3)
                 return True
             if event.type() == QEvent.Type.MouseButtonRelease:
                 self._drag_last = None
+                if getattr(self, "_viewer_mode", None) == "car":
+                    from .viewer import render_car_viewer
+                    render_car_viewer(self, low_quality=False)  # full quality
                 return True
             if event.type() == QEvent.Type.Wheel:
                 delta = event.angleDelta().y()
@@ -1091,6 +1094,9 @@ class GTArcExplorer(QMainWindow):
 
     def _hex_dump(self, chunk: bytes):
         preview.hex_dump(self, chunk)
+
+    def show_car_in_viewer(self, data, label="", tex_data=None):
+        viewer.show_car_in_viewer(self,data,label,tex_data=tex_data)
 
 
 def run():

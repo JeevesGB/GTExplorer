@@ -1,4 +1,3 @@
-"""Archive entry preview (text pane + hand-off to viewer)."""
 from __future__ import annotations
 
 import struct
@@ -188,6 +187,30 @@ def show_preview(win, idx: int) -> None:
             win.show_model_in_viewer(data, f["label"] + f["ext"])
             win._switch_canvas(CANVAS_VIEWER)
 
+        elif f["type"] == "GT-CAR Model":
+            win.preview_text.append("GT-CAR car model\n")
+            try:
+                from ..utils.gtcar import GTCarModel
+                model = GTCarModel.from_bytes(data)
+                win.preview_text.append(model.summary())
+            except Exception as e:
+                win.preview_text.append(f"Parse error: {e}")
+
+            tex_data = None
+            try:
+                from . import viewer as viewer_mod
+                tex_data = viewer_mod._find_companion_tex(win, f)
+            except Exception:
+                pass
+
+            win.show_car_in_viewer(
+                data,
+                (f.get("label") or "") + (f.get("ext") or ""),
+                tex_data=tex_data,
+            )
+            win._switch_canvas(CANVAS_VIEWER)
+
+
         elif f["type"] in ("Sound Instrument", "Engine Sound"):
             _, samples = parse_sample_bank(data)
             win.preview_text.append(f"{f['type']} – {len(samples)} ADPCM samples\n")
@@ -205,5 +228,7 @@ def show_preview(win, idx: int) -> None:
     except Exception as e:
         win.preview_text.clear()
         win.preview_text.append(f"Preview error: {e}")
+
     def header_info(self) -> dict:
         return parse_gtps_header(self.raw)
+

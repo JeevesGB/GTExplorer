@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import io
@@ -8,7 +9,6 @@ from typing import BinaryIO, List, Optional, TextIO, Tuple
 
 
 UNITS_TO_METRES = 1.0 / 4096.0
-
 
 
 def _u16(f: BinaryIO) -> int:
@@ -28,11 +28,11 @@ def _skip(f: BinaryIO, n: int) -> None:
 
 
 def convert_scale(scale: int) -> float:
-    """LOD / shadow scale factor (commongear / pez2k)."""
     amount = scale - 16
     if amount < 0:
         return 1.0 / (1 << -amount)
     return float(1 << amount)
+
 
 @dataclass
 class Vertex:
@@ -43,7 +43,7 @@ class Vertex:
 
     def read_car(self, f: BinaryIO) -> None:
         self.x, self.y, self.z, self.w = struct.unpack("<hhhh", f.read(8))
-        self.z = -self.z  # GT1 convention
+        self.z = -self.z  #- GT1 convention
 
     def to_obj(self, scale: float) -> str:
         s = scale * UNITS_TO_METRES
@@ -74,13 +74,10 @@ class UVCoordinate:
 
     def read_car(self, f: BinaryIO) -> None:
         self.x = _u8(f)
-        y = _u8(f)
-        if y >= 32:
-            y -= 32
-        self.y = y
+        self.y = _u8(f)
 
     def to_obj(self) -> str:
-        # Same mapping as GT2ModelTool
+        #- Same mapping as GT2ModelTool
         return f"vt {self.x / 255.0:.8f} {1.0 - (self.y / 223.0):.8f}"
 
 
@@ -93,7 +90,7 @@ class WheelPosition:
 
     def read_car(self, f: BinaryIO) -> None:
         self.x, self.y, self.z, self.menu_x = struct.unpack("<hhhh", f.read(8))
-        self.menu_x = self.x  # GT1 stores 0; approximate with race X
+        self.menu_x = self.x  #- GT1 stores 0; approximate with race X
 
     def to_obj_group(self, wheel_number: int, first_vert: int) -> Tuple[List[str], int]:
         """Emit a tiny quad at the wheel centre for visualisation."""
@@ -102,7 +99,7 @@ class WheelPosition:
         sy = self.y * UNITS_TO_METRES
         sz = self.z * UNITS_TO_METRES
         lines.append(f"g wheelpos{wheel_number}")
-        lines.append(f"# centre ({sx:.4f}, {sy:.4f}, {sz:.4f})")
+        lines.append(f"#- centre ({sx:.4f}, {sy:.4f}, {sz:.4f})")
         lines.append(f"v {sx} {sy + 0.01} {sz - 0.01}")
         lines.append(f"v {sx} {sy + 0.01} {sz + 0.01}")
         lines.append(f"v {sx} {sy - 0.01} {sz + 0.01}")
@@ -111,6 +108,7 @@ class WheelPosition:
         a, b, c, d = first_vert, first_vert + 1, first_vert + 2, first_vert + 3
         lines.append(f"f {a} {b} {c} {d}")
         return lines, first_vert + 4
+
 
 @dataclass
 class Polygon:
@@ -125,7 +123,7 @@ class Polygon:
     render_order: int = 0b10000
     render_flags: int = 0
     face_type: int = 0
-    face_colour: int = 0  # BGR888 (only meaningful for untextured)
+    face_colour: int = 0  #- BGR888 (only meaningful for untextured)
 
     @property
     def is_quad(self) -> bool:
@@ -175,9 +173,8 @@ class Polygon:
         self.n2 = _safe_normal(n2)
         self.n3 = _safe_normal(n3)
 
-        # textured flags (3 bytes) + face type
         t1, t2, t3, face_type_data = struct.unpack("<4B", f.read(4))
-        if face_type_data in (33, 41):  # untextured tri/quad with +1
+        if face_type_data in (33, 41):  
             self.face_type = face_type_data - 1
         else:
             self.face_type = face_type_data
@@ -225,12 +222,14 @@ class UVPolygon(Polygon):
         self.uv1.read_car(f)
         unk13 = _u8(f)
         unk14 = _u8(f)
+        #- GT1 sometimes has non-zero unknowns; ignore rather than hard-fail
         self.uv2.read_car(f)
         self.uv3.read_car(f)
 
+        #- GT1 temp hack from GT2ModelTool
         self.render_flags = 0b1000
         if self.palette_index == 14:
-            self.render_flags |= 0b0100  # brake light
+            self.render_flags |= 0b0100  #- brake light
 
     def material_name(self) -> str:
         base = super().material_name().replace("untextured_", "")
@@ -271,10 +270,10 @@ class LOD:
         normal_count = _u16(f)
         triangle_count = _u16(f)
         quad_count = _u16(f)
-        _skip(f, 4)  # two unused ushorts
+        _skip(f, 4)  #- two unused ushorts
         uv_triangle_count = _u16(f)
         uv_quad_count = _u16(f)
-        _skip(f, 20)  # ten unused ushorts
+        _skip(f, 20)  #- ten unused ushorts
         self.scale = _u16(f)
         _skip(f, 2)
 
@@ -327,7 +326,7 @@ class LOD:
                   materials: set) -> Tuple[int, int, int]:
         scale = convert_scale(self.scale)
         out.write(f"g lod{lod_index}\n")
-        out.write(f"# scale raw={self.scale} factor={scale}\n")
+        out.write(f"#- scale raw={self.scale} factor={scale}\n")
 
         for v in self.vertices:
             out.write(v.to_obj(scale) + "\n")
@@ -370,6 +369,7 @@ class LOD:
             first_vt + len(uvs),
         )
 
+
 @dataclass
 class ShadowVertex:
     x: int = 0
@@ -377,7 +377,7 @@ class ShadowVertex:
 
     def read_car(self, f: BinaryIO) -> None:
         self.x = _i16(f)
-        _i16(f)  # unused Y
+        _i16(f)  #- unused Y
         self.z = _i16(f)
         self.z = -self.z
         _skip(f, 2)
@@ -411,11 +411,11 @@ class Shadow:
     quads: List[ShadowPolygon] = field(default_factory=list)
 
     def read_car(self, f: BinaryIO) -> None:
-        _u16(f)  # unknown, usually 0
+        _u16(f)  #- unknown, usually 0
         quad_count = _u16(f)
         self.scale = _u16(f)
-        _u16(f)  # unknown2
-        # 8 shorts bounds
+        _u16(f)  #- unknown2
+        #- 8 shorts bounds
         _skip(f, 16)
         _skip(f, 8)
 
@@ -426,6 +426,7 @@ class Shadow:
             sv.read_car(f)
             self.vertices.append(sv)
 
+        #- GT1 uses a fixed mockup mapping (Leo / pez2k)
         mockups = [
             [0, 1, 2, 3],
             [3, 2, 7, 6],
@@ -435,7 +436,7 @@ class Shadow:
         self.quads = []
         for i in range(quad_count):
             m = mockups[i] if i < len(mockups) else [i * 4 + j for j in range(4)]
-            # clamp to available vertices
+            #- clamp to available vertices
             m = [min(x, len(self.vertices) - 1) for x in m]
             sp = ShadowPolygon(
                 v0=self.vertices[m[0]],
@@ -469,7 +470,7 @@ class GTCarModel:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "GTCarModel":
-        if not data.startswith(b"@(#)GT-CAR"):
+        if not data.startswith(b"@(#-)GT-CAR"):
             raise ValueError("Not a GT-CAR file (missing magic)")
 
         f = io.BytesIO(data)
@@ -478,12 +479,13 @@ class GTCarModel:
 
         f.seek(0x10)
 
-        # 4 wheel positions
+        #- 4 wheel positions
         wheels = []
         for _ in range(4):
             w = WheelPosition()
             w.read_car(f)
             wheels.append(w)
+        #- GT1 order is different from GT2 – reorder to FL, FR, RL, RR
         model.wheels = [wheels[2], wheels[3], wheels[0], wheels[1]]
 
         model.menu_front_radius = _u16(f)
@@ -501,12 +503,13 @@ class GTCarModel:
             lod.read_car(f)
             model.lods.append(lod)
             if i != lod_count - 1:
-                _skip(f, 40)  
+                _skip(f, 40)  #- gap between LODs
 
         model.shadow = Shadow()
         try:
             model.shadow.read_car(f)
         except Exception:
+            #- some cars may have truncated / missing shadow data
             model.shadow = None
 
         return model
@@ -547,34 +550,34 @@ class GTCarModel:
         materials: set = {"untextured", "shadow", "shadowgradient"}
 
         with obj_path.open("w", encoding="utf-8") as out:
-            out.write(f"# GT1 .car exported by gtcar.py\n")
+            out.write(f"#- GT1 .car exported by gtcar.py\n")
             out.write(f"mtllib {mtl_path.name}\n\n")
 
             first_v = 1
             first_n = 1
             first_vt = 1
 
-            # Wheel position markers
+            #- Wheel position markers
             for i, w in enumerate(self.wheels):
                 lines, first_v = w.to_obj_group(i, first_v)
                 for line in lines:
                     out.write(line + "\n")
                 out.write("\n")
 
-            # LODs
+            #- LODs
             for i, lod in enumerate(self.lods):
                 first_v, first_n, first_vt = lod.write_obj(
                     out, i, first_v, first_n, first_vt, materials
                 )
                 out.write("\n")
 
-            # Shadow
+            #- Shadow
             if self.shadow and self.shadow.vertices:
                 first_v = self.shadow.write_obj(out, first_v)
 
-        # Minimal MTL
+        #- Minimal MTL
         with mtl_path.open("w", encoding="utf-8") as mtl:
-            mtl.write("# GT1 materials\n")
+            mtl.write("#- GT1 materials\n")
             mtl.write("newmtl untextured\nKd 0.2 0.2 0.2\n\n")
             mtl.write("newmtl shadow\nKd 0 0 0\n\n")
             mtl.write("newmtl shadowgradient\nKd 0.1 0.1 0.1\n\n")
@@ -583,8 +586,8 @@ class GTCarModel:
                     continue
                 mtl.write(f"newmtl {name}\n")
                 if name.startswith("palette"):
-                    # placeholder – real texture comes from companion .tex
-                    mtl.write(f"# map_Kd {name.split('_')[0]}.bmp\n")
+                    #- placeholder – real texture comes from companion .tex
+                    mtl.write(f"#- map_Kd {name.split('_')[0]}.bmp\n")
                     mtl.write("Kd 0.8 0.8 0.8\n\n")
                 else:
                     mtl.write("Kd 0.3 0.3 0.3\n\n")
