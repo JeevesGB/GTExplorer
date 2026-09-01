@@ -54,11 +54,12 @@ def _viewer_size(win) -> tuple[int, int]:
     return 640, 480
 
 
-def show_in_viewer(win, data: bytes, label: str = "") -> None:
-    win._viewer_mode = "image"
-    win._pack_tims = []
-    if hasattr(win, "tim_list"):
-        win.tim_list.clear()
+def show_in_viewer(win, data: bytes, label: str = "", *, keep_pack: bool = False) -> None:
+    if not keep_pack:
+        win._viewer_mode = "image"
+        win._pack_tims = []
+        if hasattr(win, "tim_list"):
+            win.tim_list.clear()
 
     try:
         from ..utils.tim_image import tim_to_image
@@ -103,8 +104,12 @@ def show_pack_in_viewer(win, data: bytes) -> None:
     if hasattr(win, "tim_list"):
         win.tim_list.clear()
         for i, ent in enumerate(entries):
-            name = ent.get("name") or f"tim_{i:03d}"
-            size = len(ent.get("data") or b"")
+            if isinstance(ent, (list, tuple)) and len(ent) >= 2:
+                name, tim_data = ent[0], ent[1]
+            else:
+                name = (ent.get("name") if hasattr(ent, "get") else None) or f"tim_{i:03d}"
+                tim_data = (ent.get("data") if hasattr(ent, "get") else b"") or b""
+            size = len(tim_data)
             item = QTreeWidgetItem([str(name), str(size)])
             item.setData(0, Qt.ItemDataRole.UserRole, i)
             win.tim_list.addTopLevelItem(item)
@@ -129,9 +134,12 @@ def on_tim_list_select(win) -> None:
     if idx is None or idx < 0 or idx >= len(pack):
         return
     ent = pack[idx]
-    data = ent.get("data") or b""
-    name = ent.get("name") or f"tim_{idx:03d}"
-    show_in_viewer(win, data, name)
+    if isinstance(ent, (list, tuple)) and len(ent) >= 2:
+        name, data = ent[0], ent[1]
+    else:
+        data = (ent.get("data") if hasattr(ent, "get") else b"") or b""
+        name = (ent.get("name") if hasattr(ent, "get") else None) or f"tim_{idx:03d}"
+    show_in_viewer(win, data, name, keep_pack=True)
     win._viewer_mode = "pack"
 
 
