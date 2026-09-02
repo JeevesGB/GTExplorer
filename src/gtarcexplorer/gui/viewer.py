@@ -479,13 +479,14 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
     vp_w, vp_h = _viewer_size(win)
     zoom = float(getattr(win, "_car_zoom", 1.0) or 1.0)
 
-    # Internal render resolution (higher = sharper, slower)
-    scale = 1.0 if low_quality else 2.0
-    base_w = max(320, int(vp_w * scale))
-    base_h = max(240, int(vp_h * scale))
-    # Cap so drag stays usable
-    base_w = min(base_w, 1280 if low_quality else 1920)
-    base_h = min(base_h, 960 if low_quality else 1440)
+        # Internal render resolution (higher = sharper, slower)
+    if low_quality:
+        base_w, base_h = 480, 360
+    else:
+        base_w = min(int(vp_w * 2.0), 1920)
+        base_h = min(int(vp_h * 2.0), 1440)
+    base_w = max(320, base_w)
+    base_h = max(240, base_h)
 
     try:
         from ..utils.gtcar_render import render_car_qimage
@@ -497,6 +498,7 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
             pitch_deg=getattr(win, "_model_pitch", 18.0),
             tex_images=getattr(win, "_car_tex_images", None),
             lod_index=0,
+            low_quality=low_quality,
         )
         pix = QPixmap.fromImage(qimg)
         target_w = max(64, int(vp_w * zoom))

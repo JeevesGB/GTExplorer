@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from typing import Dict, List, Optional, Tuple
-
+from PyQt6.QtGui import QImage
 import numpy as np
 
 try:
@@ -135,6 +135,7 @@ def render_car_qimage(
     lod_index: int = 0,
     wireframe: bool = False,
     bg: Tuple[int, int, int] = (18, 20, 26),
+    low_quality: bool = False,
 ) -> "QImage":
     w = max(64, int(width))
     h = max(64, int(height))
@@ -280,14 +281,15 @@ def render_car_qimage(
         draw_solid(p, True)
 
 
-    for p, is_quad in uv_faces:
-        draw_uv(
-            p,
-            is_quad,
-            write_depth=False,
-            depth_bias=-2e-3,
-            depth_epsilon=5e-3,
-        )
+        if not low_quality:
+            for p, is_quad in uv_faces:
+                draw_uv(
+                    p,
+                    is_quad,
+                    write_depth=False,
+                    depth_bias=-2e-3,
+                    depth_epsilon=5e-3,
+                )
 
     bgra = np.empty((h, w, 4), dtype=np.uint8)
     bgra[..., 0] = colour[..., 2]

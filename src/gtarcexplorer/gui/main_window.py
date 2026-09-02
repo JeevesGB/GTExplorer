@@ -9,7 +9,7 @@ from . import names, tim_tools, viewer, actions
 from . import preview, help_dialog, actions_tpk
 from .viewer import show_model_in_viewer, render_model_viewer, model_orbit, model_zoom
 
-from PyQt6.QtCore import Qt, QSize, QSettings, pyqtSignal, QEvent
+from PyQt6.QtCore import Qt, QSize, QSettings, pyqtSignal, QEvent, QTimer
 from PyQt6.QtGui import (
     QAction, QFont, QIcon, QColor, QKeySequence, QMouseEvent, QWheelEvent
 )
@@ -103,6 +103,11 @@ class GTArcExplorer(QMainWindow):
         self._workspace_pack_out = None
         self.viewer_label.setMouseTracking(True)
         self._drag_last = None 
+        self._orbit_timer = QTimer(self)
+        self._orbit_timer.setSingleShot(True)
+        self._orbit_timer.setInterval(16)  # ~60fps cap
+        self._orbit_timer.timeout.connect(self._flush_orbit)
+        self._pending_orbit = None
         self.viewer_label.installEventFilter(self)
 
         self.progress_signal.connect(self._update_progress)
@@ -715,8 +720,10 @@ class GTArcExplorer(QMainWindow):
                 dx = pos.x() - self._drag_last.x()
                 dy = pos.y() - self._drag_last.y()
                 self._drag_last = pos
-                # flip signs here to invert orbit
-                model_orbit(self, d_yaw=dx * 0.4, d_pitch=dy * 0.3)
+                prev_yaw, prev_pitch = self._pending_orbit or (0.0, 0.0)
+                self._pending_orbit = (prev_yaw + dx * 0.4, prev_pitch + dy * 0.3)
+                if not self._orbit_timer.isActive():
+                    self._orbit_timer.start()
                 return True
 
             if event.type() == QEvent.Type.MouseButtonRelease:
@@ -821,6 +828,13 @@ class GTArcExplorer(QMainWindow):
 
     def reencode_selected_tim(self):
         tim_tools.reencode_selected_tim(self)
+
+    def _flush_orbit(self):
+        if self._pending_orbit is None:
+            return
+        d_yaw, d_pitch = self._pending_orbit
+        self._pending_orbit = None
+        model_orbit(self, d_yaw=d_yaw, d_pitch=d_pitch)
 
     def replace_selected_with_image(self):
         tim_tools.replace_selected_with_image(self)

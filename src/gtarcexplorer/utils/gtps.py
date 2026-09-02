@@ -8,11 +8,11 @@ from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 try:
-    from PyQt6.QtCore import QPointF
-    from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPolygonF
+    from PyQt6.QtCore import QPointF, QRectF
+    from PyQt6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPolygonF
 except ImportError:
-    from PyQt5.QtCore import QPointF
-    from PyQt5.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPolygonF
+    from PyQt5.QtCore import QPointF, QRectF
+    from PyQt5.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPolygonF
 
 Vec3 = Tuple[float, float, float]
 
@@ -223,13 +223,55 @@ def render_qimage_faces(
                 painter.setBrush(brush)
             painter.drawPolygon(poly)
     
-    # Draw track spline path line
+        # Draw track spline path line
     path_pen = QPen(QColor(255, 180, 0, 240), 2)
     painter.setPen(path_pen)
     for i in range(len(model.vertices) - 1):
         x0, y0 = project(model.vertices[i])
         x1, y1 = project(model.vertices[i + 1])
         painter.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+
+    # --- Camera orientation gizmo (top-right corner) ---
+    giz_size = 64
+    giz_margin = 10
+    giz_cx = w - giz_margin - giz_size / 2
+    giz_cy = giz_margin + giz_size / 2
+    giz_radius = giz_size / 2 - 6
+
+    painter.setPen(QPen(QColor(255, 255, 255, 40), 1))
+    painter.setBrush(QColor(0, 0, 0, 90))
+    painter.drawEllipse(QPointF(giz_cx, giz_cy), giz_radius + 4, giz_radius + 4)
+
+    gfont = QFont(painter.font())
+    gfont.setPointSize(8)
+    gfont.setBold(True)
+    painter.setFont(gfont)
+
+    axes = [
+        ("X", 1.0, 0.0, 0.0, QColor(230, 70, 70)),
+        ("Y", 0.0, 1.0, 0.0, QColor(90, 200, 90)),
+        ("Z", 0.0, 0.0, 1.0, QColor(90, 140, 230)),
+    ]
+    projected_axes = []
+    for label, ax, ay, az, color in axes:
+        rx = ax * cos_y + az * sin_y
+        rz = -ax * sin_y + az * cos_y
+        ry = ay * cos_p - rz * sin_p
+        rz2 = ay * sin_p + rz * cos_p  # depth, for draw order only
+        sx = giz_cx + rx * giz_radius
+        sy = giz_cy - ry * giz_radius
+        projected_axes.append((rz2, label, sx, sy, color))
+
+    projected_axes.sort(key=lambda t: t[0])  # far to near
+
+    for _depth, label, sx, sy, color in projected_axes:
+        painter.setPen(QPen(color, 2))
+        painter.drawLine(QPointF(giz_cx, giz_cy), QPointF(sx, sy))
+        painter.setBrush(color)
+        painter.setPen(QPen(color.darker(150), 1))
+        painter.drawEllipse(QPointF(sx, sy), 6, 6)
+        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.drawText(QRectF(sx - 6, sy - 6, 12, 12), Qt.AlignmentFlag.AlignCenter, label)
 
     painter.end()
     return img
