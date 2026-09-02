@@ -33,12 +33,10 @@ ARCHIVE_GLOBS = ("*.dat", "*.DAT", "*.arc", "*.ARC")
 def last_dir(win, key: str = "last_open_dir") -> str:
     return win.settings.value(key, "", type=str) or ""
 
-
 def set_last_dir(win, path: str, key: str = "last_open_dir") -> None:
     p = Path(path)
     d = str(p if p.is_dir() else p.parent)
     win.settings.setValue(key, d)
-
 
 def open_path(win, path: str, push_nav: bool = True) -> None:
     p = Path(path)
@@ -49,7 +47,6 @@ def open_path(win, path: str, push_nav: bool = True) -> None:
         open_folder_path(win, p)
     else:
         open_file_path(win, p, push_nav=push_nav)
-
 
 def open_archive(win) -> None:
     path, _ = QFileDialog.getOpenFileName(
@@ -66,7 +63,6 @@ def open_archive(win) -> None:
     win._nav_stack.clear()
     open_file_path(win, Path(path), push_nav=False)
 
-
 def open_folder(win) -> None:
     folder = QFileDialog.getExistingDirectory(
         win, "Open extract folder", win._last_dir("last_extract_dir")
@@ -75,7 +71,6 @@ def open_folder(win) -> None:
         return
     win._nav_stack.clear()
     open_folder_path(win, Path(folder))
-
 
 def open_file_path(win, path: Path, push_nav: bool = True) -> None:
     win._set_last_dir(str(path))
@@ -164,7 +159,6 @@ def open_file_path(win, path: Path, push_nav: bool = True) -> None:
 
     threading.Thread(target=worker, daemon=True).start()
 
-
 def open_folder_path(win, folder: Path) -> None:
     win._set_last_dir(str(folder), "last_extract_dir")
     win._add_recent(str(folder))
@@ -218,7 +212,6 @@ def open_folder_path(win, folder: Path) -> None:
             win.finished_signal.emit(False, f"{type(e).__name__}: {e}")
 
     threading.Thread(target=worker, daemon=True).start()
-
 
 def open_nested_arc(win) -> None:
     items = win.tree.selectedItems()
@@ -286,7 +279,6 @@ def open_nested_arc(win) -> None:
 
     threading.Thread(target=worker, daemon=True).start()
 
-
 def update_breadcrumb(win) -> None:
     if not hasattr(win, "breadcrumb"):
         return
@@ -303,7 +295,6 @@ def update_breadcrumb(win) -> None:
     trail = "  →  ".join(parts + ([str(current)] if current else []))
     win.breadcrumb.setText(trail or "(root)")
     win.btn_nav_back.setEnabled(bool(win._nav_stack))
-
 
 def nav_back(win) -> None:
     if not win._nav_stack:
@@ -337,7 +328,6 @@ def nav_back(win) -> None:
             f"path={path!r}",
         )
         update_breadcrumb(win)
-
 
 def extract_all(win) -> None:
     if not win.arc.files:
@@ -385,7 +375,6 @@ def extract_all(win) -> None:
     win.finished_signal.connect(lambda ok, data: on_extract_finished(win, ok, data))
     threading.Thread(target=worker, daemon=True).start()
 
-
 def on_extract_finished(win, success: bool, data) -> None:
     try:
         win.finished_signal.disconnect()
@@ -403,7 +392,6 @@ def on_extract_finished(win, success: bool, data) -> None:
         )
     else:
         QMessageBox.critical(win, "Extract failed", str(data))
-
 
 def extract_selected(win) -> None:
     items = win.tree.selectedItems()
@@ -428,7 +416,6 @@ def extract_selected(win) -> None:
         QMessageBox.information(win, "Done", f"Extracted {len(indices)} file(s)")
     except Exception as e:
         QMessageBox.critical(win, "Error", str(e))
-
 
 def repack(win) -> None:
     level, ok = QInputDialog.getInt(
@@ -542,7 +529,6 @@ def on_repack_finished(win, success: bool, data) -> None:
     else:
         QMessageBox.critical(win, "Repack failed", str(data))
 
-
 def save_selected(win) -> None:
     items = win.tree.selectedItems()
     if not items:
@@ -570,7 +556,6 @@ def save_selected(win) -> None:
     win.set_status(f"Saved {n} file(s) → {out}")
     QMessageBox.information(win, "Done", f"Saved {n} file(s) to:\n{out}")
 
-
 def save_entry(win, idx: int) -> None:
     f = win.arc.files[idx]
     data = win.arc.get_data(idx)
@@ -585,7 +570,6 @@ def save_entry(win, idx: int) -> None:
     Path(path).write_bytes(data)
     win._set_last_dir(path, "last_extract_dir")
     win.set_status(f"Saved → {path}")
-
 
 def export_strings(win) -> None:
     if not win.arc.files:
@@ -648,7 +632,6 @@ def export_strings(win) -> None:
         QMessageBox.information(win, "Done", msg)
     win.set_status(f"Exported strings from {written} table(s)")
 
-
 def open_extract_folder(win) -> None:
     if win.extract_dir and Path(win.extract_dir).exists():
         if sys.platform == "win32":
@@ -659,7 +642,6 @@ def open_extract_folder(win) -> None:
             os.system(f'xdg-open "{win.extract_dir}"')
     else:
         QMessageBox.information(win, "No folder", "Extract first")
-
 
 def populate_struct_tree(win, root: Path) -> None:
     win.struct_tree.clear()
@@ -683,7 +665,6 @@ def populate_struct_tree(win, root: Path) -> None:
         else:
             size = item.stat().st_size
             root_item.addChild(QTreeWidgetItem([f"{item.name}  ({size:,} B)"]))
-
 
 def diff_vs_folder(win) -> None:
     if not win.arc.files:
@@ -728,7 +709,6 @@ def diff_vs_folder(win) -> None:
         rows.append((idx, name, left_size, right_size, delta, status))
 
     show_diff_dialog(win, rows, f"Archive  ↔  {folder}")
-
 
 def diff_vs_dat(win) -> None:
     if not win.arc.files:
@@ -802,7 +782,6 @@ def diff_vs_dat(win) -> None:
         f"{Path(win.arc.path).name}  ↔  {Path(path).name}",
     )
 
-
 def show_diff_dialog(win, rows, title: str) -> None:
     dlg = QDialog(win)
     dlg.setWindowTitle("Size diff")
@@ -841,18 +820,14 @@ def show_diff_dialog(win, rows, title: str) -> None:
     layout.addWidget(buttons)
     dlg.exec()
 
-
-
 def project_root() -> Path:
     """Repo / app root (folder that contains tools/, src/, runtool.bat)."""
     return up_mod.app_root()
-
 
 def tools_dir() -> Path:
     """Legacy fallback tools location (project_root/tools), used when the
     user hasn't configured a tools folder in Setup / Workspace."""
     return project_root() / "tools"
-
 
 def effective_tools_dir(win) -> Path:
     """The tools folder to use: the one configured in Setup / Workspace if
@@ -861,7 +836,6 @@ def effective_tools_dir(win) -> Path:
     if up and up.tools_dir:
         return Path(up.tools_dir)
     return tools_dir()
-
 
 def _ask_setup_mode(win) -> str | None:
     dlg = QDialog(win)
@@ -916,14 +890,12 @@ def _ask_setup_mode(win) -> str | None:
     dlg.exec()
     return choice["value"]
 
-
 def _apply_and_refresh(win, new_paths: UserPaths) -> None:
     win._user_paths = new_paths
     if new_paths.extracted_dir:
         win.extract_dir = Path(new_paths.extracted_dir)
     if hasattr(win, "input_list"):
         refresh_input_file_list(win)
-
 
 def _show_folder_guide(win, new_paths: UserPaths, created: list[str]) -> None:
     lines = ["Workspace folders are ready:", ""]
@@ -961,7 +933,6 @@ def clear_workspace_paths(win) -> None:
         "Saved paths were cleared in user_paths.json.\n\n"
         "Use File -> Setup / Workspace to set them again.",
     )
-
 
 def set_workspace(win, first_run: bool = False) -> None:
 
@@ -1143,14 +1114,12 @@ def set_workspace(win, first_run: bool = False) -> None:
 
     win.set_status("Setup saved")
 
-
 def maybe_show_first_run_setup(win) -> None:
     """Show setup wizard once on first launch (or if paths are incomplete)."""
     up = up_mod.load_user_paths()
     if up and up.is_complete():
         return
     set_workspace(win, first_run=True)
-
 
 def apply_workspace_paths(win) -> None:
     up = up_mod.load_user_paths() or UserPaths()
@@ -1159,7 +1128,6 @@ def apply_workspace_paths(win) -> None:
         win.extract_dir = Path(up.extracted_dir)  # base; per-file extract uses subfolder
     if hasattr(win, "input_list"):
         refresh_input_file_list(win)
-
 
 def refresh_input_file_list(win) -> None:
     if not hasattr(win, "input_list"):
@@ -1191,7 +1159,6 @@ def refresh_input_file_list(win) -> None:
 
     win.set_status(f"ORIGINAL FILES: {len(uniq)} archive(s) in {in_dir}")
 
-
 def on_input_file_clicked(win) -> None:
     items = win.input_list.selectedItems()
     if not items:
@@ -1213,7 +1180,6 @@ def on_input_file_clicked(win) -> None:
 
     win._nav_stack.clear()
     open_file_path(win, Path(path), push_nav=False)
-
 
 def _resolve_tool_exe(win, which: str) -> Path | None:
     """
@@ -1306,7 +1272,6 @@ def _run_tool_with_log(win, title: str, exe: Path, args: list, cwd: Path | None 
     buttons.button(QDialogButtonBox.StandardButton.Close).setEnabled(True)
     buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(dlg.accept)
     dlg.exec()
-
 
 def dump_disc(win) -> None:
     """GUI wrapper for dumpsxiso — extract disc image to files + XML."""
@@ -1448,7 +1413,6 @@ def dump_disc(win) -> None:
             "These paths were saved for Build disc / Setup.",
         )
 
-
 def build_disc(win) -> None:
     """GUI wrapper for mkpsxiso — rebuild .bin/.cue from project XML."""
     from PyQt6.QtWidgets import (
@@ -1584,7 +1548,6 @@ def build_disc(win) -> None:
             msg += f"\n{cue_path}"
         QMessageBox.information(win, "Build finished", msg)
 
-
 def open_tools_folder(win) -> None:
     """Open the configured tools/ directory in the system file manager."""
     td = effective_tools_dir(win)
@@ -1700,7 +1663,6 @@ def repack_selected_tpk(win) -> None:
     # Refresh preview
     if hasattr(win, "on_select"):
         win.on_select()
-
 
 def pack_folder_to_tpk(win) -> None:
     folder = QFileDialog.getExistingDirectory(

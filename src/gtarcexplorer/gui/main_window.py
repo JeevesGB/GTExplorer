@@ -854,7 +854,6 @@ class GTArcExplorer(QMainWindow):
             suffix = " (night)" if "_night" in code.lower() else ""
             return pretty + suffix
         return f.get("real_name") or f.get("label") or f"{f['index']:03d}"
-    
 
     def _auto_scan_names(self):
         return names.auto_scan_names(self)

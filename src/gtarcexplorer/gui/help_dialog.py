@@ -143,6 +143,6 @@ def show_about(parent) -> None:
         parent,
         "About GTExplorer",
         "GTExplorer\n\n"
-        "Extractor, viewer, and repacker for Gran Turismo 1 (PlayStation) archives.\n\n"
-        "https://github.com/JeevesGB/GTExplorer",
+        "Extractor, viewer, and repacker for Gran Turismo 1 archives.\n\n"
+        "|2026 JeevesGB|",
     )
