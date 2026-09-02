@@ -13,13 +13,7 @@
 **GTExplorer** is an extractor, viewer, and repacker for **Gran Turismo 1** (PlayStation) archive files, with optional full disc dump/rebuild via [mkpsxiso](https://github.com/Lameguy64/mkpsxiso).
 
 <div align="center">
-  <img src="img/1.png" width="45%">
-  <img src="img/2.png" width="45%">
-  <img src="img/3.png" width="45%">
-  <img src="img/4.png" width="45%">
-  <img src="img/3.gif" width="45%">
-  <img src="img/2.jpg" width="45%">
-  <img src="img/6.png" height="300" width="500">
+  <img src="img/viper/combined-images.png">
 </div>
 
 ---
