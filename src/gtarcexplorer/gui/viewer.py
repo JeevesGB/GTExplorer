@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from typing import Optional
@@ -258,20 +257,19 @@ def viewer_1to1(win) -> None:
     win._viewer_scale = 1.0
 
 
-def viewer_zoom(win, factor: float) -> None:
+def viewer_zoom(win, factor: float, low_quality: bool = False) -> None:
     mode = getattr(win, "_viewer_mode", None)
     if mode == "model":
-        model_zoom(win, factor)
+        model_zoom(win, factor, low_quality=low_quality)
         return
     if mode == "car":
-        # Scale orbit distance via a zoom factor used in render
-        z = float(getattr(win, "_car_zoom", 1.0) or 1.0)
-        if factor > 1.0:
-            z = min(3.0, z * 1.15)
-        else:
-            z = max(0.35, z / 1.15)
-        win._car_zoom = z
-        render_car_viewer(win)
+        # Scale orbit distance via a zoom factor used in render.
+        # factor == 1.0 means "no change" (used for the settle re-render).
+        if factor != 1.0:
+            z = float(getattr(win, "_car_zoom", 1.0) or 1.0)
+            z = max(0.35, min(3.0, z * factor))
+            win._car_zoom = z
+        render_car_viewer(win, low_quality=low_quality)
         return
 
     pix = getattr(win, "_viewer_image", None)
@@ -352,16 +350,12 @@ def model_orbit(win, d_yaw: float, d_pitch: float) -> None:
         render_model_viewer(win)
 
 
-def model_zoom(win, factor: float) -> None:
+def model_zoom(win, factor: float, low_quality: bool = False) -> None:
     model = getattr(win, "_model", None)
-    if model and hasattr(model, "camera"):
-        if factor > 1.0:
-            model.camera.distance = max(10.0, model.camera.distance / factor)
-        elif factor > 0.0:
-            model.camera.distance = max(
-                10.0, model.camera.distance * (1.0 / factor)
-            )
-        render_model_viewer(win)
+    if model and hasattr(model, "camera") and factor != 1.0 and factor > 0.0:
+        model.camera.distance = max(10.0, model.camera.distance / factor)
+    if model:
+        render_model_viewer(win, low_quality=low_quality)
 
 
 def viewer_orbit(win, d_yaw: float, d_pitch: float) -> None:

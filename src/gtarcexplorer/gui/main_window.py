@@ -30,20 +30,27 @@ except ImportError:
     HAS_PIL = False
 
 TYPE_COLORS = {
+    #IMAGES
     "TIM Texture":       "#5dade2",
     "TIM Pack":          "#3498db",
-    "GT-CTEX Texture":   "#9b59b6",
     "GT Menu Image (SLT)": "#e91e63",
     "SLT Index (32B)":   "#c2185b",
+    #ARCHIVE
     "Nested GT-ARC":     "#e67e22",
+    #SAVE
     "GT Replay Save":    "#e74c3c",
+    #TEXT
     "Filename List":     "#1abc9c",
     "Text / Messages":   "#1abc9c",
     "GT HTML":           "#16a085",
-    "GT-PS Model":       "#f39c12",
+    #MODELS
+    "GT-PS Model":       "#f3d912",
     "GT-CAR Model":      "#60e622",
+    "GT-CTEX Texture":   "#2b7544",
+    #AUDIO
     "Sound Instrument":  "#2ecc71",
     "Engine Sound":      "#27ae60",
+    #???
     "Unknown":           "#95a5a6",
 }
 
@@ -103,11 +110,21 @@ class GTArcExplorer(QMainWindow):
         self._workspace_pack_out = None
         self.viewer_label.setMouseTracking(True)
         self._drag_last = None 
+
         self._orbit_timer = QTimer(self)
         self._orbit_timer.setSingleShot(True)
         self._orbit_timer.setInterval(16)  # ~60fps cap
         self._orbit_timer.timeout.connect(self._flush_orbit)
         self._pending_orbit = None
+        self._zoom_timer = QTimer(self)
+        self._zoom_timer.setSingleShot(True)
+        self._zoom_timer.setInterval(16)  # ~60fps cap, same as orbit
+        self._zoom_timer.timeout.connect(self._flush_zoom)
+        self._pending_zoom = None
+        self._zoom_settle_timer = QTimer(self)
+        self._zoom_settle_timer.setSingleShot(True)
+        self._zoom_settle_timer.setInterval(150)  # re-render full quality once scrolling stops
+        self._zoom_settle_timer.timeout.connect(self._finalize_zoom)
         self.viewer_label.installEventFilter(self)
 
         self.progress_signal.connect(self._update_progress)
@@ -736,8 +753,10 @@ class GTArcExplorer(QMainWindow):
             if event.type() == QEvent.Type.Wheel:
                 delta = event.angleDelta().y()
                 factor = 1.15 if delta > 0 else (1.0 / 1.15)
-                from .viewer import viewer_zoom
-                viewer_zoom(self, factor)
+                self._pending_zoom = (self._pending_zoom or 1.0) * factor
+                if not self._zoom_timer.isActive():
+                    self._zoom_timer.start()
+                self._zoom_settle_timer.start()  # (re)start the settle countdown
                 return True
 
         return super().eventFilter(obj, event)
@@ -835,6 +854,19 @@ class GTArcExplorer(QMainWindow):
         d_yaw, d_pitch = self._pending_orbit
         self._pending_orbit = None
         model_orbit(self, d_yaw=d_yaw, d_pitch=d_pitch)
+
+    def _flush_zoom(self):
+        if self._pending_zoom is None:
+            return
+        factor = self._pending_zoom
+        self._pending_zoom = None
+        from .viewer import viewer_zoom
+        viewer_zoom(self, factor, low_quality=True)
+
+    def _finalize_zoom(self):
+        # Scrolling has settled — do one full-quality render to sharpen the result.
+        from .viewer import viewer_zoom
+        viewer_zoom(self, 1.0, low_quality=False)
 
     def replace_selected_with_image(self):
         tim_tools.replace_selected_with_image(self)
@@ -1082,16 +1114,16 @@ class GTArcExplorer(QMainWindow):
     def populate_tree(self):
         self.tree.setSortingEnabled(False)
         self.tree.clear()
+        total_size = sum(
+            (len(x["data"]) if x.get("data") is not None else (x.get("decomp_size") or 0))
+            for x in self.arc.files
+        ) or 1
         for f in self.arc.files:
             name = self._display_name(f)
             size = (
                 len(f["data"]) if f.get("data") is not None
                 else (f.get("decomp_size") or "?")
             )
-            total_size = sum(
-                (len(x["data"]) if x.get("data") is not None else (x.get("decomp_size") or 0))
-                for x in self.arc.files
-            ) or 1
             try:
                 sz_num = int(size) if size != "?" else 0
             except Exception:
