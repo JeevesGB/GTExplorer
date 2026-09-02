@@ -26,7 +26,6 @@ except ImportError:
         convert_scale, UNITS_TO_METRES,
     )
 
-
 def _project_batch(
     pts: np.ndarray,
     center: np.ndarray,
@@ -55,7 +54,6 @@ def _project_batch(
     out[:, 1] = screen_cy - ry2 * view_scale
     out[:, 2] = rz2
     return out
-
 
 def _raster_triangle(
     colour_buf: np.ndarray,
@@ -108,23 +106,23 @@ def _raster_triangle(
     if not nearer.any():
         return
 
-    z_slice[nearer] = depth[nearer]
-
     if tex is not None and uvs is not None:
         th, tw = tex.shape[0], tex.shape[1]
         u = a * uvs[0, 0] + b * uvs[1, 0] + c * uvs[2, 0]
         v = a * uvs[0, 1] + b * uvs[1, 1] + c * uvs[2, 1]
-        # UVs are texel coords into the 256x256 atlas (small islands per panel).
+        # UVs are texel coords into the 256x256 atlas
         ui = np.clip(np.rint(u).astype(np.int32) % tw, 0, tw - 1)
         vi = np.clip(np.rint(v).astype(np.int32) % th, 0, th - 1)
         samples = tex[vi, ui]
-        # Palette entry 0 is transparent on PS1
+        # Palette entry 0 is transparent on PS1 — only opaque texels
+        # write colour AND depth (so layered faces can show through)
         visible = nearer & (samples[..., 3] > 0)
         if visible.any():
+            z_slice[visible] = depth[visible]
             colour_buf[min_y:max_y + 1, min_x:max_x + 1][visible] = samples[..., :3][visible]
     else:
+        z_slice[nearer] = depth[nearer]
         colour_buf[min_y:max_y + 1, min_x:max_x + 1][nearer] = solid_rgb
-
 
 def render_car_qimage(
     model: GTCarModel,
@@ -266,7 +264,6 @@ def render_car_qimage(
     out = QImage(bgra.tobytes(), w, h, w * 4, QImage.Format.Format_ARGB32)
     return out.copy()
 
-
 def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict:
     """
     Decode GT-CTEX into per-CLUT images.
@@ -324,7 +321,7 @@ def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict
                     if im.mode != "RGBA":
                         im = im.convert("RGBA")
                     arr = np.array(im, dtype=np.uint8)
-                    arr[..., 3] = np.where(np.all(arr[..., :3] == 0, axis=-1), 0, 255).astype(np.uint8)
+                #    arr[..., 3] = np.where(np.all(arr[..., :3] == 0, axis=-1), 0, 255).astype(np.uint8)
                     palettes[key] = arr
                     # Also index by clut alone for models that store 0-15
                     if set_idx == 0:

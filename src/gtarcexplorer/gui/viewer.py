@@ -369,12 +369,14 @@ def viewer_orbit(win, d_yaw: float, d_pitch: float) -> None:
 
 
 def _find_companion_tex(win, car_entry) -> Optional[bytes]:
-    """Match e.g. 0logn.car → 0logn.tex in the open archive."""
     if not getattr(win, "arc", None) or not getattr(win.arc, "files", None):
         return None
+
+    files = win.arc.files
     name = (car_entry.get("real_name") or car_entry.get("label") or "").lower()
     base = name.rsplit(".", 1)[0]
-    for f in win.arc.files:
+
+    for f in files:
         if f.get("type") != "GT-CTEX Texture":
             continue
         n = (f.get("real_name") or f.get("label") or "").lower()
@@ -383,6 +385,32 @@ def _find_companion_tex(win, car_entry) -> Optional[bytes]:
                 return win.arc.get_data(f["index"])
             except Exception:
                 return None
+
+    try:
+        idx = int(car_entry.get("index", -1))
+    except (TypeError, ValueError):
+        idx = -1
+    if idx > 0:
+        prev = files[idx - 1]
+        if prev.get("type") == "GT-CTEX Texture":
+            try:
+                return win.arc.get_data(prev["index"])
+            except Exception:
+                pass
+
+    if base.isdigit():
+        prev_stem = f"{int(base) - 1:0{len(base)}d}"
+        for f in files:
+            if f.get("type") != "GT-CTEX Texture":
+                continue
+            n = (f.get("real_name") or f.get("label") or "").lower()
+            stem = n.rsplit(".", 1)[0]
+            if stem == prev_stem or stem == str(int(base) - 1):
+                try:
+                    return win.arc.get_data(f["index"])
+                except Exception:
+                    continue
+
     return None
 
 
