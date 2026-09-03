@@ -760,7 +760,7 @@ class GTArcExplorer(QMainWindow):
                 dy = pos.y() - self._drag_last.y()
                 self._drag_last = pos
                 prev_yaw, prev_pitch = self._pending_orbit or (0.0, 0.0)
-                self._pending_orbit = (prev_yaw + dx * 0.4, prev_pitch + dy * 0.3)
+                self._pending_orbit = (prev_yaw - dx * 0.4, prev_pitch - dy * 0.3)
                 if not self._orbit_timer.isActive():
                     self._orbit_timer.start()
                 return True

@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GT-CAR Wheel Fit Tuner</title>
+<style>
+  :root{
+    --bg: #14161a;
+    --panel: #1b1e24;
+    --panel-2: #21252c;
+    --line: #2c313a;
+    --text: #d8dce2;
+    --text-dim: #8a91a0;
+    --cyan: #26d3e0;
+    --cyan-dim: #1a4d52;
+    --amber: #e0a83f;
+    --red: #e0553f;
+    --mono: "SF Mono", "Cascadia Code", Consolas, "JetBrains Mono", monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;
+    height:100%;
+  }
+  .app{
+    display:grid;
+    grid-template-columns: 340px 1fr;
+    height:100vh;
+  }
+  @media (max-width: 860px){
+    .app{ grid-template-columns: 1fr; height:auto; }
+  }
+
+  /* ---- left panel ---- */
+  .panel{
+    background:var(--panel);
+    border-right:1px solid var(--line);
+    padding:20px 20px 28px;
+    overflow-y:auto;
+  }
+  .brand{
+    font-size:13px;
+    letter-spacing:.02em;
+    color:var(--text-dim);
+    margin-bottom:2px;
+  }
+  h1{
+    font-size:18px;
+    font-weight:600;
+    margin:0 0 18px;
+    color:var(--text);
+  }
+  .group{
+    margin-bottom:22px;
+    padding-bottom:18px;
+    border-bottom:1px solid var(--line);
+  }
+  .group:last-of-type{ border-bottom:none; }
+  .group-title{
+    font-size:11px;
+    color:var(--text-dim);
+    margin-bottom:12px;
+    font-weight:600;
+  }
+  .row{
+    margin-bottom:14px;
+  }
+  .row label{
+    display:flex;
+    justify-content:space-between;
+    font-size:12.5px;
+    color:var(--text);
+    margin-bottom:5px;
+  }
+  .row label .val{
+    color:var(--cyan);
+    font-family:var(--mono);
+    font-size:12px;
+  }
+  .row input[type=range]{
+    width:100%;
+    accent-color:var(--cyan);
+    height:4px;
+    cursor:pointer;
+  }
+  .dims{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    gap:8px;
+  }
+  .dims .field{ display:flex; flex-direction:column; gap:4px; }
+  .dims label{ font-size:10.5px; color:var(--text-dim); }
+  .dims input[type=number]{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    border-radius:4px;
+    padding:6px 7px;
+    font-family:var(--mono);
+    font-size:12px;
+    width:100%;
+  }
+  .hint{
+    font-size:11px;
+    color:var(--text-dim);
+    line-height:1.5;
+    margin-top:2px;
+  }
+  .link-toggle{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-size:12px;
+    color:var(--text-dim);
+    margin-bottom:14px;
+    cursor:pointer;
+    user-select:none;
+  }
+  .link-toggle input{ accent-color:var(--cyan); }
+
+  /* ---- right side ---- */
+  .stage{
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+    overflow-y:auto;
+  }
+  @media (max-width: 860px){ .stage{ height:auto; } }
+
+  .views{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:1px;
+    background:var(--line);
+    flex:1;
+    min-height:340px;
+  }
+  @media (max-width: 700px){ .views{ grid-template-columns:1fr; } }
+
+  .view{
+    background:var(--bg);
+    position:relative;
+    display:flex;
+    flex-direction:column;
+  }
+  .view-label{
+    position:absolute;
+    top:10px; left:14px;
+    font-size:11px;
+    color:var(--text-dim);
+    letter-spacing:.03em;
+    z-index:2;
+  }
+  .view svg{ width:100%; height:100%; display:block; }
+
+  .output{
+    background:var(--panel);
+    border-top:1px solid var(--line);
+    padding:16px 22px 20px;
+  }
+  .output-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:10px;
+  }
+  .output-head h2{
+    font-size:12px;
+    font-weight:600;
+    color:var(--text-dim);
+    margin:0;
+  }
+  button.copy{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    font-size:12px;
+    padding:6px 12px;
+    border-radius:5px;
+    cursor:pointer;
+  }
+  button.copy:hover{ border-color:var(--cyan-dim); color:var(--cyan); }
+  button.copy.copied{ border-color:var(--cyan); color:var(--cyan); }
+  pre{
+    margin:0;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:14px 16px;
+    font-family:var(--mono);
+    font-size:12.5px;
+    line-height:1.65;
+    color:var(--text);
+    overflow-x:auto;
+  }
+  .kw{ color:#c586c0; }
+  .cm{ color:var(--text-dim); }
+  .num{ color:var(--amber); }
+  .fn{ color:var(--cyan); }
+
+  /* geometry colors */
+  .body-fill{ fill: rgba(38,211,224,0.06); }
+  .body-stroke{ fill:none; stroke: rgba(216,220,226,0.35); stroke-width:1.5; stroke-dasharray:3 3; }
+  .ground{ stroke: rgba(216,220,226,0.25); stroke-width:1; }
+  .centerline{ stroke: rgba(216,220,226,0.15); stroke-width:1; stroke-dasharray:2 4; }
+  .tyre{ fill: rgba(10,10,12,0.9); stroke: rgba(0,0,0,0.6); }
+  .rim{ fill: rgba(140,145,155,0.7); }
+  .wheel-front{ stroke: var(--cyan); }
+  .wheel-rear{ stroke: var(--amber); }
+  .legend{
+    position:absolute;
+    bottom:10px; left:14px;
+    font-size:10.5px;
+    color:var(--text-dim);
+    display:flex;
+    gap:14px;
+    z-index:2;
+  }
+  .legend span{ display:flex; align-items:center; gap:5px; }
+  .dot{ width:8px; height:8px; border-radius:50%; display:inline-block; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="panel">
+    <div class="brand">GTExplorer &middot; build_car_arrays</div>
+    <h1>Wheel fit tuner</h1>
+
+    <div class="group">
+      <div class="group-title">BODY BBOX (metres, from your model)</div>
+      <div class="dims">
+        <div class="field">
+          <label>width (X)</label>
+          <input type="number" id="bodyW" value="1.75" step="0.05" min="0.3">
+        </div>
+        <div class="field">
+          <label>height (Y)</label>
+          <input type="number" id="bodyH" value="1.15" step="0.05" min="0.2">
+        </div>
+        <div class="field">
+          <label>length (Z)</label>
+          <input type="number" id="bodyL" value="4.20" step="0.05" min="0.5">
+        </div>
+      </div>
+      <div class="hint">Set these to roughly match the car you're eyeballing in GTExplorer &mdash; wider/longer cars change how the same factor looks in practice.</div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">TRACK (side-to-side)</div>
+      <label class="link-toggle">
+        <input type="checkbox" id="linkTrack" checked>
+        Link front / rear track
+      </label>
+      <div class="row">
+        <label>front_track factor <span class="val" id="v-trackF">0.88</span></label>
+        <input type="range" id="trackF" min="0.5" max="0.98" step="0.01" value="0.88">
+      </div>
+      <div class="row" id="rowTrackR">
+        <label>rear_track factor <span class="val" id="v-trackR">0.88</span></label>
+        <input type="range" id="trackR" min="0.5" max="0.98" step="0.01" value="0.88">
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">WHEELBASE (front / rear from centre)</div>
+      <label class="link-toggle">
+        <input type="checkbox" id="linkWb">
+        Link front / rear wheelbase
+      </label>
+      <div class="row">
+        <label>front_wb factor <span class="val" id="v-wbF">0.60</span></label>
+        <input type="range" id="wbF" min="0.2" max="0.95" step="0.01" value="0.60">
+      </div>
+      <div class="row" id="rowWbR">
+        <label>rear_wb factor <span class="val" id="v-wbR">0.60</span></label>
+        <input type="range" id="wbR" min="0.2" max="0.95" step="0.01" value="0.60">
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">WHEEL SIZE</div>
+      <div class="row">
+        <label>radius factor (&times; body_h) <span class="val" id="v-radF">0.22</span></label>
+        <input type="range" id="radF" min="0.08" max="0.42" step="0.01" value="0.22">
+      </div>
+      <div class="row">
+        <label>width factor (&times; body_w) <span class="val" id="v-widF">0.09</span></label>
+        <input type="range" id="widF" min="0.04" max="0.25" step="0.005" value="0.09">
+      </div>
+      <div class="row">
+        <label>rear size bump <span class="val" id="v-rearBump">1.04&nbsp;/&nbsp;1.08</span></label>
+        <input type="range" id="rearBump" min="1.0" max="1.25" step="0.01" value="1.04">
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">RIDE HEIGHT</div>
+      <div class="row">
+        <label>ground offset (&times; radius) <span class="val" id="v-groundF">0.88</span></label>
+        <input type="range" id="groundF" min="0.5" max="1.2" step="0.01" value="0.88">
+      </div>
+      <div class="hint">1.0 = wheel centre sits exactly on the floor line. Lower values sink the wheel deeper into the arch.</div>
+    </div>
+
+  </div>
+
+  <div class="stage">
+    <div class="views">
+      <div class="view" id="viewTop">
+        <div class="view-label">TOP VIEW &middot; X / Z</div>
+        <svg id="svgTop" viewBox="0 0 600 420" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="legend">
+          <span><span class="dot" style="background:var(--cyan)"></span>front</span>
+          <span><span class="dot" style="background:var(--amber)"></span>rear</span>
+        </div>
+      </div>
+      <div class="view" id="viewSide">
+        <div class="view-label">SIDE VIEW &middot; Z / Y</div>
+        <svg id="svgSide" viewBox="0 0 600 420" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+    </div>
+
+    <div class="output">
+      <div class="output-head">
+        <h2>constants to paste into build_car_arrays()</h2>
+        <button class="copy" id="copyBtn">Copy</button>
+      </div>
+      <pre id="codeOut"></pre>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+
+  const ids = ["bodyW","bodyH","bodyL","trackF","trackR","wbF","wbR","radF","widF","rearBump","groundF"];
+  const els = {};
+  ids.forEach(id => els[id] = $(id));
+
+  const linkTrack = $("linkTrack");
+  const linkWb = $("linkWb");
+  const rowTrackR = $("rowTrackR");
+  const rowWbR = $("rowWbR");
+
+  function syncLinkedVisibility(){
+    rowTrackR.style.opacity = linkTrack.checked ? "0.35" : "1";
+    els.trackR.disabled = linkTrack.checked;
+    rowWbR.style.opacity = linkWb.checked ? "0.35" : "1";
+    els.wbR.disabled = linkWb.checked;
+  }
+
+  function readVals(){
+    const bodyW = parseFloat(els.bodyW.value) || 1.75;
+    const bodyH = parseFloat(els.bodyH.value) || 1.15;
+    const bodyL = parseFloat(els.bodyL.value) || 4.20;
+
+    let trackF = parseFloat(els.trackF.value);
+    let trackR = linkTrack.checked ? trackF : parseFloat(els.trackR.value);
+    let wbF = parseFloat(els.wbF.value);
+    let wbR = linkWb.checked ? wbF : parseFloat(els.wbR.value);
+
+    const radF = parseFloat(els.radF.value);
+    const widF = parseFloat(els.widF.value);
+    const rearBump = parseFloat(els.rearBump.value);
+    const widthBump = 1 + (rearBump - 1) * 1.9; // width bump scales a bit faster than radius bump, matches original 1.04/1.08 ratio
+    const groundF = parseFloat(els.groundF.value);
+
+    return {bodyW, bodyH, bodyL, trackF, trackR, wbF, wbR, radF, widF, rearBump, widthBump, groundF};
+  }
+
+  function updateLabels(v){
+    $("v-trackF").textContent = v.trackF.toFixed(2);
+    $("v-trackR").textContent = v.trackR.toFixed(2);
+    $("v-wbF").textContent = v.wbF.toFixed(2);
+    $("v-wbR").textContent = v.wbR.toFixed(2);
+    $("v-radF").textContent = v.radF.toFixed(2);
+    $("v-widF").textContent = v.widF.toFixed(3);
+    $("v-rearBump").textContent = v.rearBump.toFixed(2) + " / " + v.widthBump.toFixed(2);
+    $("v-groundF").textContent = v.groundF.toFixed(2);
+
+    if (linkTrack.checked) els.trackR.value = v.trackF;
+    if (linkWb.checked) els.wbR.value = v.wbF;
+  }
+
+  function computeGeometry(v){
+    const half_w = v.bodyW / 2;
+    const half_l = v.bodyL / 2;
+
+    const front_track = half_w * v.trackF;
+    const rear_track = half_w * v.trackR;
+    const front_wb = half_l * v.wbF;
+    const rear_wb = half_l * v.wbR;
+
+    let auto_r = v.bodyH * v.radF;
+    auto_r = Math.max(0.10, Math.min(0.42, auto_r));
+    let auto_w = v.bodyW * v.widF;
+    auto_w = Math.max(0.07, Math.min(0.25, auto_w));
+
+    const ground_y = -half_w*0 + (-v.bodyH/2) + auto_r * v.groundF; // min_y = -bodyH/2 assuming centered bbox
+
+    const wheels = {
+      FL: {x:-front_track, z: front_wb, r:auto_r, w:auto_w, front:true},
+      FR: {x: front_track, z: front_wb, r:auto_r, w:auto_w, front:true},
+      RL: {x:-rear_track,  z:-rear_wb,  r:auto_r*v.rearBump, w:auto_w*v.widthBump, front:false},
+      RR: {x: rear_track,  z:-rear_wb,  r:auto_r*v.rearBump, w:auto_w*v.widthBump, front:false},
+    };
+
+    return {half_w, half_l, auto_r, auto_w, ground_y, wheels, front_track, rear_track, front_wb, rear_wb};
+  }
+
+  function drawTop(v, g){
+    const svg = $("svgTop");
+    const W = 600, H = 420, pad = 50;
+    const scale = Math.min((W - pad*2) / v.bodyW, (H - pad*2) / v.bodyL);
+    const cx = W/2, cy = H/2;
+
+    // world (x right, z up-screen) -> svg
+    const toSvg = (x, z) => [cx + x*scale, cy - z*scale];
+
+    let parts = [];
+
+    // body rect
+    const [bx0, bz0] = toSvg(-v.bodyW/2, v.bodyL/2);
+    const [bx1, bz1] = toSvg(v.bodyW/2, -v.bodyL/2);
+    parts.push(`<rect x="${bx0}" y="${bz0}" width="${bx1-bx0}" height="${bz1-bz0}" rx="${v.bodyW*scale*0.12}" class="body-fill"/>`);
+    parts.push(`<rect x="${bx0}" y="${bz0}" width="${bx1-bx0}" height="${bz1-bz0}" rx="${v.bodyW*scale*0.12}" class="body-stroke"/>`);
+
+    // centerlines
+    const [clx0, clz0] = toSvg(0, v.bodyL/2 + 0.3);
+    const [clx1, clz1] = toSvg(0, -v.bodyL/2 - 0.3);
+    parts.push(`<line x1="${clx0}" y1="${clz0}" x2="${clx1}" y2="${clz1}" class="centerline"/>`);
+    const [flx0, flz0] = toSvg(-v.bodyW/2 - 0.3, 0);
+    const [flx1, flz1] = toSvg(v.bodyW/2 + 0.3, 0);
+    parts.push(`<line x1="${flx0}" y1="${flz0}" x2="${flx1}" y2="${flz1}" class="centerline"/>`);
+
+    // wheels as ellipses (radius x width footprint from above)
+    Object.entries(g.wheels).forEach(([k, w]) => {
+      const [wx, wz] = toSvg(w.x, w.z);
+      const rx = w.w * scale * 3.2; // exaggerate width visually so it's visible from above
+      const ry = w.r * scale;
+      const cls = w.front ? "wheel-front" : "wheel-rear";
+      parts.push(`<ellipse cx="${wx}" cy="${wz}" rx="${Math.max(rx,4)}" ry="${Math.max(ry,4)}" class="tyre ${cls}" stroke-width="2"/>`);
+    });
+
+    svg.innerHTML = parts.join("");
+  }
+
+  function drawSide(v, g){
+    const svg = $("svgSide");
+    const W = 600, H = 420, pad = 50;
+    const scale = Math.min((W - pad*2) / v.bodyL, (H - pad*2) / (v.bodyH*1.6));
+    const cx = W/2;
+    const groundScreenY = H - 70;
+
+    // world (z right = front, y up) -> svg
+    const toSvg = (z, y) => [cx + z*scale, groundScreenY - (y - g.ground_y_min)*scale];
+    // We define ground_y_min as bottom of body (-bodyH/2)
+    const groundYWorld = -v.bodyH/2;
+
+    const toSvg2 = (z, y) => [cx + z*scale, groundScreenY - (y - groundYWorld)*scale];
+
+    let parts = [];
+
+    // ground line
+    parts.push(`<line x1="30" y1="${groundScreenY}" x2="${W-30}" y2="${groundScreenY}" class="ground"/>`);
+
+    // body silhouette (simple rounded rect proxy)
+    const [bz0, by0] = toSvg2(-v.bodyL/2, v.bodyH/2);
+    const [bz1, by1] = toSvg2(v.bodyL/2, 0);
+    parts.push(`<rect x="${bz0}" y="${by0}" width="${bz1-bz0}" height="${by1-by0}" rx="14" class="body-fill"/>`);
+    parts.push(`<rect x="${bz0}" y="${by0}" width="${bz1-bz0}" height="${by1-by0}" rx="14" class="body-stroke"/>`);
+
+    // front/rear arrows label
+    parts.push(`<text x="${bz1-4}" y="${by0-10}" text-anchor="end" font-size="10" fill="var(--cyan)" font-family="monospace">FRONT &rarr;</text>`);
+    parts.push(`<text x="${bz0+4}" y="${by0-10}" text-anchor="start" font-size="10" fill="var(--amber)" font-family="monospace">&larr; REAR</text>`);
+
+    // wheels as circles, only need one per axle side (front pair overlap in side view)
+    const drawn = {};
+    Object.entries(g.wheels).forEach(([k, w]) => {
+      const key = w.front ? "F" : "R";
+      if (drawn[key]) return;
+      drawn[key] = true;
+      const wy = groundYWorld + w.r * v.groundF;
+      const [wz, wsy] = toSvg2(w.z, wy);
+      const r = w.r * scale;
+      const cls = w.front ? "wheel-front" : "wheel-rear";
+      parts.push(`<circle cx="${wz}" cy="${wsy}" r="${r}" class="tyre ${cls}" stroke-width="2"/>`);
+      parts.push(`<circle cx="${wz}" cy="${wsy}" r="${r*0.55}" class="rim"/>`);
+    });
+
+    svg.innerHTML = parts.join("");
+  }
+
+  function fmt(n, d){ return n.toFixed(d); }
+
+  function buildCode(v, g){
+    return (
+`<span class="cm"># Distances from body centre (use half-extents, not full width/length)</span>
+<span class="kw">front_track</span> = body_w * <span class="num">0.5</span> * <span class="num">${fmt(v.trackF,2)}</span>
+<span class="kw">rear_track</span>  = body_w * <span class="num">0.5</span> * <span class="num">${fmt(v.trackR,2)}</span>
+<span class="kw">front_wb</span>    = body_l * <span class="num">0.5</span> * <span class="num">${fmt(v.wbF,2)}</span>
+<span class="kw">rear_wb</span>     = body_l * <span class="num">0.5</span> * <span class="num">${fmt(v.wbR,2)}</span>
+
+<span class="kw">auto_r</span> = <span class="fn">max</span>(<span class="num">0.10</span>, <span class="fn">min</span>(<span class="num">0.42</span>, body_h * <span class="num">${fmt(v.radF,2)}</span>))
+<span class="kw">auto_w</span> = <span class="fn">max</span>(<span class="num">0.07</span>, <span class="fn">min</span>(<span class="num">0.25</span>, body_w * <span class="num">${fmt(v.widF,3)}</span>))
+
+<span class="cm"># Ground: bottom of body + radius so tyre sits in the arch</span>
+<span class="kw">ground_y</span> = min_y + auto_r * <span class="num">${fmt(v.groundF,2)}</span>
+
+<span class="kw">targets</span> = [
+    (cx_body - front_track, ground_y, cz_body + front_wb),  <span class="cm"># FL</span>
+    (cx_body + front_track, ground_y, cz_body + front_wb),  <span class="cm"># FR</span>
+    (cx_body - rear_track,  ground_y, cz_body - rear_wb),   <span class="cm"># RL</span>
+    (cx_body + rear_track,  ground_y, cz_body - rear_wb),   <span class="cm"># RR</span>
+]
+
+<span class="cm"># in the final wheel-build loop, rear size multipliers:</span>
+<span class="kw">radius</span> = auto_r * (<span class="num">1.0</span> <span class="kw">if</span> is_front <span class="kw">else</span> <span class="num">${fmt(v.rearBump,2)}</span>)
+<span class="kw">width</span>  = auto_w * (<span class="num">1.0</span> <span class="kw">if</span> is_front <span class="kw">else</span> <span class="num">${fmt(v.widthBump,2)}</span>)`
+    );
+  }
+
+  function render(){
+    syncLinkedVisibility();
+    const v = readVals();
+    updateLabels(v);
+    const g = computeGeometry(v);
+    drawTop(v, g);
+    drawSide(v, g);
+    $("codeOut").innerHTML = buildCode(v, g);
+  }
+
+  ids.forEach(id => els[id].addEventListener("input", render));
+  linkTrack.addEventListener("change", render);
+  linkWb.addEventListener("change", render);
+
+  $("copyBtn").addEventListener("click", () => {
+    const text = $("codeOut").textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = $("copyBtn");
+      btn.textContent = "Copied";
+      btn.classList.add("copied");
+      setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1400);
+    });
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

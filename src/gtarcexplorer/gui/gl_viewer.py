@@ -1,8 +1,4 @@
-"""
-OpenGL model viewer widget for GT-PS tracks and GT-CAR models.
 
-Uses QOpenGLWidget with QOpenGLShaderProgram / QOpenGLBuffer for PyQt5/6 compatibility.
-"""
 from __future__ import annotations
 
 import math
@@ -43,7 +39,7 @@ except ImportError:
     _QT = 5
 
 
-# GLSL ES-friendly (works on 2.1 compat / core with #version omitted on many drivers)
+# GLSL ES-friendly
 VERT_SRC = """
 attribute vec3 aPos;
 attribute vec3 aColor;
@@ -309,7 +305,7 @@ class ModelGLWidget(QOpenGLWidget):
         self._funcs = None
         self._last_error = ""
 
-    # ------------------------------------------------------------------ API
+    # API
     def is_ready(self) -> bool:
         return bool(self._gl_ready)
 
@@ -449,7 +445,7 @@ class ModelGLWidget(QOpenGLWidget):
                 self._last_error = str(e)
             self.update()
 
-    # -------------------------------------------------------------- helpers
+    # helpers
     def _frame_from_positions(self, pos: np.ndarray) -> None:
         lo = pos.min(axis=0)
         hi = pos.max(axis=0)
@@ -489,7 +485,7 @@ class ModelGLWidget(QOpenGLWidget):
         view.lookAt(eye, self._target, up)
         return proj * view
 
-    # ------------------------------------------------------------- GL lifecycle
+    # GL lifecycle
     def initializeGL(self) -> None:
         try:
             self._funcs = _resolve_gl_functions(self)
@@ -728,7 +724,7 @@ class ModelGLWidget(QOpenGLWidget):
         if self._funcs is not None:
             self._funcs.glViewport(0, 0, max(1, w), max(1, h))
 
-    # ------------------------------------------------------------- interaction
+    # interaction
     @staticmethod
     def _left_button():
         mb = getattr(Qt, "MouseButton", None)
@@ -752,7 +748,7 @@ class ModelGLWidget(QOpenGLWidget):
                 dy = pos.y() - self._drag_last.y()
                 self._drag_last = pos
                 # Update yaw/pitch directly; set_camera triggers a single update()
-                self.set_camera(self._yaw + dx * 0.4, self._pitch + dy * 0.3)
+                self.set_camera(self._yaw - dx * 0.4, self._pitch - dy * 0.3)
         except Exception as e:
             self._last_error = f"mouse: {e}"
         super().mouseMoveEvent(event)
@@ -775,9 +771,57 @@ class ModelGLWidget(QOpenGLWidget):
         event.accept()
 
 
-# ---------------------------------------------------------------------------
 # Mesh builders
-# ---------------------------------------------------------------------------
+
+
+def _build_wheel_geometry(
+    cx: float, cy: float, cz: float, radius: float, width: float, segments: int = 14
+):
+    """Return (positions, colors, indices) for one wheel."""
+    positions: list = []
+    colors: list = []
+    indices: list = []
+    if radius <= 1e-6:
+        return positions, colors, indices
+    half = max(radius * 0.14, abs(width) * 0.5)
+    rim_r = radius * 0.58
+    tyre_col = (0.07, 0.07, 0.08)
+    rim_col = (0.62, 0.62, 0.65)
+    hub_col = (0.28, 0.28, 0.30)
+
+    def add(px, py, pz, col):
+        positions.append((float(px), float(py), float(pz)))
+        colors.append(col)
+        return len(positions) - 1
+
+    ol, orr, il, ir = [], [], [], []
+    for i in range(segments):
+        a = (2.0 * math.pi * i) / segments
+        sy, cz_ = math.sin(a), math.cos(a)
+        y, z = cy + radius * sy, cz + radius * cz_
+        yi, zi = cy + rim_r * sy, cz + rim_r * cz_
+        ol.append(add(cx - half, y, z, tyre_col))
+        orr.append(add(cx + half, y, z, tyre_col))
+        il.append(add(cx - half * 0.92, yi, zi, rim_col))
+        ir.append(add(cx + half * 0.92, yi, zi, rim_col))
+
+    for i in range(segments):
+        j = (i + 1) % segments
+        # tread
+        indices.extend([ol[i], orr[i], orr[j], ol[i], orr[j], ol[j]])
+        # sidewalls
+        indices.extend([ol[i], ol[j], il[j], ol[i], il[j], il[i]])
+        indices.extend([orr[i], ir[i], ir[j], orr[i], ir[j], orr[j]])
+
+    hub_l = add(cx - half * 0.2, cy, cz, hub_col)
+    hub_r = add(cx + half * 0.2, cy, cz, hub_col)
+    for i in range(segments):
+        j = (i + 1) % segments
+        indices.extend([hub_l, il[j], il[i]])
+        indices.extend([hub_r, ir[i], ir[j]])
+
+    return positions, colors, indices
+
 
 def build_car_arrays(model, lod_index: int = 0, tex_images: Optional[dict] = None):
     """
@@ -909,6 +953,114 @@ def build_car_arrays(model, lod_index: int = 0, tex_images: Optional[dict] = Non
     # Solid / untextured faces: GT1 face_colour is not reliably available, and
     # drawing them caused white wheel-arch fills. Software also skips fc==0.
     # Wheel wells intentionally remain holes (dark clear colour shows through).
+
+    # --- Procedural wheels at GT-CAR wheel positions ---
+    # File wheel coords often don't share the LOD vertex scale. Take the sign /
+    # ordering from the file, then fit track + wheelbase into the body bbox so
+    # tyres land in the arches.
+    wheels = list(getattr(model, "wheels", []) or [])
+    if wheels and positions:
+        xs = [p[0] for p in positions]
+        ys = [p[1] for p in positions]
+        zs = [p[2] for p in positions]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        min_z, max_z = min(zs), max(zs)
+        body_h = max(1e-6, max_y - min_y)
+        body_w = max(1e-6, max_x - min_x)
+        body_l = max(1e-6, max_z - min_z)
+        cx_body = 0.5 * (min_x + max_x)
+        cz_body = 0.5 * (min_z + max_z)
+
+        auto_r = max(0.10, min(0.42, body_h * 0.22))
+        auto_w = max(0.07, min(0.25, body_w * 0.09))
+
+        # Raw file positions (for left/right & front/rear signs only)
+        raw = []
+        for w in wheels[:4]:
+            raw.append((
+                float(getattr(w, "x", 0.0)),
+                float(getattr(w, "y", 0.0)),
+                float(getattr(w, "z", 0.0)),
+            ))
+        # Order is FL, FR, RL, RR after gtcar reorder
+        # Target: sit just inside body extents
+
+        # Distances from body centre (use half-extents, not full width/length)
+        front_track = body_w * 0.5 * 0.88   # front-axle track
+        rear_track = body_w * 0.5 * 0.88    # rear-axle track
+        front_wb = body_l * 0.5 * 0.60      # front axle distance from centre
+        rear_wb = body_l * 0.5 * 0.60       # rear axle distance from centre — tune independently
+
+        # Ground: bottom of body + radius so tyre sits in the arch
+        ground_y = min_y + auto_r * 0.90
+
+        targets = [
+            (cx_body - front_track, ground_y, cz_body + front_wb),  # FL
+            (cx_body + front_track, ground_y, cz_body + front_wb),  # FR
+            (cx_body - rear_track, ground_y, cz_body - rear_wb),    # RL
+            (cx_body + rear_track, ground_y, cz_body - rear_wb),    # RR
+        ]
+
+        # Prefer file signs when available (handles odd ordering)
+        if len(raw) >= 4:
+            # Match each target slot by nearest raw direction in XZ, using the
+            # OLD symmetric targets purely to figure out which raw index is
+            # front-left/front-right/rear-left/rear-right.
+            used = set()
+            match_idx = [None, None, None, None]
+            for ti, (tx, ty, tz) in enumerate(targets):
+                best_i, best_d = 0, 1e30
+                for ri, (rx, ry, rz) in enumerate(raw):
+                    if ri in used:
+                        continue
+                    sx, sz = rx * scale, rz * scale
+                    d = (sx - tx) ** 2 + (sz - tz) ** 2
+                    if d < best_d:
+                        best_d, best_i = d, ri
+                used.add(best_i)
+                match_idx[ti] = best_i
+
+            # Raw file units for wheel Z don't match the LOD vertex scale, so
+            # don't use rz*scale as an absolute distance. Instead, use the
+            # RATIO of front vs rear raw Z offsets (scale-independent) to
+            # redistribute the *already-tuned* total front-rear span.
+            raw_front_z = 0.5 * (raw[match_idx[0]][2] + raw[match_idx[1]][2])
+            raw_rear_z = 0.5 * (raw[match_idx[2]][2] + raw[match_idx[3]][2])
+            raw_center_z = 0.5 * (raw_front_z + raw_rear_z)
+            half_front_raw = abs(raw_front_z - raw_center_z)
+            half_rear_raw = abs(raw_center_z - raw_rear_z)
+            total_raw = half_front_raw + half_rear_raw
+
+            if total_raw > 1e-6:
+                total_span = front_wb + rear_wb  # preserve the tuned overall span
+                front_offset = total_span * (half_front_raw / total_raw)
+                rear_offset = total_span * (half_rear_raw / total_raw)
+            else:
+                front_offset = front_wb
+                rear_offset = rear_wb
+
+            ordered = [
+                (targets[0][0], ground_y, cz_body + front_offset),  # FL
+                (targets[1][0], ground_y, cz_body + front_offset),  # FR
+                (targets[2][0], ground_y, cz_body - rear_offset),   # RL
+                (targets[3][0], ground_y, cz_body - rear_offset),   # RR
+            ]
+            targets = ordered
+
+        for wi, (cx, cy, cz) in enumerate(targets):
+            is_front = wi < 2
+            radius = auto_r * (1.0 if is_front else 1.04)
+            width = auto_w * (1.0 if is_front else 1.08)
+            wpos, wcol, widx = _build_wheel_geometry(cx, cy, cz, radius, width)
+            base = len(positions)
+            for p, c in zip(wpos, wcol):
+                positions.append(p)
+                colors.append(c)
+                uvs.append((0.0, 0.0))
+                use_tex_list.append(0.0)
+            for vi in widx:
+                indices.append(base + int(vi))
 
     if not positions or not indices:
         return None
