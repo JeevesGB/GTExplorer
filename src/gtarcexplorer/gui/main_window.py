@@ -8,6 +8,11 @@ from ..utils.filelist import bundled_lists
 from . import names, tim_tools, viewer, actions
 from . import preview, help_dialog, actions_tpk
 from .viewer import show_model_in_viewer, render_model_viewer, model_orbit, model_zoom
+try:
+    from .gl_viewer import ModelGLWidget, configure_default_surface_format
+except Exception:
+    ModelGLWidget = None
+    configure_default_surface_format = None
 
 from PyQt6.QtCore import Qt, QSize, QSettings, pyqtSignal, QEvent, QTimer
 from PyQt6.QtGui import (
@@ -540,7 +545,19 @@ class GTArcExplorer(QMainWindow):
         self._viewer_scroll.setObjectName("viewerScroll")
         self._viewer_scroll.setWidgetResizable(True)
         self._viewer_scroll.setWidget(self.viewer_label)
-        vbody.addWidget(self._viewer_scroll)
+
+        # Stack: software QLabel scroll area + OpenGL widget
+        self._viewer_stack = QStackedWidget()
+        self._viewer_stack.addWidget(self._viewer_scroll)  # index 0 = software / images
+        self.gl_viewer = None
+        if ModelGLWidget is not None:
+            try:
+                self.gl_viewer = ModelGLWidget(self)
+                self.gl_viewer.setObjectName("glViewer")
+                self._viewer_stack.addWidget(self.gl_viewer)  # index 1 = OpenGL
+            except Exception:
+                self.gl_viewer = None
+        vbody.addWidget(self._viewer_stack)
         vbody.setSizes([200, 800])
         viewer_lay.addWidget(vbody)
         self.canvas_stack.addWidget(viewer_page)
@@ -601,9 +618,14 @@ class GTArcExplorer(QMainWindow):
             self.tree_empty_label.setGeometry(self.tree.viewport().rect())
 
     def closeEvent(self, event):
-        self.settings.setValue("geometry", self.saveGeometry())
-        self.settings.setValue("splitter", self.main_splitter.sizes())
-        self.settings.setValue("theme", self._theme)
+        # Stop background loaders before the QObject is destroyed
+        self._cancel_load = True
+        try:
+            self.settings.setValue("geometry", self.saveGeometry())
+            self.settings.setValue("splitter", self.main_splitter.sizes())
+            self.settings.setValue("theme", self._theme)
+        except Exception:
+            pass
         super().closeEvent(event)
 
     def _last_dir(self, key: str = "last_open_dir") -> str:
@@ -745,9 +767,19 @@ class GTArcExplorer(QMainWindow):
 
             if event.type() == QEvent.Type.MouseButtonRelease:
                 self._drag_last = None
-                if getattr(self, "_viewer_mode", None) == "car":
-                    from .viewer import render_car_viewer
-                    render_car_viewer(self, low_quality=False)
+                mode = getattr(self, "_viewer_mode", None)
+                # OpenGL already shows the final frame; only re-render software path
+                gl = getattr(self, "gl_viewer", None)
+                on_gl = gl is not None and getattr(gl, "_gl_ready", False) and (
+                    getattr(gl, "_index_count", 0) > 0 or getattr(gl, "_line_index_count", 0) > 0
+                )
+                if not on_gl:
+                    if mode == "car":
+                        from .viewer import render_car_viewer
+                        render_car_viewer(self, low_quality=False)
+                    elif mode == "model":
+                        from .viewer import render_model_viewer
+                        render_model_viewer(self, low_quality=False)
                 return True
 
             if event.type() == QEvent.Type.Wheel:
@@ -1174,6 +1206,12 @@ class GTArcExplorer(QMainWindow):
         viewer.show_car_in_viewer(self,data,label,tex_data=tex_data)
 
 def run():
+    # Request a decent GL context before QApplication creates the GUI
+    try:
+        from .gl_viewer import configure_default_surface_format
+        configure_default_surface_format()
+    except Exception:
+        pass
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     window = GTArcExplorer()

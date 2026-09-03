@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import io
@@ -174,7 +173,9 @@ class Polygon:
         self.n3 = _safe_normal(n3)
 
         t1, t2, t3, face_type_data = struct.unpack("<4B", f.read(4))
-        if face_type_data in (33, 41):  
+        # NOTE: face_colour is not reliably encoded in t1..t3 on GT1; leave 0
+        # so software/GL skip untextured fills (wheel wells stay as dark holes).
+        if face_type_data in (33, 41):
             self.face_type = face_type_data - 1
         else:
             self.face_type = face_type_data

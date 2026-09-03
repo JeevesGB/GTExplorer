@@ -30,6 +30,57 @@ from . import names
 
 ARCHIVE_GLOBS = ("*.dat", "*.DAT", "*.arc", "*.ARC")
 
+
+def _win_alive(win) -> bool:
+    """Return False if the Qt window has been destroyed (worker still running)."""
+    try:
+        # PyQt6
+        from PyQt6 import sip
+        return not sip.isdeleted(win)
+    except Exception:
+        pass
+    try:
+        from PyQt5 import sip
+        return not sip.isdeleted(win)
+    except Exception:
+        pass
+    try:
+        # shiboken fallback
+        import shiboken6
+        return shiboken6.isValid(win)
+    except Exception:
+        pass
+    try:
+        # Last resort: accessing a Qt property
+        _ = win.objectName()
+        return True
+    except RuntimeError:
+        return False
+    except Exception:
+        return False
+
+
+def _emit_progress(win, cur: int, total: int) -> bool:
+    if not _win_alive(win):
+        return False
+    try:
+        win.progress_signal.emit(cur, total)
+        return True
+    except RuntimeError:
+        return False
+
+
+def _emit_finished(win, ok: bool, payload) -> bool:
+    if not _win_alive(win):
+        return False
+    try:
+        win.finished_signal.emit(ok, payload)
+        return True
+    except RuntimeError:
+        return False
+
+
+
 def last_dir(win, key: str = "last_open_dir") -> str:
     return win.settings.value(key, "", type=str) or ""
 
@@ -100,7 +151,7 @@ def open_file_path(win, path: Path, push_nav: bool = True) -> None:
                     "comp_size": len(raw), "decomp_size": len(raw),
                     "data": raw, "real_name": path.name,
                 }]
-                win.finished_signal.emit(True, str(path))
+                _emit_finished(win, True, str(path))
                 return
 
             if (header.startswith(b"@(#)GT-ARC") or header[1:9] == b"@(#)GT-A"
@@ -116,23 +167,27 @@ def open_file_path(win, path: Path, push_nav: bool = True) -> None:
                 total = len(win.arc.files)
                 if win._lazy_load:
                     for i in range(total):
-                        if win._cancel_load:
+                        if not _win_alive(win) or getattr(win, "_cancel_load", False):
                             break
                         try:
                             win.arc.get_data(i)
                         except Exception:
                             pass
                         if i % 16 == 0 or i == total - 1:
-                            win.progress_signal.emit(i + 1, total)
+                            if not _emit_progress(win, i + 1, total):
+                                break
                 else:
                     for i in range(total):
+                        if not _win_alive(win) or getattr(win, "_cancel_load", False):
+                            break
                         try:
                             win.arc.get_data(i)
                         except Exception:
                             pass
                         if i % 8 == 0 or i == total - 1:
-                            win.progress_signal.emit(i + 1, total)
-                win.finished_signal.emit(True, str(path))
+                            if not _emit_progress(win, i + 1, total):
+                                break
+                _emit_finished(win, True, str(path))
                 return
 
             raw = path.read_bytes()
@@ -151,11 +206,11 @@ def open_file_path(win, path: Path, push_nav: bool = True) -> None:
                 "offset": 0, "comp_size": len(raw), "decomp_size": len(raw),
                 "data": raw, "real_name": path.name,
             }]
-            win.finished_signal.emit(True, str(path))
+            _emit_finished(win, True, str(path))
         except Exception as e:
             import traceback
             traceback.print_exc()
-            win.finished_signal.emit(False, f"{type(e).__name__}: {e}")
+            _emit_finished(win, False, f"{type(e).__name__}: {e}")
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -196,7 +251,7 @@ def open_folder_path(win, folder: Path) -> None:
                     "data": data, "real_name": fp.name,
                 })
                 if i % 8 == 0 or i == total - 1:
-                    win.progress_signal.emit(i + 1, total)
+                    _emit_progress(win, i + 1, total)
             win.arc = GTArc()
             win.arc.path = str(folder)
             win.arc.raw = b""
@@ -205,11 +260,11 @@ def open_folder_path(win, folder: Path) -> None:
             win.arc.name_map = None
             win.arc.files = entries
             win.extract_dir = folder
-            win.finished_signal.emit(True, str(folder))
+            _emit_finished(win, True, str(folder))
         except Exception as e:
             import traceback
             traceback.print_exc()
-            win.finished_signal.emit(False, f"{type(e).__name__}: {e}")
+            _emit_finished(win, False, f"{type(e).__name__}: {e}")
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -268,14 +323,14 @@ def open_nested_arc(win) -> None:
                 except Exception:
                     pass
                 if i % 8 == 0 or i == total - 1:
-                    win.progress_signal.emit(i + 1, total)
-            win.finished_signal.emit(True, str(tmp))
+                    _emit_progress(win, i + 1, total)
+            _emit_finished(win, True, str(tmp))
         except Exception as e:
             if win._nav_stack:
                 win._nav_stack.pop()
             import traceback
             traceback.print_exc()
-            win.finished_signal.emit(False, str(e))
+            _emit_finished(win, False, str(e))
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -364,9 +419,9 @@ def extract_all(win) -> None:
                 expand_tim_packs=expand,
                 expand_inst_banks=expand_inst,
             )
-            win.finished_signal.emit(True, result)
+            _emit_finished(win, True, result)
         except Exception as e:
-            win.finished_signal.emit(False, str(e))
+            _emit_finished(win, False, str(e))
 
     try:
         win.finished_signal.disconnect()
@@ -492,9 +547,9 @@ def repack(win) -> None:
                 force_uncompressed=force_unc,
                 compress_level=level,
             )
-            win.finished_signal.emit(True, result)
+            _emit_finished(win, True, result)
         except Exception as e:
-            win.finished_signal.emit(False, str(e))
+            _emit_finished(win, False, str(e))
 
     try:
         win.finished_signal.disconnect()

@@ -13,6 +13,52 @@ except ImportError:
 
 from ..utils.gtps import GTPSModel, render_qimage_faces
 
+# OpenGL path (optional — falls back to software if unavailable)
+_GL_AVAILABLE = False
+try:
+    from .gl_viewer import ModelGLWidget, build_car_arrays
+    _GL_AVAILABLE = True
+except Exception:
+    ModelGLWidget = None  # type: ignore
+    build_car_arrays = None  # type: ignore
+
+
+def _use_gl(win) -> bool:
+    if not _GL_AVAILABLE or getattr(win, "_force_software_viewer", False): #    True: Software Rendering || False: OpenGL Rendering
+        return False
+    return getattr(win, "gl_viewer", None) is not None
+
+
+def _ensure_gl_shown(win) -> bool:
+    """Switch to GL page and force a context so initializeGL can run."""
+    gl = getattr(win, "gl_viewer", None)
+    if gl is None:
+        return False
+    _show_gl_page(win)
+    gl.show()
+    try:
+        from PyQt6.QtWidgets import QApplication
+    except ImportError:
+        from PyQt5.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is not None:
+        app.processEvents()
+    return True
+
+
+def _show_gl_page(win) -> None:
+    stack = getattr(win, "_viewer_stack", None)
+    gl = getattr(win, "gl_viewer", None)
+    if stack is not None and gl is not None:
+        stack.setCurrentWidget(gl)
+
+
+def _show_label_page(win) -> None:
+    stack = getattr(win, "_viewer_stack", None)
+    scroll = getattr(win, "_viewer_scroll", None)
+    if stack is not None and scroll is not None:
+        stack.setCurrentWidget(scroll)
+
 
 def _get_viewer_label(win):
     return getattr(win, "viewer_label", None)
@@ -29,6 +75,7 @@ def _pil_to_qpixmap(im) -> QPixmap:
 def _set_image(win, pix: QPixmap, info: str = "") -> None:
     win._viewer_image = pix
     win._viewer_scale = 1.0
+    _show_label_page(win)
     label = _get_viewer_label(win)
     if label is not None:
         label.setPixmap(pix)
@@ -39,6 +86,13 @@ def _set_image(win, pix: QPixmap, info: str = "") -> None:
 
 def _clear_viewer(win, msg: str = "") -> None:
     win._viewer_image = None
+    gl = getattr(win, "gl_viewer", None)
+    if gl is not None:
+        try:
+            gl.clear_mesh()
+        except Exception:
+            pass
+    _show_label_page(win)
     label = _get_viewer_label(win)
     if label is not None:
         label.clear()
@@ -81,9 +135,12 @@ def show_in_viewer(win, data: bytes, label: str = "", *, keep_pack: bool = False
     except Exception as e:
         _clear_viewer(win, f"{label} – TIM error: {e}")
 
+
 def tim_to_image(data: bytes):
+    from ..utils.tim_image import decode_tim
     img, _info = decode_tim(data)
     return img
+
 
 def show_pack_in_viewer(win, data: bytes) -> None:
     """TIM pack – fill left list; show first texture if present."""
@@ -263,12 +320,23 @@ def viewer_zoom(win, factor: float, low_quality: bool = False) -> None:
         model_zoom(win, factor, low_quality=low_quality)
         return
     if mode == "car":
-        # Scale orbit distance via a zoom factor used in render.
-        # factor == 1.0 means "no change" (used for the settle re-render).
         if factor != 1.0:
             z = float(getattr(win, "_car_zoom", 1.0) or 1.0)
             z = max(0.35, min(3.0, z * factor))
             win._car_zoom = z
+        if _use_gl(win):
+            # Orbit distance scales with zoom; avoid full mesh rebuild
+            gl = win.gl_viewer
+            if factor != 1.0 and factor > 0:
+                gl.zoom(factor)
+            elif factor == 1.0:
+                # settle: re-apply camera from stored zoom
+                gl.set_camera(
+                    getattr(win, "_model_yaw", 40.0),
+                    getattr(win, "_model_pitch", 18.0),
+                    distance=gl._extent * 1.8 / max(0.35, float(getattr(win, "_car_zoom", 1.0) or 1.0)),
+                )
+            return
         render_car_viewer(win, low_quality=low_quality)
         return
 
@@ -302,7 +370,6 @@ def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
         _clear_viewer(win, f"{label} – parse error: {e}")
         return
 
-    model._faces_cache = None
     win._model = model
     win._model_yaw = 35.0
     win._model_pitch = 25.0
@@ -312,28 +379,75 @@ def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
         win.viewer_info.setText(
             f"{label}  •  {model.vertex_count:,} verts  •  "
             f"X[{lo[0]:.0f},{hi[0]:.0f}] Y[{lo[1]:.0f},{hi[1]:.0f}] "
-            f"Z[{lo[2]:.0f},{hi[2]:.0f}]"
+            f"Z[{lo[2]:.0f},{hi[2]:.0f]}"
         )
     render_model_viewer(win)
 
 
-def render_model_viewer(win) -> None:
+def render_model_viewer(win, low_quality: bool = False) -> None:
     model = getattr(win, "_model", None)
-    label = _get_viewer_label(win)
-    if model is None or label is None:
+    if model is None:
         return
 
+    # Prefer OpenGL
+    if _use_gl(win):
+        gl = win.gl_viewer
+        try:
+            _ensure_gl_shown(win)
+            gl.set_track_mesh(
+                model.vertices,
+                model.faces,
+                yaw=getattr(win, "_model_yaw", 35.0),
+                pitch=getattr(win, "_model_pitch", 25.0),
+            )
+            gl.set_camera(
+                getattr(win, "_model_yaw", 35.0),
+                getattr(win, "_model_pitch", 25.0),
+            )
+            if getattr(gl, "_gl_ready", False) and (
+                getattr(gl, "_index_count", 0) > 0 or getattr(gl, "_line_index_count", 0) > 0
+            ):
+                return
+            if getattr(gl, "_last_error", ""):
+                raise RuntimeError(gl._last_error)
+        except Exception as e:
+            if hasattr(win, "viewer_info"):
+                win.viewer_info.setText(f"GL model failed, software fallback: {e}")
+            # fall through to software
+
+    label = _get_viewer_label(win)
+    if label is None:
+        return
+    _show_label_page(win)
+
     w, h = _viewer_size(win)
+    if low_quality:
+        w = max(320, w // 2)
+        h = max(240, h // 2)
+
     model.camera.yaw_deg = getattr(win, "_model_yaw", 35.0)
     model.camera.pitch_deg = getattr(win, "_model_pitch", 25.0)
 
     try:
-        use_wireframe = model.vertex_count <= 10000
+        use_wireframe = low_quality or model.vertex_count <= 10000
+        max_faces = 20000 if low_quality else 60000
         qimg = render_qimage_faces(
-            model, w, h, wireframe=use_wireframe, max_faces=60000,
+            model, w, h,
+            wireframe=use_wireframe,
+            max_faces=max_faces,
+            low_quality=low_quality,
         )
-        label.setPixmap(QPixmap.fromImage(qimg))
-        label.adjustSize()
+        pix = QPixmap.fromImage(qimg)
+        if low_quality:
+            vp_w, vp_h = _viewer_size(win)
+            pix = pix.scaled(
+                vp_w, vp_h,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
+        label.setPixmap(pix)
+        if not low_quality:
+            label.adjustSize()
     except Exception as e:
         if hasattr(win, "viewer_info"):
             win.viewer_info.setText(f"Model render failed: {e}")
@@ -341,16 +455,29 @@ def render_model_viewer(win) -> None:
 
 
 def model_orbit(win, d_yaw: float, d_pitch: float) -> None:
+    """Orbit camera. OpenGL path only updates uniforms (cheap). Software uses low_quality."""
     win._model_yaw = (getattr(win, "_model_yaw", 0.0) + d_yaw) % 360.0
-    win._model_pitch = max(-89.0, min(89.0, getattr(win, "_model_pitch", 0.0) + d_pitch))
+    win._model_pitch = max(-89.0, min(89.0, getattr(win, "_model_pitch", 20.0) + d_pitch))
     mode = getattr(win, "_viewer_mode", None)
+    if _use_gl(win) and mode in ("model", "car"):
+        gl = win.gl_viewer
+        # Only camera — do not rebuild or re-upload mesh
+        gl.set_camera(win._model_yaw, win._model_pitch)
+        return
+    # Software path: aggressive low quality while dragging
     if mode == "car":
-        render_car_viewer(win, low_quality=True)  # fast while dragging
-    else:
-        render_model_viewer(win)
+        render_car_viewer(win, low_quality=True)
+    elif mode == "model":
+        render_model_viewer(win, low_quality=True)
 
 
 def model_zoom(win, factor: float, low_quality: bool = False) -> None:
+    mode = getattr(win, "_viewer_mode", None)
+    if _use_gl(win) and mode in ("model", "car"):
+        if factor != 1.0 and factor > 0.0:
+            win.gl_viewer.zoom(factor)
+        return
+
     model = getattr(win, "_model", None)
     if model and hasattr(model, "camera") and factor != 1.0 and factor > 0.0:
         model.camera.distance = max(10.0, model.camera.distance / factor)
@@ -457,8 +584,9 @@ def show_car_in_viewer(
 
     if hasattr(win, "viewer_info"):
         tex_note = "textured" if win._car_tex_images else "untextured"
+        backend = "OpenGL" if _use_gl(win) else "software"
         win.viewer_info.setText(
-            f"{label}  •  LOD0  {n_verts} verts  {n_faces} faces  •  {tex_note}"
+            f"{label}  •  LOD0  {n_verts} verts  {n_faces} faces  •  {tex_note}  •  {backend}"
         )
 
     render_car_viewer(win)
@@ -466,19 +594,59 @@ def show_car_in_viewer(
 
 def render_car_viewer(win, low_quality: bool = False) -> None:
     model = getattr(win, "_car_model", None)
-    label = _get_viewer_label(win)
-    if model is None or label is None:
+    if model is None:
         return
+
+    # Prefer OpenGL
+    if _use_gl(win) and build_car_arrays is not None:
+        gl = win.gl_viewer
+        try:
+            arrays = build_car_arrays(
+                model,
+                lod_index=0,
+                tex_images=getattr(win, "_car_tex_images", None),
+            )
+            if arrays is not None:
+                # Support both old (5-tuple) and new (6-tuple with use_tex) builders
+                if len(arrays) >= 6:
+                    pos, idx, uv, col, ut, tex = arrays[:6]
+                else:
+                    pos, idx, uv, col, tex = arrays[:5]
+                    ut = None
+                _ensure_gl_shown(win)
+                gl.set_car_mesh(
+                    pos, idx, uvs=uv, colors=col, use_tex=ut, texture_rgba=tex,
+                    yaw=getattr(win, "_model_yaw", 40.0),
+                    pitch=getattr(win, "_model_pitch", 18.0),
+                )
+                z = float(getattr(win, "_car_zoom", 1.0) or 1.0)
+                gl.set_camera(
+                    getattr(win, "_model_yaw", 40.0),
+                    getattr(win, "_model_pitch", 18.0),
+                    distance=max(0.05, gl._extent * 2.2 / max(0.35, z)),
+                )
+                if getattr(gl, "_gl_ready", False) and getattr(gl, "_index_count", 0) > 0:
+                    return
+                if getattr(gl, "_last_error", ""):
+                    raise RuntimeError(gl._last_error)
+        except Exception as e:
+            if hasattr(win, "viewer_info"):
+                win.viewer_info.setText(f"GL car failed, software fallback: {e}")
+
+    # Software path
+    label = _get_viewer_label(win)
+    if label is None:
+        return
+    _show_label_page(win)
 
     vp_w, vp_h = _viewer_size(win)
     zoom = float(getattr(win, "_car_zoom", 1.0) or 1.0)
 
-        # Internal render resolution (higher = sharper, slower)
     if low_quality:
-        base_w, base_h = 480, 360
+        base_w, base_h = 320, 240
     else:
-        base_w = min(int(vp_w * 2.0), 1920)
-        base_h = min(int(vp_h * 2.0), 1440)
+        base_w = min(int(vp_w * 1.5), 1280)
+        base_h = min(int(vp_h * 1.5), 960)
     base_w = max(320, base_w)
     base_h = max(240, base_h)
 
@@ -497,10 +665,15 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
         pix = QPixmap.fromImage(qimg)
         target_w = max(64, int(vp_w * zoom))
         target_h = max(64, int(vp_h * zoom))
+        xform = (
+            Qt.TransformationMode.FastTransformation
+            if low_quality
+            else Qt.TransformationMode.SmoothTransformation
+        )
         pix = pix.scaled(
             target_w, target_h,
             Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+            xform,
         )
         label.setPixmap(pix)
     except Exception as e:

@@ -1,8 +1,11 @@
+"""
+GT-CAR software rasterizer with performance-oriented caches and tighter loops.
+"""
 from __future__ import annotations
 
 import math
 from typing import Dict, List, Optional, Tuple
-from PyQt6.QtGui import QImage
+
 import numpy as np
 
 try:
@@ -24,6 +27,13 @@ except ImportError:
         GTCarModel, LOD, UVPolygon, Polygon,
         convert_scale, UNITS_TO_METRES,
     )
+
+
+# ---------------------------------------------------------------------------
+# Global caches (keyed by id(model)/bytes)
+# ---------------------------------------------------------------------------
+_tex_cache: Dict[int, dict] = {}  # id(ctex_bytes) or hash → tex_images
+_lod_cache: Dict[int, dict] = {}  # id(lod) → precomputed face lists / verts
 
 
 def _project_batch(
@@ -64,16 +74,23 @@ def _raster_triangle(
     depth_bias: float = 0.0,
     depth_epsilon: float = 2e-3,
 ) -> None:
+    """Barycentric rasterizer. Uses meshgrid only over the tight AABB."""
     h, w = zbuf.shape
     x0, y0, z0 = float(pts[0, 0]), float(pts[0, 1]), float(pts[0, 2])
     x1, y1, z1 = float(pts[1, 0]), float(pts[1, 1]), float(pts[1, 2])
     x2, y2, z2 = float(pts[2, 0]), float(pts[2, 1]), float(pts[2, 2])
 
-    min_x = max(0, int(math.floor(min(x0, x1, x2))) - 1)
-    max_x = min(w - 1, int(math.ceil(max(x0, x1, x2))) + 1)
-    min_y = max(0, int(math.floor(min(y0, y1, y2))) - 1)
-    max_y = min(h - 1, int(math.ceil(max(y0, y1, y2))) + 1)
+    min_x = max(0, int(math.floor(min(x0, x1, x2))))
+    max_x = min(w - 1, int(math.ceil(max(x0, x1, x2))))
+    min_y = max(0, int(math.floor(min(y0, y1, y2))))
+    max_y = min(h - 1, int(math.ceil(max(y0, y1, y2))))
     if min_x > max_x or min_y > max_y:
+        return
+
+    # Skip tiny / degenerate triangles early
+    bw = max_x - min_x + 1
+    bh = max_y - min_y + 1
+    if bw * bh > 250_000:  # safety for huge on-screen tris
         return
 
     area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
@@ -125,6 +142,41 @@ def _raster_triangle(
         colour_buf[min_y:max_y + 1, min_x:max_x + 1][nearer] = solid_rgb
 
 
+def _get_lod_prep(lod: LOD, scale_factor: float) -> dict:
+    """Cache vertex array + sorted UV face list per LOD instance."""
+    key = id(lod)
+    cached = _lod_cache.get(key)
+    if cached is not None:
+        return cached
+
+    verts = np.array(
+        [[v.x, v.y, v.z] for v in lod.vertices], dtype=np.float64
+    ) * scale_factor
+    v_id_map = {id(v): i for i, v in enumerate(lod.vertices)}
+
+    uv_faces = (
+        [(p, False) for p in lod.uv_triangles]
+        + [(p, True) for p in lod.uv_quads]
+    )
+    uv_faces.sort(key=lambda t: (
+        int(getattr(t[0], "render_order", 0) or 0),
+        int(getattr(t[0], "palette_index", 0) or 0),
+    ))
+
+    prep = {
+        "verts": verts,
+        "v_id_map": v_id_map,
+        "uv_faces": uv_faces,
+        "triangles": list(lod.triangles),
+        "quads": list(lod.quads),
+    }
+    # Bound cache size
+    if len(_lod_cache) > 32:
+        _lod_cache.clear()
+    _lod_cache[key] = prep
+    return prep
+
+
 def render_car_qimage(
     model: GTCarModel,
     width: int = 640,
@@ -155,11 +207,10 @@ def render_car_qimage(
         return img
 
     scale_factor = convert_scale(lod.scale) * UNITS_TO_METRES
-    verts = np.array(
-        [[v.x, v.y, v.z] for v in lod.vertices], dtype=np.float64
-    ) * scale_factor
-
-    v_id_map = {id(v): i for i, v in enumerate(lod.vertices)}
+    prep = _get_lod_prep(lod, scale_factor)
+    verts = prep["verts"]
+    v_id_map = prep["v_id_map"]
+    uv_faces = prep["uv_faces"]
 
     lo = verts.min(axis=0)
     hi = verts.max(axis=0)
@@ -175,10 +226,11 @@ def render_car_qimage(
         verts, center, view_scale, yaw, pitch, w * 0.5, h * 0.5
     )
 
-    colour = np.zeros((h, w, 3), dtype=np.uint8)
+    colour = np.empty((h, w, 3), dtype=np.uint8)
     colour[:] = bg
     zbuf = np.full((h, w), np.inf, dtype=np.float32)
 
+    # Resolve palettes once
     palettes: Dict[int, np.ndarray] = {}
     if tex_images:
         for k, v in (tex_images.get("palettes") or {}).items():
@@ -233,6 +285,13 @@ def render_car_qimage(
 
         for ia, ib, ic in tris:
             pts = projected[[idxs[ia], idxs[ib], idxs[ic]]]
+            # Back-face cull in screen space (skip if winding is clockwise)
+            area = (
+                (pts[1, 0] - pts[0, 0]) * (pts[2, 1] - pts[0, 1])
+                - (pts[2, 0] - pts[0, 0]) * (pts[1, 1] - pts[0, 1])
+            )
+            if area <= 0:
+                continue
             uvs_arr = np.array(
                 [uv_list[ia], uv_list[ib], uv_list[ic]], dtype=np.float64
             )
@@ -260,36 +319,32 @@ def render_car_qimage(
             tris.append((0, 2, 3))
         for ia, ib, ic in tris:
             pts = projected[[idxs[ia], idxs[ib], idxs[ic]]]
+            area = (
+                (pts[1, 0] - pts[0, 0]) * (pts[2, 1] - pts[0, 1])
+                - (pts[2, 0] - pts[0, 0]) * (pts[1, 1] - pts[0, 1])
+            )
+            if area <= 0:
+                continue
             _raster_triangle(colour, zbuf, pts, None, None, solid_rgb=col)
-
-    uv_faces = (
-        [(p, False) for p in lod.uv_triangles]
-        + [(p, True) for p in lod.uv_quads]
-    )
-    # Stable order: low render_order first
-    uv_faces.sort(key=lambda t: (
-        int(getattr(t[0], "render_order", 0) or 0),
-        int(getattr(t[0], "palette_index", 0) or 0),
-    ))
 
     for p, is_quad in uv_faces:
         draw_uv(p, is_quad, write_depth=True, depth_bias=0.0)
 
-    for p in lod.triangles:
+    for p in prep["triangles"]:
         draw_solid(p, False)
-    for p in lod.quads:
+    for p in prep["quads"]:
         draw_solid(p, True)
 
-
-        if not low_quality:
-            for p, is_quad in uv_faces:
-                draw_uv(
-                    p,
-                    is_quad,
-                    write_depth=False,
-                    depth_bias=-2e-3,
-                    depth_epsilon=5e-3,
-                )
+    # Second pass for texture edge cleanup — skip in low_quality
+    if not low_quality:
+        for p, is_quad in uv_faces:
+            draw_uv(
+                p,
+                is_quad,
+                write_depth=False,
+                depth_bias=-2e-3,
+                depth_epsilon=5e-3,
+            )
 
     bgra = np.empty((h, w, 4), dtype=np.uint8)
     bgra[..., 0] = colour[..., 2]
@@ -302,6 +357,12 @@ def render_car_qimage(
 
 
 def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict:
+    """Decode GT-CTEX with a simple content-hash cache."""
+    cache_key = hash(ctex_data)
+    cached = _tex_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     import struct
 
     IMAGE_OFF = 0x60
@@ -377,4 +438,14 @@ def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict
             if set_idx == 0:
                 palettes[clut_idx] = arr
 
-    return {"size": (WIDTH, HEIGHT), "palettes": palettes}
+    result = {"size": (WIDTH, HEIGHT), "palettes": palettes}
+    if len(_tex_cache) > 24:
+        _tex_cache.clear()
+    _tex_cache[cache_key] = result
+    return result
+
+
+def clear_render_caches() -> None:
+    """Optional: free LOD / texture caches (e.g. on archive close)."""
+    _lod_cache.clear()
+    _tex_cache.clear()

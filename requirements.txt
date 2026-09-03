@@ -1,3 +1,4 @@
 TKinterModernThemes>=1.10
 Pillow>=9.0
 PyQt6>=6.4
+numpy>=1.20
