@@ -455,6 +455,7 @@ def render_model_viewer(win, low_quality: bool = False) -> None:
 
 
 def model_orbit(win, d_yaw: float, d_pitch: float) -> None:
+    """Orbit camera. OpenGL path only updates uniforms (cheap). Software uses low_quality."""
     win._model_yaw = (getattr(win, "_model_yaw", 0.0) + d_yaw) % 360.0
     win._model_pitch = max(-89.0, min(89.0, getattr(win, "_model_pitch", 20.0) + d_pitch))
     mode = getattr(win, "_viewer_mode", None)
@@ -540,6 +541,7 @@ def show_car_in_viewer(
     label: str = "",
     tex_data: Optional[bytes] = None,
 ) -> None:
+    """Parse GT-CAR and render LOD0 (optionally textured from companion .tex)."""
     win._viewer_mode = "car"
     win._pack_tims = []
     if hasattr(win, "tim_list"):
@@ -601,6 +603,7 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
     if model is None:
         return
 
+    # Prefer OpenGL
     if _use_gl(win) and build_car_arrays is not None:
         gl = win.gl_viewer
         try:
@@ -608,8 +611,10 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
                 model,
                 lod_index=0,
                 tex_images=getattr(win, "_car_tex_images", None),
+                show_wheels=not getattr(win, "_hide_wheels", False),
             )
             if arrays is not None:
+                # Support both old (5-tuple) and new (6-tuple with use_tex) builders
                 if len(arrays) >= 6:
                     pos, idx, uv, col, ut, tex = arrays[:6]
                 else:

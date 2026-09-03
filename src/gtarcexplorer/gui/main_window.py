@@ -520,10 +520,12 @@ class GTArcExplorer(QMainWindow):
         self.btn_1to1 = QPushButton("1:1")
         self.btn_pal_plus = QPushButton("Pal +")
         self.btn_pal_minus = QPushButton("Pal -")
+        self.chk_hide_wheels = QCheckBox("Hide wheels")
         for b in (self.btn_zoom_in, self.btn_zoom_out, self.btn_fit,
                   self.btn_1to1, self.btn_pal_plus, self.btn_pal_minus):
             b.setProperty("class", "secondary")
             vtop.addWidget(b)
+        vtop.addWidget(self.chk_hide_wheels)
         viewer_lay.addLayout(vtop)
 
         vbody = QSplitter(Qt.Orientation.Horizontal)
@@ -664,6 +666,7 @@ class GTArcExplorer(QMainWindow):
         self.btn_1to1.clicked.connect(self.viewer_1to1)
         self.btn_pal_plus.clicked.connect(lambda: self.ctex_shift_clut(1))
         self.btn_pal_minus.clicked.connect(lambda: self.ctex_shift_clut(-1))
+        self.chk_hide_wheels.toggled.connect(self._on_hide_wheels_toggled)
         self.filter_edit.textChanged.connect(self._apply_tree_filter)
         self.act_focus_filter.triggered.connect(lambda: self.filter_edit.setFocus())
         self.rail_group.idClicked.connect(self._switch_canvas)
@@ -760,7 +763,7 @@ class GTArcExplorer(QMainWindow):
                 dy = pos.y() - self._drag_last.y()
                 self._drag_last = pos
                 prev_yaw, prev_pitch = self._pending_orbit or (0.0, 0.0)
-                self._pending_orbit = (prev_yaw - dx * 0.4, prev_pitch - dy * 0.3)
+                self._pending_orbit = (prev_yaw + dx * 0.4, prev_pitch + dy * 0.3)
                 if not self._orbit_timer.isActive():
                     self._orbit_timer.start()
                 return True
@@ -1204,6 +1207,11 @@ class GTArcExplorer(QMainWindow):
 
     def show_car_in_viewer(self, data, label="", tex_data=None):
         viewer.show_car_in_viewer(self,data,label,tex_data=tex_data)
+
+    def _on_hide_wheels_toggled(self, checked: bool) -> None:
+        self._hide_wheels = checked
+        if getattr(self, "_viewer_mode", None) == "car":
+            viewer.render_car_viewer(self)
 
 def run():
     # Request a decent GL context before QApplication creates the GUI

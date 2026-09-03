@@ -1,4 +1,8 @@
+"""
+OpenGL model viewer widget for GT-PS tracks and GT-CAR models.
 
+Uses QOpenGLWidget with QOpenGLShaderProgram / QOpenGLBuffer for PyQt5/6 compatibility.
+"""
 from __future__ import annotations
 
 import math
@@ -39,7 +43,7 @@ except ImportError:
     _QT = 5
 
 
-# GLSL ES-friendly
+# GLSL ES-friendly (works on 2.1 compat / core with #version omitted on many drivers)
 VERT_SRC = """
 attribute vec3 aPos;
 attribute vec3 aColor;
@@ -272,6 +276,11 @@ class ModelGLWidget(QOpenGLWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+        # Capture the main window explicitly, at construction time, before
+        # this widget gets reparented into a QStackedWidget (which would
+        # make self.parent() point at the stack, not the main window).
+        self._main_window = parent
+
         self._gl_ready = False
         self._program: Optional[QOpenGLShaderProgram] = None
         self._vbo: Optional[QOpenGLBuffer] = None
@@ -305,7 +314,7 @@ class ModelGLWidget(QOpenGLWidget):
         self._funcs = None
         self._last_error = ""
 
-    # API
+    # ------------------------------------------------------------------ API
     def is_ready(self) -> bool:
         return bool(self._gl_ready)
 
@@ -420,6 +429,15 @@ class ModelGLWidget(QOpenGLWidget):
         if distance is not None:
             self._distance = max(0.05, float(distance))
         self.update()
+        # Keep the main window's stored camera state in sync, so that
+        # switching to a new model/car doesn't stomp on a user-dragged angle.
+        win = self._main_window
+        if win is not None:
+            try:
+                win._model_yaw = self._yaw
+                win._model_pitch = self._pitch
+            except Exception:
+                pass
 
     def orbit(self, d_yaw: float, d_pitch: float) -> None:
         self.set_camera(self._yaw + d_yaw, self._pitch + d_pitch)
@@ -429,6 +447,17 @@ class ModelGLWidget(QOpenGLWidget):
             return
         self._distance = max(0.05, min(500.0, self._distance / factor))
         self.update()
+        # Keep the main window's stored zoom level in sync (mirrors the
+        # set_camera sync above), so mouse-wheel zooming survives a mesh
+        # rebuild — e.g. selecting another car or toggling "Hide wheels",
+        # both of which re-frame the camera from win._car_zoom.
+        win = self._main_window
+        if win is not None:
+            try:
+                base = max(1e-6, self._extent * 2.2)
+                win._car_zoom = max(0.35, min(3.0, base / max(0.05, self._distance)))
+            except Exception:
+                pass
 
     def fit(self) -> None:
         self._distance = max(0.5, self._extent * 1.8)
@@ -445,7 +474,7 @@ class ModelGLWidget(QOpenGLWidget):
                 self._last_error = str(e)
             self.update()
 
-    # helpers
+    # -------------------------------------------------------------- helpers
     def _frame_from_positions(self, pos: np.ndarray) -> None:
         lo = pos.min(axis=0)
         hi = pos.max(axis=0)
@@ -485,7 +514,7 @@ class ModelGLWidget(QOpenGLWidget):
         view.lookAt(eye, self._target, up)
         return proj * view
 
-    # GL lifecycle
+    # ------------------------------------------------------------- GL lifecycle
     def initializeGL(self) -> None:
         try:
             self._funcs = _resolve_gl_functions(self)
@@ -724,7 +753,7 @@ class ModelGLWidget(QOpenGLWidget):
         if self._funcs is not None:
             self._funcs.glViewport(0, 0, max(1, w), max(1, h))
 
-    # interaction
+    # ------------------------------------------------------------- interaction
     @staticmethod
     def _left_button():
         mb = getattr(Qt, "MouseButton", None)
@@ -748,7 +777,7 @@ class ModelGLWidget(QOpenGLWidget):
                 dy = pos.y() - self._drag_last.y()
                 self._drag_last = pos
                 # Update yaw/pitch directly; set_camera triggers a single update()
-                self.set_camera(self._yaw - dx * 0.4, self._pitch - dy * 0.3)
+                self.set_camera(self._yaw + dx * 0.4, self._pitch + dy * 0.3)
         except Exception as e:
             self._last_error = f"mouse: {e}"
         super().mouseMoveEvent(event)
@@ -771,7 +800,9 @@ class ModelGLWidget(QOpenGLWidget):
         event.accept()
 
 
+# ---------------------------------------------------------------------------
 # Mesh builders
+# ---------------------------------------------------------------------------
 
 
 def _build_wheel_geometry(
@@ -823,7 +854,7 @@ def _build_wheel_geometry(
     return positions, colors, indices
 
 
-def build_car_arrays(model, lod_index: int = 0, tex_images: Optional[dict] = None):
+def build_car_arrays(model, lod_index: int = 0, tex_images: Optional[dict] = None, show_wheels: bool = True):
     """
     Convert GTCarModel LOD → (positions, indices, uvs, colors, use_tex, texture_rgba).
 
@@ -959,7 +990,7 @@ def build_car_arrays(model, lod_index: int = 0, tex_images: Optional[dict] = Non
     # ordering from the file, then fit track + wheelbase into the body bbox so
     # tyres land in the arches.
     wheels = list(getattr(model, "wheels", []) or [])
-    if wheels and positions:
+    if show_wheels and wheels and positions:
         xs = [p[0] for p in positions]
         ys = [p[1] for p in positions]
         zs = [p[2] for p in positions]
