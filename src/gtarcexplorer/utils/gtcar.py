@@ -9,21 +9,70 @@ from typing import BinaryIO, List, Optional, TextIO, Tuple
 
 UNITS_TO_METRES = 1.0 / 4096.0
 
+# GT1 cars are small; absurd counts almost always mean truncated/misaligned data
+_MAX_LODS = 8
+_MAX_VERTS = 4096
+_MAX_NORMS = 4096
+_MAX_FACES = 8192
+
+
+def _remaining(f: BinaryIO) -> int:
+    pos = f.tell()
+    f.seek(0, 2)
+    end = f.tell()
+    f.seek(pos)
+    return max(0, end - pos)
+
+
+def _read_exact(f: BinaryIO, n: int, what: str = "data") -> bytes:
+    data = f.read(n)
+    if len(data) < n:
+        raise ValueError(
+            f"Truncated GT-CAR while reading {what}: need {n} bytes, got {len(data)} "
+            f"(at offset {f.tell() - len(data)})"
+        )
+    return data
+
 
 def _u16(f: BinaryIO) -> int:
-    return struct.unpack("<H", f.read(2))[0]
+    return struct.unpack("<H", _read_exact(f, 2, "u16"))[0]
 
 
 def _i16(f: BinaryIO) -> int:
-    return struct.unpack("<h", f.read(2))[0]
+    return struct.unpack("<h", _read_exact(f, 2, "i16"))[0]
 
 
 def _u8(f: BinaryIO) -> int:
-    return f.read(1)[0]
+    return _read_exact(f, 1, "u8")[0]
 
 
 def _skip(f: BinaryIO, n: int) -> None:
-    f.seek(n, 1)
+    if n <= 0:
+        return
+    got = f.read(n)
+    if len(got) < n:
+        raise ValueError(
+            f"Truncated GT-CAR while skipping {n} bytes: only {len(got)} left "
+            f"(at offset {f.tell() - len(got)})"
+        )
+
+
+def _clamp_count(n: int, maximum: int, label: str, bytes_each: int, f: BinaryIO) -> int:
+    """Reject impossible table sizes so we fail early with a clear message."""
+    if n < 0:
+        raise ValueError(f"Invalid {label} count {n}")
+    if n > maximum:
+        raise ValueError(
+            f"Implausible {label} count {n} (max {maximum}) — file may be truncated, "
+            f"still compressed, or not a full GT-CAR body"
+        )
+    need = n * bytes_each
+    left = _remaining(f)
+    if need > left:
+        raise ValueError(
+            f"Truncated GT-CAR: {label} count {n} needs ~{need} bytes, only {left} remain"
+        )
+    return n
 
 
 def convert_scale(scale: int) -> float:
@@ -41,7 +90,7 @@ class Vertex:
     w: int = 0
 
     def read_car(self, f: BinaryIO) -> None:
-        self.x, self.y, self.z, self.w = struct.unpack("<hhhh", f.read(8))
+        self.x, self.y, self.z, self.w = struct.unpack("<hhhh", _read_exact(f, 8, "vertex"))
         self.z = -self.z  #- GT1 convention
 
     def to_obj(self, scale: float) -> str:
@@ -56,7 +105,7 @@ class Normal:
     z: float = 0.0
 
     def read_car(self, f: BinaryIO) -> None:
-        sx, sy, sz, _ = struct.unpack("<hhhh", f.read(8))
+        sx, sy, sz, _ = struct.unpack("<hhhh", _read_exact(f, 8, "normal"))
         scale = 4000.0
         self.x = sx / scale
         self.y = sy / scale
@@ -88,7 +137,7 @@ class WheelPosition:
     menu_x: int = 0
 
     def read_car(self, f: BinaryIO) -> None:
-        self.x, self.y, self.z, self.menu_x = struct.unpack("<hhhh", f.read(8))
+        self.x, self.y, self.z, self.menu_x = struct.unpack("<hhhh", _read_exact(f, 8, "wheel"))
         self.menu_x = self.x  #- GT1 stores 0; approximate with race X
 
     def to_obj_group(self, wheel_number: int, first_vert: int) -> Tuple[List[str], int]:
@@ -130,7 +179,7 @@ class Polygon:
 
     def read_car(self, f: BinaryIO, is_quad: bool,
                  vertices: List[Vertex], normals: List[Normal]) -> None:
-        b0, b1, b2, b3, b4, b5 = struct.unpack("<6B", f.read(6))
+        b0, b1, b2, b3, b4, b5 = struct.unpack("<6B", _read_exact(f, 6, "face verts"))
 
         v0_ref = ((b1 & 1) * 256) + b0
         v1_ref = ((b2 & 2) * 128) + ((b2 & 1) * 128) + (b1 >> 1)
@@ -147,7 +196,7 @@ class Polygon:
         self.v2 = _safe_vert(v2_ref)
         self.v3 = _safe_vert(v3_ref) if is_quad else None
 
-        nb1, nb2, nb3, nb4, nb5, nb6 = struct.unpack("<6B", f.read(6))
+        nb1, nb2, nb3, nb4, nb5, nb6 = struct.unpack("<6B", _read_exact(f, 6, "face normals"))
 
         if nb2 & 0x80:
             self.render_order = 0b10001
@@ -172,7 +221,7 @@ class Polygon:
         self.n2 = _safe_normal(n2)
         self.n3 = _safe_normal(n3)
 
-        t1, t2, t3, face_type_data = struct.unpack("<4B", f.read(4))
+        t1, t2, t3, face_type_data = struct.unpack("<4B", _read_exact(f, 4, "face type"))
         # NOTE: face_colour is not reliably encoded in t1..t3 on GT1; leave 0
         # so software/GL skip untextured fills (wheel wells stay as dark holes).
         if face_type_data in (33, 41):
@@ -278,36 +327,45 @@ class LOD:
         self.scale = _u16(f)
         _skip(f, 2)
 
+        # Face record is 16 bytes; UV face adds more after the base
+        vertex_count = _clamp_count(vertex_count, _MAX_VERTS, "vertex", 8, f)
+        # remaining after verts must still fit normals + faces — check verts first
         self.vertices = []
         for _ in range(vertex_count):
             v = Vertex()
             v.read_car(f)
             self.vertices.append(v)
 
+        normal_count = _clamp_count(normal_count, _MAX_NORMS, "normal", 8, f)
         self.normals = []
         for _ in range(normal_count):
             n = Normal()
             n.read_car(f)
             self.normals.append(n)
 
+        triangle_count = _clamp_count(triangle_count, _MAX_FACES, "triangle", 16, f)
         self.triangles = []
         for _ in range(triangle_count):
             p = Polygon()
             p.read_car(f, False, self.vertices, self.normals)
             self.triangles.append(p)
 
+        quad_count = _clamp_count(quad_count, _MAX_FACES, "quad", 16, f)
         self.quads = []
         for _ in range(quad_count):
             p = Polygon()
             p.read_car(f, True, self.vertices, self.normals)
             self.quads.append(p)
 
+        # UV poly: base 16 + uvs/palette (~12+) — use conservative 28
+        uv_triangle_count = _clamp_count(uv_triangle_count, _MAX_FACES, "uv triangle", 28, f)
         self.uv_triangles = []
         for _ in range(uv_triangle_count):
             p = UVPolygon()
             p.read_car(f, False, self.vertices, self.normals)
             self.uv_triangles.append(p)
 
+        uv_quad_count = _clamp_count(uv_quad_count, _MAX_FACES, "uv quad", 28, f)
         self.uv_quads = []
         for _ in range(uv_quad_count):
             p = UVPolygon()
@@ -471,8 +529,31 @@ class GTCarModel:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "GTCarModel":
+        if not data:
+            raise ValueError("Empty car data")
+
+        # Nested GT-ZIP: some archive slots store a compressed car body
+        if data.startswith(b"@(#)GT-ZIP"):
+            try:
+                from .gtzip import gtzip_decompress
+                # Payload may omit declared size; inflate with a generous cap
+                data = gtzip_decompress(data, max(0x100000, len(data) * 16))
+            except Exception as e:
+                raise ValueError(f"GT-CAR payload is GT-ZIP but decompress failed: {e}") from e
+
         if not data.startswith(b"@(#)GT-CAR"):
-            raise ValueError("Not a GT-CAR file (missing magic)")
+            # Sometimes a short header precedes the real magic
+            idx = data.find(b"@(#)GT-CAR")
+            if idx > 0 and idx < 64:
+                data = data[idx:]
+            else:
+                raise ValueError("Not a GT-CAR file (missing magic)")
+
+        # Header through LOD count needs at least ~0x10 + 32 + 8 + 4 + 2 + 0x42
+        if len(data) < 0x80:
+            raise ValueError(
+                f"GT-CAR too small ({len(data)} bytes) — entry may be truncated or not fully extracted"
+            )
 
         f = io.BytesIO(data)
         model = cls()
@@ -496,15 +577,32 @@ class GTCarModel:
 
         _skip(f, 4)
         lod_count = _u16(f)
+        if lod_count < 1 or lod_count > _MAX_LODS:
+            raise ValueError(
+                f"Implausible LOD count {lod_count} (expected 1–{_MAX_LODS}) — "
+                f"file may be truncated or corrupt"
+            )
         _skip(f, 0x42)
 
         model.lods = []
         for i in range(lod_count):
             lod = LOD()
-            lod.read_car(f)
+            try:
+                lod.read_car(f)
+            except ValueError as e:
+                if model.lods:
+                    # Keep earlier LODs if a later one is truncated
+                    break
+                raise ValueError(f"LOD{i}: {e}") from e
             model.lods.append(lod)
             if i != lod_count - 1:
-                _skip(f, 40)  #- gap between LODs
+                try:
+                    _skip(f, 40)  #- gap between LODs
+                except ValueError:
+                    break
+
+        if not model.lods:
+            raise ValueError("GT-CAR has no readable LODs")
 
         model.shadow = Shadow()
         try:
