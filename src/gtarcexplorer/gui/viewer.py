@@ -215,6 +215,9 @@ def show_ctex_in_viewer(win, data: bytes, label: str = "") -> None:
     win._pack_tims = []
     if hasattr(win, "tim_list"):
         win.tim_list.clear()
+    btn = getattr(win, "btn_edit_colours", None)
+    if btn is not None:
+        btn.setVisible(True)
 
     try:
         from ..utils.ctex import decode_ctex, ctex_palette_count
@@ -489,23 +492,27 @@ def viewer_orbit(win, d_yaw: float, d_pitch: float) -> None:
     model_orbit(win, d_yaw, d_pitch)
 
 
-def _find_companion_tex(win, car_entry) -> Optional[bytes]:
+def _find_companion_tex_entry(win, car_entry):
+    """Return (bytes, archive_index) for companion GT-CTEX, or (None, None)."""
     if not getattr(win, "arc", None) or not getattr(win.arc, "files", None):
-        return None
+        return None, None
 
     files = win.arc.files
     name = (car_entry.get("real_name") or car_entry.get("label") or "").lower()
     base = name.rsplit(".", 1)[0]
+
+    def _load(f):
+        try:
+            return win.arc.get_data(f["index"]), int(f["index"])
+        except Exception:
+            return None, None
 
     for f in files:
         if f.get("type") != "GT-CTEX Texture":
             continue
         n = (f.get("real_name") or f.get("label") or "").lower()
         if n == base + ".tex" or n.rsplit(".", 1)[0] == base:
-            try:
-                return win.arc.get_data(f["index"])
-            except Exception:
-                return None
+            return _load(f)
 
     try:
         idx = int(car_entry.get("index", -1))
@@ -514,10 +521,9 @@ def _find_companion_tex(win, car_entry) -> Optional[bytes]:
     if idx > 0:
         prev = files[idx - 1]
         if prev.get("type") == "GT-CTEX Texture":
-            try:
-                return win.arc.get_data(prev["index"])
-            except Exception:
-                pass
+            data, i = _load(prev)
+            if data is not None:
+                return data, i
 
     if base.isdigit():
         prev_stem = f"{int(base) - 1:0{len(base)}d}"
@@ -527,12 +533,20 @@ def _find_companion_tex(win, car_entry) -> Optional[bytes]:
             n = (f.get("real_name") or f.get("label") or "").lower()
             stem = n.rsplit(".", 1)[0]
             if stem == prev_stem or stem == str(int(base) - 1):
-                try:
-                    return win.arc.get_data(f["index"])
-                except Exception:
-                    continue
+                data, i = _load(f)
+                if data is not None:
+                    return data, i
 
-    return None
+    return None, None
+
+
+def _find_companion_tex(win, car_entry) -> Optional[bytes]:
+    data, idx = _find_companion_tex_entry(win, car_entry)
+    if data is not None:
+        win._car_tex_entry_index = idx
+    else:
+        win._car_tex_entry_index = None
+    return data
 
 
 def _colour_labels_for_car(win, n_colours: int) -> list:
@@ -596,6 +610,9 @@ def _fill_car_colour_combo(win, n_colours: int) -> None:
     lab = getattr(win, "car_colour_label", None)
     if lab is not None:
         lab.setVisible(True)
+    btn = getattr(win, "btn_edit_colours", None)
+    if btn is not None:
+        btn.setVisible(True)
     combo.blockSignals(False)
 
 
@@ -698,6 +715,9 @@ def show_car_in_viewer(
         lab = getattr(win, "car_colour_label", None)
         if lab is not None:
             lab.setVisible(False)
+        btn = getattr(win, "btn_edit_colours", None)
+        if btn is not None:
+            btn.setVisible(False)
 
     lod0 = model.lods[0] if model.lods else None
     n_faces = 0

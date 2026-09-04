@@ -533,12 +533,19 @@ class GTArcExplorer(QMainWindow):
         )
         self.car_colour_label.setVisible(False)
         self.car_colour_combo.setVisible(False)
+        self.btn_edit_colours = QPushButton("Edit colours…")
+        self.btn_edit_colours.setToolTip(
+            "Interactive palette editor — create custom car paint jobs"
+        )
+        self.btn_edit_colours.setVisible(False)
         for b in (self.btn_zoom_in, self.btn_zoom_out, self.btn_fit,
                   self.btn_1to1, self.btn_pal_plus, self.btn_pal_minus):
             b.setProperty("class", "secondary")
             vtop.addWidget(b)
         vtop.addWidget(self.car_colour_label)
         vtop.addWidget(self.car_colour_combo)
+        self.btn_edit_colours.setProperty("class", "secondary")
+        vtop.addWidget(self.btn_edit_colours)
         vtop.addWidget(self.chk_hide_wheels)
         viewer_lay.addLayout(vtop)
 
@@ -681,6 +688,7 @@ class GTArcExplorer(QMainWindow):
         self.btn_pal_plus.clicked.connect(lambda: self.ctex_shift_clut(1))
         self.btn_pal_minus.clicked.connect(lambda: self.ctex_shift_clut(-1))
         self.car_colour_combo.currentIndexChanged.connect(self._on_car_colour_changed)
+        self.btn_edit_colours.clicked.connect(self._open_palette_editor)
         self.chk_hide_wheels.toggled.connect(self._on_hide_wheels_toggled)
         self.filter_edit.textChanged.connect(self._apply_tree_filter)
         self.act_focus_filter.triggered.connect(lambda: self.filter_edit.setFocus())
@@ -1233,6 +1241,10 @@ class GTArcExplorer(QMainWindow):
 
     def _on_car_colour_changed(self, index: int) -> None:
         viewer.on_car_colour_changed(self, index)
+
+    def _open_palette_editor(self) -> None:
+        from .palette_editor import open_palette_editor
+        open_palette_editor(self)
 
     def _on_hide_wheels_toggled(self, checked: bool) -> None:
         self._hide_wheels = checked
