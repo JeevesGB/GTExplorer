@@ -96,6 +96,10 @@ class GTArcExplorer(QMainWindow):
         self._ctex_data = None
         self._ctex_pal = 0
         self._ctex_clut = 0
+        self._car_colour_index = 0
+        self._car_data = None
+        self._car_tex_data = None
+        self._car_label = ""
         self._viewer_mode = None
         self._viewer_scroll: QScrollArea | None = None
 
@@ -521,10 +525,20 @@ class GTArcExplorer(QMainWindow):
         self.btn_pal_plus = QPushButton("Pal +")
         self.btn_pal_minus = QPushButton("Pal -")
         self.chk_hide_wheels = QCheckBox("Hide wheels")
+        self.car_colour_label = QLabel("Colour:")
+        self.car_colour_combo = QComboBox()
+        self.car_colour_combo.setMinimumWidth(120)
+        self.car_colour_combo.setToolTip(
+            "Paint colour for multi-colour cars (CTEX palette set)"
+        )
+        self.car_colour_label.setVisible(False)
+        self.car_colour_combo.setVisible(False)
         for b in (self.btn_zoom_in, self.btn_zoom_out, self.btn_fit,
                   self.btn_1to1, self.btn_pal_plus, self.btn_pal_minus):
             b.setProperty("class", "secondary")
             vtop.addWidget(b)
+        vtop.addWidget(self.car_colour_label)
+        vtop.addWidget(self.car_colour_combo)
         vtop.addWidget(self.chk_hide_wheels)
         viewer_lay.addLayout(vtop)
 
@@ -666,6 +680,7 @@ class GTArcExplorer(QMainWindow):
         self.btn_1to1.clicked.connect(self.viewer_1to1)
         self.btn_pal_plus.clicked.connect(lambda: self.ctex_shift_clut(1))
         self.btn_pal_minus.clicked.connect(lambda: self.ctex_shift_clut(-1))
+        self.car_colour_combo.currentIndexChanged.connect(self._on_car_colour_changed)
         self.chk_hide_wheels.toggled.connect(self._on_hide_wheels_toggled)
         self.filter_edit.textChanged.connect(self._apply_tree_filter)
         self.act_focus_filter.triggered.connect(lambda: self.filter_edit.setFocus())
@@ -970,6 +985,14 @@ class GTArcExplorer(QMainWindow):
         viewer.show_slt_in_viewer(self, data, label)
 
     def ctex_shift_clut(self, delta):
+        # When a multi-colour car is shown, Pal +/- steps paint colour
+        if getattr(self, "_viewer_mode", None) == "car" and getattr(self, "_car_tex_data", None):
+            combo = getattr(self, "car_colour_combo", None)
+            if combo is not None and combo.count() > 1:
+                n = combo.count()
+                idx = (combo.currentIndex() + int(delta)) % n
+                combo.setCurrentIndex(idx)
+                return
         viewer.ctex_shift_clut(self, delta)
 
     def show_model_in_viewer(self, data, label=""):
@@ -1207,6 +1230,9 @@ class GTArcExplorer(QMainWindow):
 
     def show_car_in_viewer(self, data, label="", tex_data=None):
         viewer.show_car_in_viewer(self,data,label,tex_data=tex_data)
+
+    def _on_car_colour_changed(self, index: int) -> None:
+        viewer.on_car_colour_changed(self, index)
 
     def _on_hide_wheels_toggled(self, checked: bool) -> None:
         self._hide_wheels = checked

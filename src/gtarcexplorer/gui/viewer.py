@@ -535,6 +535,104 @@ def _find_companion_tex(win, car_entry) -> Optional[bytes]:
     return None
 
 
+def _colour_labels_for_car(win, n_colours: int) -> list:
+    """Human labels for paint slots; prefer COLOR table names when counts match."""
+    labels = [f"Colour {i + 1}" for i in range(n_colours)]
+    try:
+        arc = getattr(win, "arc", None)
+        if not arc or not getattr(arc, "files", None):
+            return labels
+        color_data = None
+        for f in arc.files:
+            t = (f.get("type") or "")
+            lab = (f.get("label") or f.get("real_name") or "").upper()
+            if t == "Car Color" or lab in ("COLOR", "COLOR.DAT") or lab.endswith("COLOR"):
+                try:
+                    color_data = arc.get_data(f["index"])
+                    break
+                except Exception:
+                    continue
+        if not color_data:
+            return labels
+        from ..utils.spec import parse_spec_table, colour_rows
+        rows = colour_rows(parse_spec_table(color_data))
+        by_car = {}
+        for car_id, cid, name in rows:
+            by_car.setdefault(car_id, []).append(name or f"Colour {cid:02X}")
+        # Prefer a car whose colour count matches CTEX palette sets
+        for names in by_car.values():
+            if len(names) == n_colours:
+                return [n if n else f"Colour {i + 1}" for i, n in enumerate(names)]
+        # Or first car with any colours if only one multi-colour entry fits loosely
+        if len(by_car) == 1:
+            names = next(iter(by_car.values()))
+            if 1 < len(names) <= n_colours:
+                out = list(labels)
+                for i, n in enumerate(names):
+                    if n:
+                        out[i] = n
+                return out
+    except Exception:
+        pass
+    return labels
+
+
+def _fill_car_colour_combo(win, n_colours: int) -> None:
+    combo = getattr(win, "car_colour_combo", None)
+    if combo is None:
+        return
+    n_colours = max(1, int(n_colours))
+    idx = int(getattr(win, "_car_colour_index", 0) or 0)
+    idx = max(0, min(idx, n_colours - 1))
+    win._car_colour_index = idx
+    labels = _colour_labels_for_car(win, n_colours)
+    combo.blockSignals(True)
+    combo.clear()
+    for i, name in enumerate(labels):
+        combo.addItem(name, i)
+    combo.setCurrentIndex(idx)
+    combo.setEnabled(n_colours > 1)
+    combo.setVisible(True)
+    lab = getattr(win, "car_colour_label", None)
+    if lab is not None:
+        lab.setVisible(True)
+    combo.blockSignals(False)
+
+
+def on_car_colour_changed(win, index: int = -1) -> None:
+    """Rebuild car textures for the selected CTEX palette set and re-render."""
+    if getattr(win, "_viewer_mode", None) != "car":
+        return
+    data = getattr(win, "_car_data", None)
+    if data is None:
+        return
+    combo = getattr(win, "car_colour_combo", None)
+    if combo is not None and index is not None and index >= 0:
+        val = combo.itemData(index)
+        win._car_colour_index = int(val if val is not None else index)
+    tex = getattr(win, "_car_tex_data", None)
+    label = getattr(win, "_car_label", "") or ""
+    if tex:
+        try:
+            from ..utils.gtcar_render import build_tex_images_for_colour
+            win._car_tex_images = build_tex_images_for_colour(
+                tex, int(getattr(win, "_car_colour_index", 0) or 0)
+            )
+        except Exception as e:
+            if hasattr(win, "viewer_info"):
+                win.viewer_info.setText(f"{label} – colour load failed: {e}")
+            return
+    render_car_viewer(win)
+    # Refresh status line colour note
+    if hasattr(win, "viewer_info") and win._car_tex_images:
+        n = int((win._car_tex_images or {}).get("colour_count") or 1)
+        ci = int(getattr(win, "_car_colour_index", 0) or 0) + 1
+        info = win.viewer_info.text()
+        # keep existing verts/faces text; append colour
+        if "colour" not in info.lower():
+            win.viewer_info.setText(info + f"  •  colour {ci}/{n}")
+
+
 def show_car_in_viewer(
     win,
     data: bytes,
@@ -548,6 +646,9 @@ def show_car_in_viewer(
         win.tim_list.clear()
     win._viewer_image = None
     win._model = None
+    win._car_data = data
+    win._car_label = label
+    win._car_tex_data = tex_data
 
     try:
         from ..utils.gtcar import GTCarModel
@@ -568,13 +669,35 @@ def show_car_in_viewer(
         win._model_pitch = float(getattr(win, "_model_pitch", 18.0) or 18.0)
         win._car_zoom = float(getattr(win, "_car_zoom", 1.0) or 1.0)
 
+    n_colours = 1
     if tex_data:
         try:
-            from ..utils.gtcar_render import build_tex_images_from_ctex
-            win._car_tex_images = build_tex_images_from_ctex(tex_data)
+            from ..utils.ctex import ctex_palette_count
+            from ..utils.gtcar_render import build_tex_images_for_colour
+            n_colours = max(1, ctex_palette_count(tex_data))
+            win._car_colour_index = max(
+                0, min(int(getattr(win, "_car_colour_index", 0) or 0), n_colours - 1)
+            )
+            win._car_tex_images = build_tex_images_for_colour(
+                tex_data, win._car_colour_index
+            )
         except Exception as e:
             if hasattr(win, "viewer_info"):
                 win.viewer_info.setText(f"{label} – texture load failed: {e}")
+            try:
+                from ..utils.gtcar_render import build_tex_images_from_ctex
+                win._car_tex_images = build_tex_images_from_ctex(tex_data)
+            except Exception:
+                pass
+
+    _fill_car_colour_combo(win, n_colours if tex_data else 1)
+    if not tex_data:
+        combo = getattr(win, "car_colour_combo", None)
+        if combo is not None:
+            combo.setVisible(False)
+        lab = getattr(win, "car_colour_label", None)
+        if lab is not None:
+            lab.setVisible(False)
 
     lod0 = model.lods[0] if model.lods else None
     n_faces = 0
@@ -591,8 +714,11 @@ def show_car_in_viewer(
     if hasattr(win, "viewer_info"):
         tex_note = "textured" if win._car_tex_images else "untextured"
         backend = "OpenGL" if _use_gl(win) else "software"
+        colour_note = ""
+        if tex_data and n_colours > 1:
+            colour_note = f"  •  colour {int(getattr(win, '_car_colour_index', 0) or 0) + 1}/{n_colours}"
         win.viewer_info.setText(
-            f"{label}  •  LOD0  {n_verts} verts  {n_faces} faces  •  {tex_note}  •  {backend}"
+            f"{label}  •  LOD0  {n_verts} verts  {n_faces} faces  •  {tex_note}  •  {backend}{colour_note}"
         )
 
     render_car_viewer(win)

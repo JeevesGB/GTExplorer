@@ -445,6 +445,61 @@ def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict
     return result
 
 
+def build_tex_images_for_colour(ctex_data: bytes, colour_index: int = 0) -> dict:
+    """
+    Decode GT-CTEX using a single paint / palette set.
+
+    Face palette_index values (0..15) are mapped to that set's CLUTs so the
+    car viewer can switch body colours without rebinding mesh UVs.
+    """
+    from .ctex import ctex_palette_count, decode_ctex
+    import numpy as np
+
+    n = max(1, ctex_palette_count(ctex_data))
+    colour_index = max(0, min(int(colour_index), n - 1))
+
+    cache_key = (hash(ctex_data), colour_index, "colour")
+    cached = _tex_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    palettes: Dict[int, np.ndarray] = {}
+    for clut_idx in range(16):
+        try:
+            im, _ = decode_ctex(ctex_data, palette_index=colour_index, clut_index=clut_idx)
+        except Exception:
+            continue
+        if im.mode != "RGBA":
+            im = im.convert("RGBA")
+        arr = np.array(im, dtype=np.uint8)
+        palettes[clut_idx] = arr
+        palettes[colour_index * 16 + clut_idx] = arr
+
+    if not palettes:
+        # Fallback: full multi-set decode, then re-key selected set to 0..15
+        full = build_tex_images_from_ctex(ctex_data)
+        for clut_idx in range(16):
+            key = colour_index * 16 + clut_idx
+            src = (full.get("palettes") or {}).get(key)
+            if src is None and colour_index == 0:
+                src = (full.get("palettes") or {}).get(clut_idx)
+            if src is not None:
+                arr = np.asarray(src, dtype=np.uint8)
+                palettes[clut_idx] = arr
+                palettes[key] = arr
+
+    result = {
+        "size": (256, 256),
+        "palettes": palettes,
+        "colour_index": colour_index,
+        "colour_count": n,
+    }
+    if len(_tex_cache) > 24:
+        _tex_cache.clear()
+    _tex_cache[cache_key] = result
+    return result
+
+
 def clear_render_caches() -> None:
     """Optional: free LOD / texture caches (e.g. on archive close)."""
     _lod_cache.clear()
