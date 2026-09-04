@@ -73,6 +73,7 @@ def _raster_triangle(
     write_depth: bool = True,
     depth_bias: float = 0.0,
     depth_epsilon: float = 2e-3,
+    shade: float = 1.0,
 ) -> None:
     """Barycentric rasterizer. Uses meshgrid only over the tight AABB."""
     h, w = zbuf.shape
@@ -133,13 +134,18 @@ def _raster_triangle(
         if visible.any():
             if write_depth:
                 z_slice[visible] = depth[visible]
-            colour_buf[min_y:max_y + 1, min_x:max_x + 1][visible] = (
-                samples[..., :3][visible]
-            )
+            rgb = samples[..., :3][visible].astype(np.float32) * float(shade)
+            colour_buf[min_y:max_y + 1, min_x:max_x + 1][visible] = np.clip(rgb, 0, 255).astype(np.uint8)
     else:
         if write_depth:
             z_slice[nearer] = depth[nearer]
-        colour_buf[min_y:max_y + 1, min_x:max_x + 1][nearer] = solid_rgb
+        s = float(shade)
+        sr = (
+            int(min(255, max(0, round(solid_rgb[0] * s)))),
+            int(min(255, max(0, round(solid_rgb[1] * s)))),
+            int(min(255, max(0, round(solid_rgb[2] * s)))),
+        )
+        colour_buf[min_y:max_y + 1, min_x:max_x + 1][nearer] = sr
 
 
 def _get_lod_prep(lod: LOD, scale_factor: float) -> dict:
@@ -188,6 +194,7 @@ def render_car_qimage(
     wireframe: bool = False,
     bg: Tuple[int, int, int] = (18, 20, 26),
     low_quality: bool = False,
+    lighting: bool = True,
 ) -> "QImage":
     w = max(64, int(width))
     h = max(64, int(height))
@@ -295,6 +302,19 @@ def render_car_qimage(
             uvs_arr = np.array(
                 [uv_list[ia], uv_list[ib], uv_list[ic]], dtype=np.float64
             )
+            # Face normal in model space from original verts
+            shade = 1.0
+            if lighting:
+                a = verts[idxs[ia]]
+                b = verts[idxs[ib]]
+                c = verts[idxs[ic]]
+                n = np.cross(b - a, c - a)
+                ln = float(np.linalg.norm(n))
+                if ln > 1e-9:
+                    n = n / ln
+                    # Wrap lighting — strong contrast so it's obvious
+                    ndl = abs(float(np.dot(n, light)))
+                    shade = 0.30 + 0.70 * ndl
             _raster_triangle(
                 colour,
                 zbuf,
@@ -304,6 +324,7 @@ def render_car_qimage(
                 write_depth=write_depth,
                 depth_bias=depth_bias,
                 depth_epsilon=depth_epsilon,
+                shade=shade,
             )
 
     def draw_solid(poly: Polygon, is_quad: bool) -> None:
@@ -325,7 +346,7 @@ def render_car_qimage(
             )
             if area <= 0:
                 continue
-            _raster_triangle(colour, zbuf, pts, None, None, solid_rgb=col)
+            _raster_triangle(colour, zbuf, pts, None, None, solid_rgb=col, shade=1.0)
 
     for p, is_quad in uv_faces:
         draw_uv(p, is_quad, write_depth=True, depth_bias=0.0)

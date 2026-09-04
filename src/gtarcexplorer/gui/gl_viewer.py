@@ -1,8 +1,3 @@
-"""
-OpenGL model viewer widget for GT-PS tracks and GT-CAR models.
-
-Uses QOpenGLWidget with QOpenGLShaderProgram / QOpenGLBuffer for PyQt5/6 compatibility.
-"""
 from __future__ import annotations
 
 import math
@@ -302,6 +297,12 @@ class ModelGLWidget(QOpenGLWidget):
         self._drag_last: Optional[QPoint] = None
         self._extent = 1.0
         self._bg = (0.07, 0.08, 0.10, 1.0)
+        self._pan_x = 0.0
+        self._pan_y = 0.0
+        self._ortho = False
+        self._show_grid = True
+        self._textured = True
+        self._drag_mode = "orbit"
 
         self._loc_pos = -1
         self._loc_col = -1
@@ -370,7 +371,8 @@ class ModelGLWidget(QOpenGLWidget):
         self._yaw = float(yaw)
         self._pitch = float(pitch)
         self._frame_from_positions(positions)
-        self._pending_mesh = (positions, colors, uvs, use_tex, indices, line_pairs, None)
+        nrm = np.tile(np.array([[0.0, 1.0, 0.0]], dtype=np.float32), (len(positions), 1))
+        self._pending_mesh = (positions, colors, uvs, use_tex, indices, line_pairs, None, nrm)
         self._use_tex = False
         self._wireframe = (indices.size // 3) > 25000
         self._flush_mesh()
@@ -383,6 +385,7 @@ class ModelGLWidget(QOpenGLWidget):
         colors: Optional[np.ndarray] = None,
         use_tex: Optional[np.ndarray] = None,
         texture_rgba: Optional[np.ndarray] = None,
+        normals: Optional[np.ndarray] = None,
         yaw: float = 40.0,
         pitch: float = 18.0,
     ) -> None:
@@ -418,7 +421,11 @@ class ModelGLWidget(QOpenGLWidget):
         self._yaw = float(yaw)
         self._pitch = float(pitch)
         self._frame_from_positions(pos)
-        self._pending_mesh = (pos, col, uv, ut, idx, np.zeros((0,), dtype=np.uint32), tex)
+        if normals is not None:
+            nor = np.asarray(normals, dtype=np.float32).reshape(-1, 3)
+        else:
+            nor = np.tile(np.array([[0.0, 1.0, 0.0]], dtype=np.float32), (len(pos), 1))
+        self._pending_mesh = (pos, col, uv, ut, idx, np.zeros((0,), dtype=np.uint32), tex, nor)
         self._use_tex = tex is not None and bool(np.any(ut > 0.5))
         self._wireframe = False
         self._flush_mesh()
@@ -461,6 +468,41 @@ class ModelGLWidget(QOpenGLWidget):
 
     def fit(self) -> None:
         self._distance = max(0.5, self._extent * 1.8)
+        self._pan_x = 0.0
+        self._pan_y = 0.0
+        self.update()
+
+    def set_pan(self, x: float, y: float) -> None:
+        self._pan_x = float(x)
+        self._pan_y = float(y)
+        self.update()
+
+    def pan(self, dx: float, dy: float) -> None:
+        scale = self._distance * 0.0025
+        self._pan_x += dx * scale
+        self._pan_y -= dy * scale
+        self.update()
+        win = self._main_window
+        if win is not None:
+            try:
+                win._view_pan = (self._pan_x, self._pan_y)
+            except Exception:
+                pass
+
+    def set_ortho(self, on: bool) -> None:
+        self._ortho = bool(on)
+        self.update()
+
+    def set_wireframe(self, on: bool) -> None:
+        self._wireframe = bool(on)
+        self.update()
+
+    def set_textured(self, on: bool) -> None:
+        self._textured = bool(on)
+        self.update()
+
+    def set_show_grid(self, on: bool) -> None:
+        self._show_grid = bool(on)
         self.update()
 
     def _flush_mesh(self) -> None:
@@ -491,27 +533,48 @@ class ModelGLWidget(QOpenGLWidget):
         near = max(0.01, self._distance * 0.02)
         far = max(near + 1.0, self._distance * 25.0 + self._extent * 20.0)
         proj = QMatrix4x4()
-        proj.perspective(45.0, aspect, near, far)
+        if self._ortho:
+            h = max(0.1, self._distance * 0.55)
+            w = h * aspect
+            proj.ortho(-w, w, -h, h, near, far)
+        else:
+            proj.perspective(45.0, aspect, near, far)
 
-        # Orbit camera: clamp pitch already applied in set_camera (±89°)
         yaw_r = math.radians(self._yaw)
         pitch_r = math.radians(self._pitch)
         cy, sy = math.cos(yaw_r), math.sin(yaw_r)
         cp, sp = math.cos(pitch_r), math.sin(pitch_r)
 
-        eye = QVector3D(
-            self._target.x() + self._distance * sy * cp,
-            self._target.y() + self._distance * sp,
-            self._target.z() + self._distance * cy * cp,
+        forward = QVector3D(sy * cp, sp, cy * cp)
+        world_up = QVector3D(0.0, 1.0, 0.0)
+        right = QVector3D.crossProduct(forward, world_up)
+        if right.length() < 1e-6:
+            right = QVector3D(1.0, 0.0, 0.0)
+        else:
+            right.normalize()
+        up_v = QVector3D.crossProduct(right, forward)
+        if up_v.length() > 1e-6:
+            up_v.normalize()
+        else:
+            up_v = world_up
+
+        target = QVector3D(
+            self._target.x() + right.x() * self._pan_x + up_v.x() * self._pan_y,
+            self._target.y() + right.y() * self._pan_x + up_v.y() * self._pan_y,
+            self._target.z() + right.z() * self._pan_x + up_v.z() * self._pan_y,
         )
-        # Stable up vector when looking nearly straight up/down
+        eye = QVector3D(
+            target.x() + self._distance * sy * cp,
+            target.y() + self._distance * sp,
+            target.z() + self._distance * cy * cp,
+        )
         if abs(self._pitch) > 80.0:
             up = QVector3D(-sy, 0.0, -cy)
         else:
             up = QVector3D(0.0, 1.0, 0.0)
 
         view = QMatrix4x4()
-        view.lookAt(eye, self._target, up)
+        view.lookAt(eye, target, up)
         return proj * view
 
     # ------------------------------------------------------------- GL lifecycle
@@ -583,14 +646,15 @@ class ModelGLWidget(QOpenGLWidget):
         if self._vbo is None or self._ibo is None:
             return
 
-        pos, col, uv, use_tex, indices, line_idx, tex = self._pending_mesh
+        # (pos, col, uv, use_tex, indices, line_idx, tex[, normals])
+        pos, col, uv, use_tex, indices, line_idx, tex = self._pending_mesh[:7]
         n = int(len(pos))
         if n == 0:
             self._index_count = 0
             self._pending_mesh = None
             return
 
-        interleaved = np.empty((n, 9), dtype=np.float32)
+        interleaved = np.empty((n, 12), dtype=np.float32)
         interleaved[:, 0:3] = np.asarray(pos, dtype=np.float32).reshape(n, 3)
         interleaved[:, 3:6] = np.asarray(col, dtype=np.float32).reshape(-1, 3)[:n]
         interleaved[:, 6:8] = np.asarray(uv, dtype=np.float32).reshape(-1, 2)[:n]
@@ -598,6 +662,14 @@ class ModelGLWidget(QOpenGLWidget):
         if len(ut) < n:
             ut = np.pad(ut, (0, n - len(ut)))
         interleaved[:, 8] = ut[:n]
+        # normals
+        if len(self._pending_mesh) >= 8 and self._pending_mesh[7] is not None:
+            nor = np.asarray(self._pending_mesh[7], dtype=np.float32).reshape(-1, 3)
+            if len(nor) < n:
+                nor = np.vstack([nor, np.tile([0.0, 1.0, 0.0], (n - len(nor), 1))])
+            interleaved[:, 9:12] = nor[:n]
+        else:
+            interleaved[:, 9:12] = np.array([0.0, 1.0, 0.0], dtype=np.float32)
         data = interleaved.tobytes()
 
         self._vbo.bind()
@@ -694,14 +766,47 @@ class ModelGLWidget(QOpenGLWidget):
 
             self._program.bind()
             try:
-                self._program.setUniformValue(self._loc_mvp, self._mvp())
+                mvp = self._mvp()
+                self._program.setUniformValue(self._loc_mvp, mvp)
+                # Identity model (positions already in world units)
+                model = QMatrix4x4()
+                if getattr(self, "_loc_model", -1) >= 0:
+                    self._program.setUniformValue(self._loc_model, model)
+                # Light direction from spherical angles (toward the light)
+                ly = math.radians(getattr(self, "_light_yaw", 35.0))
+                lp = math.radians(getattr(self, "_light_pitch", 40.0))
+                lx = math.sin(ly) * math.cos(lp)
+                ly_ = math.sin(lp)
+                lz = math.cos(ly) * math.cos(lp)
+                if getattr(self, "_loc_light_dir", -1) >= 0:
+                    self._program.setUniformValue(self._loc_light_dir, QVector3D(lx, ly_, lz))
+                if getattr(self, "_loc_light_color", -1) >= 0:
+                    self._program.setUniformValue(self._loc_light_color, QVector3D(1.0, 0.98, 0.95))
+                if getattr(self, "_loc_ambient", -1) >= 0:
+                    self._program.setUniformValue(self._loc_ambient, QVector3D(0.22, 0.22, 0.26))
+                if getattr(self, "_loc_lighting", -1) >= 0:
+                    self._program.setUniformValue(
+                        self._loc_lighting, 1.0 if getattr(self, "_lighting", True) else 0.0
+                    )
+                # Camera position for specular
+                yaw_r = math.radians(self._yaw)
+                pitch_r = math.radians(self._pitch)
+                cy, sy = math.cos(yaw_r), math.sin(yaw_r)
+                cp, sp = math.cos(pitch_r), math.sin(pitch_r)
+                cam = QVector3D(
+                    self._target.x() + self._distance * sy * cp,
+                    self._target.y() + self._distance * sp,
+                    self._target.z() + self._distance * cy * cp,
+                )
+                if getattr(self, "_loc_cam_pos", -1) >= 0:
+                    self._program.setUniformValue(self._loc_cam_pos, cam)
             except Exception as e:
                 self._last_error = f"mvp: {e}"
                 self._program.release()
                 return
 
             self._vbo.bind()
-            stride = 36  # 9 floats * 4 bytes
+            stride = 48  # 12 floats * 4 bytes
             if self._loc_pos >= 0:
                 self._program.enableAttributeArray(self._loc_pos)
                 self._program.setAttributeBuffer(self._loc_pos, GL_FLOAT, 0, 3, stride)
@@ -714,8 +819,12 @@ class ModelGLWidget(QOpenGLWidget):
             if getattr(self, "_loc_use_tex_attr", -1) >= 0:
                 self._program.enableAttributeArray(self._loc_use_tex_attr)
                 self._program.setAttributeBuffer(self._loc_use_tex_attr, GL_FLOAT, 32, 1, stride)
+            if getattr(self, "_loc_normal", -1) >= 0:
+                self._program.enableAttributeArray(self._loc_normal)
+                self._program.setAttributeBuffer(self._loc_normal, GL_FLOAT, 36, 3, stride)
 
-            if self._use_tex and self._texture is not None:
+            use_tex_now = self._use_tex and self._textured and not self._wireframe
+            if use_tex_now and self._texture is not None:
                 try:
                     self._texture.bind()
                     if self._loc_tex >= 0:
@@ -728,6 +837,19 @@ class ModelGLWidget(QOpenGLWidget):
             except Exception:
                 pass
 
+            poly_mode_set = False
+            if self._wireframe:
+                try:
+                    f.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+                    poly_mode_set = True
+                except Exception:
+                    try:
+                        import OpenGL.GL as GL  # type: ignore
+                        GL.glPolygonMode(GL.GL_FRONT_AND_BACK, GL.GL_LINE)
+                        poly_mode_set = True
+                    except Exception:
+                        pass
+
             if self._index_count > 0:
                 self._ibo.bind()
                 try:
@@ -735,6 +857,16 @@ class ModelGLWidget(QOpenGLWidget):
                 except Exception as e:
                     self._last_error = f"draw: {e}"
                 self._ibo.release()
+
+            if poly_mode_set:
+                try:
+                    f.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+                except Exception:
+                    try:
+                        import OpenGL.GL as GL  # type: ignore
+                        GL.glPolygonMode(GL.GL_FRONT_AND_BACK, GL.GL_FILL)
+                    except Exception:
+                        pass
 
             if self._line_index_count > 0 and self._line_ibo is not None:
                 self._line_ibo.bind()
@@ -763,32 +895,67 @@ class ModelGLWidget(QOpenGLWidget):
 
     def mousePressEvent(self, event) -> None:
         try:
-            if event.button() == self._left_button():
-                self._drag_last = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            from PyQt6.QtCore import Qt as _Qt
+        except ImportError:
+            from PyQt5.QtCore import Qt as _Qt
+        try:
+            btn = event.button()
+            mods = event.modifiers() if hasattr(event, "modifiers") else _Qt.KeyboardModifier.NoModifier
+            mid = getattr(getattr(_Qt, "MouseButton", _Qt), "MiddleButton", getattr(_Qt, "MiddleButton", 4))
+            shift = getattr(getattr(_Qt, "KeyboardModifier", _Qt), "ShiftModifier", getattr(_Qt, "ShiftModifier", 0x02000000))
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            if btn == mid or (btn == self._left_button() and (mods & shift)):
+                self._drag_mode = "pan"
+                self._drag_last = pos
+                self.setCursor(_Qt.CursorShape.SizeAllCursor)
+            elif btn == self._left_button():
+                self._drag_mode = "orbit"
+                self._drag_last = pos
+                self.setCursor(_Qt.CursorShape.ClosedHandCursor)
         except Exception:
             self._drag_last = event.pos() if hasattr(event, "pos") else None
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
         try:
-            if self._drag_last is not None and (event.buttons() & self._left_button()):
-                pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
-                dx = pos.x() - self._drag_last.x()
-                dy = pos.y() - self._drag_last.y()
-                self._drag_last = pos
-                # Update yaw/pitch directly; set_camera triggers a single update()
-                self.set_camera(self._yaw + dx * 0.4, self._pitch + dy * 0.3)
+            if self._drag_last is None:
+                super().mouseMoveEvent(event)
+                return
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            dx = pos.x() - self._drag_last.x()
+            dy = pos.y() - self._drag_last.y()
+            self._drag_last = pos
+            if self._drag_mode == "pan":
+                self.pan(dx, dy)
+            else:
+                self.set_camera(self._yaw + dx * 0.45, self._pitch + dy * 0.35)
         except Exception as e:
             self._last_error = f"mouse: {e}"
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
         try:
-            if event.button() == self._left_button():
-                self._drag_last = None
+            from PyQt6.QtCore import Qt as _Qt
+        except ImportError:
+            from PyQt5.QtCore import Qt as _Qt
+        self._drag_last = None
+        self._drag_mode = "orbit"
+        try:
+            self.setCursor(_Qt.CursorShape.OpenHandCursor)
         except Exception:
-            self._drag_last = None
+            pass
         super().mouseReleaseEvent(event)
+
+    def enterEvent(self, event) -> None:
+        try:
+            from PyQt6.QtCore import Qt as _Qt
+        except ImportError:
+            from PyQt5.QtCore import Qt as _Qt
+        try:
+            self.setCursor(_Qt.CursorShape.OpenHandCursor)
+        except Exception:
+            pass
+        super().enterEvent(event)
 
     def wheelEvent(self, event) -> None:
         try:
@@ -806,50 +973,73 @@ class ModelGLWidget(QOpenGLWidget):
 
 
 def _build_wheel_geometry(
-    cx: float, cy: float, cz: float, radius: float, width: float, segments: int = 14
+    cx: float, cy: float, cz: float, radius: float, width: float, segments: int = 20
 ):
-    """Return (positions, colors, indices) for one wheel."""
+    """
+    Wheel disc in the YZ plane (axle along X = left/right).
+    Returns (positions, colors, indices).
+    """
     positions: list = []
     colors: list = []
     indices: list = []
     if radius <= 1e-6:
         return positions, colors, indices
-    half = max(radius * 0.14, abs(width) * 0.5)
-    rim_r = radius * 0.58
-    tyre_col = (0.07, 0.07, 0.08)
-    rim_col = (0.62, 0.62, 0.65)
-    hub_col = (0.28, 0.28, 0.30)
+
+    # Tyre is mostly black rubber; rim is a smaller inner disc
+    half = max(radius * 0.18, abs(width) * 0.5)
+    tyre_inner = radius * 0.72          # start of rim
+    rim_outer = radius * 0.70
+    rim_inner = radius * 0.28
+    tyre_col = (0.06, 0.06, 0.07)
+    sidewall_col = (0.10, 0.10, 0.11)
+    rim_col = (0.55, 0.55, 0.58)
+    hub_col = (0.22, 0.22, 0.24)
 
     def add(px, py, pz, col):
         positions.append((float(px), float(py), float(pz)))
         colors.append(col)
         return len(positions) - 1
 
-    ol, orr, il, ir = [], [], [], []
+    # Outer tyre rings (left / right edges of tread)
+    t_ol, t_or = [], []
+    # Inner tyre / rim edge
+    r_ol, r_or = [], []
+    # Rim hole
+    h_ol, h_or = [], []
+
     for i in range(segments):
         a = (2.0 * math.pi * i) / segments
         sy, cz_ = math.sin(a), math.cos(a)
+        # tread outer
         y, z = cy + radius * sy, cz + radius * cz_
-        yi, zi = cy + rim_r * sy, cz + rim_r * cz_
-        ol.append(add(cx - half, y, z, tyre_col))
-        orr.append(add(cx + half, y, z, tyre_col))
-        il.append(add(cx - half * 0.92, yi, zi, rim_col))
-        ir.append(add(cx + half * 0.92, yi, zi, rim_col))
+        t_ol.append(add(cx - half, y, z, tyre_col))
+        t_or.append(add(cx + half, y, z, tyre_col))
+        # tyre inner edge (where rim meets rubber)
+        yi, zi = cy + tyre_inner * sy, cz + tyre_inner * cz_
+        r_ol.append(add(cx - half * 0.85, yi, zi, sidewall_col))
+        r_or.append(add(cx + half * 0.85, yi, zi, sidewall_col))
+        # hub ring
+        yh, zh = cy + rim_inner * sy, cz + rim_inner * cz_
+        h_ol.append(add(cx - half * 0.35, yh, zh, rim_col))
+        h_or.append(add(cx + half * 0.35, yh, zh, rim_col))
 
     for i in range(segments):
         j = (i + 1) % segments
-        # tread
-        indices.extend([ol[i], orr[i], orr[j], ol[i], orr[j], ol[j]])
-        # sidewalls
-        indices.extend([ol[i], ol[j], il[j], ol[i], il[j], il[i]])
-        indices.extend([orr[i], ir[i], ir[j], orr[i], ir[j], orr[j]])
+        # tread (outer cylinder)
+        indices.extend([t_ol[i], t_or[i], t_or[j], t_ol[i], t_or[j], t_ol[j]])
+        # outer sidewall (tyre face)
+        indices.extend([t_ol[i], t_ol[j], r_ol[j], t_ol[i], r_ol[j], r_ol[i]])
+        indices.extend([t_or[i], r_or[i], r_or[j], t_or[i], r_or[j], t_or[j]])
+        # rim face (annulus between tyre_inner and hub)
+        indices.extend([r_ol[i], r_ol[j], h_ol[j], r_ol[i], h_ol[j], h_ol[i]])
+        indices.extend([r_or[i], h_or[i], h_or[j], r_or[i], h_or[j], r_or[j]])
 
-    hub_l = add(cx - half * 0.2, cy, cz, hub_col)
-    hub_r = add(cx + half * 0.2, cy, cz, hub_col)
+    hub_l = add(cx - half * 0.15, cy, cz, hub_col)
+    hub_r = add(cx + half * 0.15, cy, cz, hub_col)
     for i in range(segments):
         j = (i + 1) % segments
-        indices.extend([hub_l, il[j], il[i]])
-        indices.extend([hub_r, ir[i], ir[j]])
+        indices.extend([hub_l, h_ol[j], h_ol[i]])
+        indices.extend([hub_r, h_or[i], h_or[j]])
 
     return positions, colors, indices
 
@@ -946,37 +1136,69 @@ def build_car_arrays(model, lod_index: int = 0, tex_images: Optional[dict] = Non
         v = (row + v_local) / float(n_rows)
         return (u, v)
 
-    def add_vert(v, uv=None, col=None, palette_index: int = 0, textured: bool = False):
+    normals_list: list = []
+
+    def _nvec(n) -> tuple:
+        if n is None:
+            return (0.0, 1.0, 0.0)
+        x = float(getattr(n, "x", 0.0) if not isinstance(n, tuple) else n[0])
+        y = float(getattr(n, "y", 0.0) if not isinstance(n, tuple) else n[1])
+        z = float(getattr(n, "z", 0.0) if not isinstance(n, tuple) else n[2])
+        return (x, y, z)
+
+    def _face_normal(poly) -> tuple:
+        try:
+            a = np.array([poly.v0.x, poly.v0.y, poly.v0.z], dtype=np.float64)
+            b = np.array([poly.v1.x, poly.v1.y, poly.v1.z], dtype=np.float64)
+            c = np.array([poly.v2.x, poly.v2.y, poly.v2.z], dtype=np.float64)
+            n = np.cross(b - a, c - a)
+            ln = float(np.linalg.norm(n))
+            if ln < 1e-9:
+                return (0.0, 1.0, 0.0)
+            n = n / ln
+            return (float(n[0]), float(n[1]), float(n[2]))
+        except Exception:
+            return (0.0, 1.0, 0.0)
+
+    def add_vert(v, uv=None, col=None, palette_index: int = 0, textured: bool = False, normal=None):
         positions.append((float(v.x) * scale, float(v.y) * scale, float(v.z) * scale))
         if textured and uv is not None and have_tex:
             uvs.append(uv_norm(uv, palette_index))
             use_tex_list.append(1.0)
-            # Vertex colour as fallback if texel is transparent
             colors.append(col if col is not None else (0.55, 0.55, 0.58))
         else:
             uvs.append((0.0, 0.0))
             use_tex_list.append(0.0)
             colors.append(col if col is not None else (0.55, 0.55, 0.58))
+        if normal is None:
+            normals_list.append((0.0, 1.0, 0.0))
+        elif isinstance(normal, tuple):
+            normals_list.append(normal)
+        else:
+            normals_list.append(_nvec(normal))
         return len(positions) - 1
+
 
     # UV faces (file order — matches earlier working GPU path)
     for poly in list(getattr(lod, "uv_triangles", []) or []):
         pidx = int(getattr(poly, "palette_index", 0) or 0)
+        fn = _face_normal(poly)
         ids = [
-            add_vert(poly.v0, poly.uv0, palette_index=pidx, textured=True),
-            add_vert(poly.v1, poly.uv1, palette_index=pidx, textured=True),
-            add_vert(poly.v2, poly.uv2, palette_index=pidx, textured=True),
+            add_vert(poly.v0, poly.uv0, palette_index=pidx, textured=True, normal=getattr(poly, "n0", None) or fn),
+            add_vert(poly.v1, poly.uv1, palette_index=pidx, textured=True, normal=getattr(poly, "n1", None) or fn),
+            add_vert(poly.v2, poly.uv2, palette_index=pidx, textured=True, normal=getattr(poly, "n2", None) or fn),
         ]
         indices.extend(ids)
     for poly in list(getattr(lod, "uv_quads", []) or []):
         pidx = int(getattr(poly, "palette_index", 0) or 0)
+        fn = _face_normal(poly)
         ids = [
-            add_vert(poly.v0, poly.uv0, palette_index=pidx, textured=True),
-            add_vert(poly.v1, poly.uv1, palette_index=pidx, textured=True),
-            add_vert(poly.v2, poly.uv2, palette_index=pidx, textured=True),
+            add_vert(poly.v0, poly.uv0, palette_index=pidx, textured=True, normal=getattr(poly, "n0", None) or fn),
+            add_vert(poly.v1, poly.uv1, palette_index=pidx, textured=True, normal=getattr(poly, "n1", None) or fn),
+            add_vert(poly.v2, poly.uv2, palette_index=pidx, textured=True, normal=getattr(poly, "n2", None) or fn),
         ]
         if getattr(poly, "v3", None) is not None and getattr(poly, "uv3", None) is not None:
-            ids.append(add_vert(poly.v3, poly.uv3, palette_index=pidx, textured=True))
+            ids.append(add_vert(poly.v3, poly.uv3, palette_index=pidx, textured=True, normal=getattr(poly, "n3", None) or fn))
             indices.extend([ids[0], ids[1], ids[2], ids[0], ids[2], ids[3]])
         else:
             indices.extend(ids)
@@ -985,113 +1207,160 @@ def build_car_arrays(model, lod_index: int = 0, tex_images: Optional[dict] = Non
     # drawing them caused white wheel-arch fills. Software also skips fc==0.
     # Wheel wells intentionally remain holes (dark clear colour shows through).
 
-    # --- Procedural wheels at GT-CAR wheel positions ---
-    # File wheel coords often don't share the LOD vertex scale. Take the sign /
-    # ordering from the file, then fit track + wheelbase into the body bbox so
-    # tyres land in the arches.
+    # --- Procedural wheels ---
+    # Base placement: fixed fractions of lower-body length (works for most GT1
+    # cars). Density valleys only refine within those front/rear zones so door
+    # gaps / side scoops cannot steal an axle.
     wheels = list(getattr(model, "wheels", []) or [])
-    if show_wheels and wheels and positions:
-        xs = [p[0] for p in positions]
-        ys = [p[1] for p in positions]
-        zs = [p[2] for p in positions]
+    if show_wheels and positions:
+        import statistics as _stats
+
+        pts = list(positions)
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        zs = [p[2] for p in pts]
         min_x, max_x = min(xs), max(xs)
         min_y, max_y = min(ys), max(ys)
         min_z, max_z = min(zs), max(zs)
         body_h = max(1e-6, max_y - min_y)
         body_w = max(1e-6, max_x - min_x)
-        body_l = max(1e-6, max_z - min_z)
         cx_body = 0.5 * (min_x + max_x)
-        cz_body = 0.5 * (min_z + max_z)
 
-        auto_r = max(0.10, min(0.42, body_h * 0.22))
-        auto_w = max(0.07, min(0.25, body_w * 0.09))
+        y_cut = min_y + body_h * 0.42
+        low = [p for p in pts if p[1] <= y_cut]
+        if len(low) >= 10:
+            lzs = sorted(p[2] for p in low)
+            lo_i = max(0, len(lzs) // 25)
+            hi_i = min(len(lzs) - 1, len(lzs) - 1 - len(lzs) // 25)
+            z_front_body, z_rear_body = lzs[lo_i], lzs[hi_i]
+            if z_front_body > z_rear_body:
+                z_front_body, z_rear_body = z_rear_body, z_front_body
+            body_l = max(1e-6, z_rear_body - z_front_body)
+        else:
+            z_front_body, z_rear_body = min_z, max_z
+            if z_front_body > z_rear_body:
+                z_front_body, z_rear_body = z_rear_body, z_front_body
+            body_l = max(1e-6, z_rear_body - z_front_body)
 
-        # Raw file positions (for left/right & front/rear signs only)
-        raw = []
-        for w in wheels[:4]:
-            raw.append((
-                float(getattr(w, "x", 0.0)),
-                float(getattr(w, "y", 0.0)),
-                float(getattr(w, "z", 0.0)),
-            ))
-        # Order is FL, FR, RL, RR after gtcar reorder
-        # Target: sit just inside body extents
+        # Nose direction from file wheel Z if available
+        z_sign = 1.0  # +1 → larger Z is forward
+        if len(wheels) >= 4:
+            raw_z = [float(getattr(w, "z", 0.0)) for w in wheels[:4]]
+            fz = 0.5 * (raw_z[0] + raw_z[1])
+            rz = 0.5 * (raw_z[2] + raw_z[3])
+            if abs(fz) + abs(rz) > 1e-6 and fz < rz:
+                z_sign = -1.0
 
-        # Distances from body centre (use half-extents, not full width/length)
-        front_track = body_w * 0.5 * 0.88   # front-axle track
-        rear_track = body_w * 0.5 * 0.88    # rear-axle track
-        front_wb = body_l * 0.5 * 0.60      # front axle distance from centre
-        rear_wb = body_l * 0.5 * 0.60       # rear axle distance from centre — tune independently
+        # Map "front fraction along car" into Z depending on nose direction
+        # Front axle ~26% from nose, rear ~74% from nose
+        def _z_at_frac(frac_from_nose: float) -> float:
+            if z_sign >= 0:
+                # nose at z_rear_body (high Z)
+                return z_rear_body - frac_from_nose * body_l
+            else:
+                # nose at z_front_body (low Z)
+                return z_front_body + frac_from_nose * body_l
 
-        # Ground: bottom of body + radius so tyre sits in the arch
-        ground_y = min_y + auto_r * 0.90
+        z_front_default = _z_at_frac(0.26)
+        z_rear_default = _z_at_frac(0.74)
 
-        targets = [
-            (cx_body - front_track, ground_y, cz_body + front_wb),  # FL
-            (cx_body + front_track, ground_y, cz_body + front_wb),  # FR
-            (cx_body - rear_track, ground_y, cz_body - rear_wb),    # RL
-            (cx_body + rear_track, ground_y, cz_body - rear_wb),    # RR
+        radius = max(0.05, min(0.26, body_h * 0.160))
+        width = max(0.04, min(0.14, body_w * 0.065))
+        radius_f, radius_r = radius, radius * 1.02
+        width_f, width_r = width, width * 1.04
+        track = body_w * 0.5 * 0.88
+        ground = min_y + radius * 0.90
+
+        def _refine_z(z_guess: float, zone_half: float) -> float:
+            """Lowest-density bin near z_guess (within ±zone_half)."""
+            side = [
+                p for p in low
+                if abs(p[2] - z_guess) <= zone_half
+                and abs(p[0] - cx_body) >= body_w * 0.12
+            ]
+            if len(side) < 8:
+                return z_guess
+            n_bins = 12
+            z_lo = z_guess - zone_half
+            z_hi = z_guess + zone_half
+            span = max(1e-6, z_hi - z_lo)
+            counts = [0] * n_bins
+            for _x, _y, z in side:
+                bi = int((z - z_lo) / span * (n_bins - 1e-6))
+                bi = max(0, min(n_bins - 1, bi))
+                counts[bi] += 1
+            best_i = min(range(n_bins), key=lambda i: counts[i])
+            return z_lo + (best_i + 0.5) / n_bins * span
+
+        zone = body_l * 0.10
+        z_front = _refine_z(z_front_default, zone)
+        z_rear = _refine_z(z_rear_default, zone)
+
+        # Keep order / minimum span
+        if abs(z_front - z_rear) < body_l * 0.30:
+            z_front, z_rear = z_front_default, z_rear_default
+
+        defaults = [
+            (cx_body - track, ground, z_front),
+            (cx_body + track, ground, z_front),
+            (cx_body - track, ground, z_rear),
+            (cx_body + track, ground, z_rear),
         ]
 
-        # Prefer file signs when available (handles odd ordering)
-        if len(raw) >= 4:
-            # Match each target slot by nearest raw direction in XZ, using the
-            # OLD symmetric targets purely to figure out which raw index is
-            # front-left/front-right/rear-left/rear-right.
-            used = set()
-            match_idx = [None, None, None, None]
-            for ti, (tx, ty, tz) in enumerate(targets):
-                best_i, best_d = 0, 1e30
-                for ri, (rx, ry, rz) in enumerate(raw):
-                    if ri in used:
-                        continue
-                    sx, sz = rx * scale, rz * scale
-                    d = (sx - tx) ** 2 + (sz - tz) ** 2
-                    if d < best_d:
-                        best_d, best_i = d, ri
-                used.add(best_i)
-                match_idx[ti] = best_i
+        def _arch_xy(x_sign: float, z_target: float, r_guess: float):
+            z_band = body_l * 0.09
+            cand = []
+            for x, y, z in pts:
+                if abs(z - z_target) > z_band:
+                    continue
+                if (x - cx_body) * x_sign < body_w * 0.10:
+                    continue
+                if y > min_y + body_h * 0.38:
+                    continue
+                cand.append((x, y, z))
+            if len(cand) < 4:
+                return None
+            cand.sort(key=lambda p: p[1])
+            low_c = cand[: max(4, len(cand) // 5)]
+            ax = _stats.median([p[0] for p in low_c])
+            ay = _stats.median([p[1] for p in low_c])
+            return (ax, ay + r_guess * 0.90)
 
-            # Raw file units for wheel Z don't match the LOD vertex scale, so
-            # don't use rz*scale as an absolute distance. Instead, use the
-            # RATIO of front vs rear raw Z offsets (scale-independent) to
-            # redistribute the *already-tuned* total front-rear span.
-            raw_front_z = 0.5 * (raw[match_idx[0]][2] + raw[match_idx[1]][2])
-            raw_rear_z = 0.5 * (raw[match_idx[2]][2] + raw[match_idx[3]][2])
-            raw_center_z = 0.5 * (raw_front_z + raw_rear_z)
-            half_front_raw = abs(raw_front_z - raw_center_z)
-            half_rear_raw = abs(raw_center_z - raw_rear_z)
-            total_raw = half_front_raw + half_rear_raw
-
-            if total_raw > 1e-6:
-                total_span = front_wb + rear_wb  # preserve the tuned overall span
-                front_offset = total_span * (half_front_raw / total_raw)
-                rear_offset = total_span * (half_rear_raw / total_raw)
-            else:
-                front_offset = front_wb
-                rear_offset = rear_wb
-
-            ordered = [
-                (targets[0][0], ground_y, cz_body + front_offset),  # FL
-                (targets[1][0], ground_y, cz_body + front_offset),  # FR
-                (targets[2][0], ground_y, cz_body - rear_offset),   # RL
-                (targets[3][0], ground_y, cz_body - rear_offset),   # RR
-            ]
-            targets = ordered
+        targets = []
+        for i, d in enumerate(defaults):
+            dx, dy, dz = d
+            x_sign = -1.0 if (i % 2 == 0) else 1.0
+            a = _arch_xy(x_sign, dz, radius_f if i < 2 else radius_r)
+            if a is None:
+                targets.append(d)
+                continue
+            ax, ay = a
+            bx = ax * 0.70 + dx * 0.30
+            by = ay * 0.60 + dy * 0.40
+            bx = max(min_x - radius * 0.1, min(max_x + radius * 0.1, bx))
+            by = max(min_y + radius * 0.70, min(min_y + radius * 1.10, by))
+            targets.append((bx, by, dz))
 
         for wi, (cx, cy, cz) in enumerate(targets):
             is_front = wi < 2
-            radius = auto_r * (1.0 if is_front else 1.04)
-            width = auto_w * (1.0 if is_front else 1.08)
-            wpos, wcol, widx = _build_wheel_geometry(cx, cy, cz, radius, width)
+            r = radius_f if is_front else radius_r
+            w = width_f if is_front else width_r
+            wpos, wcol, widx = _build_wheel_geometry(cx, cy, cz, r, w)
             base = len(positions)
             for p, c in zip(wpos, wcol):
                 positions.append(p)
                 colors.append(c)
                 uvs.append((0.0, 0.0))
                 use_tex_list.append(0.0)
+                nx, ny, nz = p[0] - cx, p[1] - cy, p[2] - cz
+                ln = (nx * nx + ny * ny + nz * nz) ** 0.5
+                if ln < 1e-8:
+                    normals_list.append((1.0 if wi % 2 else -1.0, 0.0, 0.0))
+                else:
+                    normals_list.append((nx / ln, ny / ln, nz / ln))
             for vi in widx:
                 indices.append(base + int(vi))
+
 
     if not positions or not indices:
         return None

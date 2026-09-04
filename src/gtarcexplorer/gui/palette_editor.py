@@ -1,4 +1,3 @@
-"""Interactive GT-CTEX palette / paint editor for car models."""
 from __future__ import annotations
 
 from typing import Callable, List, Optional, Sequence, Tuple
@@ -7,12 +6,14 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -22,11 +23,15 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
+    QSplitter,
+    QTabWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from ..utils.ctex import (
     RGBA,
+    collect_palette_usage,
     ctex_palette_count,
     decode_ctex,
     duplicate_palette_set,
@@ -73,7 +78,7 @@ class SwatchButton(QPushButton):
         super().__init__(parent)
         self.index = index
         self._colour = colour
-        self.setFixedSize(32, 32)
+        self.setFixedSize(36, 36)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._apply_style()
         self.clicked.connect(self._pick)
@@ -128,11 +133,11 @@ class PaletteEditorDialog(QDialog):
         on_preview: Optional[Callable[[bytes], None]] = None,
         tex_entry_index: Optional[int] = None,
         archive=None,
+        car_model=None,
+        lod_index: int = 0,
     ):
         super().__init__(parent)
         self.setWindowTitle("Car colour / palette editor")
-        self.resize(640, 560)
-        self.setMinimumSize(520, 440)
 
         self._original = bytes(ctex_data)
         self._data = bytearray(ctex_data)
@@ -143,6 +148,9 @@ class PaletteEditorDialog(QDialog):
         self._archive = archive
         self._suppress = False
         self._target_rgb: Tuple[int, int, int] = (180, 30, 30)
+        self._car_model = car_model
+        self._lod_index = int(lod_index or 0)
+        self._usage = collect_palette_usage(car_model, self._lod_index) if car_model else {}
 
         hdr = parse_ctex_header(self._data)
         self._name = hdr.get("name") or ""
@@ -153,155 +161,186 @@ class PaletteEditorDialog(QDialog):
         self._preview_timer.timeout.connect(self._emit_preview_now)
 
         root = QVBoxLayout(self)
-        root.setSpacing(8)
+        root.setSpacing(12)
+        root.setContentsMargins(16, 16, 16, 16)
 
+        # --- Paint job ---
         row = QHBoxLayout()
-        row.addWidget(QLabel("Paint:"))
+        row.addWidget(QLabel("Paint job"))
         self.paint_combo = QComboBox()
+        self.paint_combo.setMinimumWidth(180)
         self._refill_paint_combo(colour_index)
         self.paint_combo.currentIndexChanged.connect(self._on_paint_changed)
         row.addWidget(self.paint_combo, stretch=1)
-        self.btn_dup = QPushButton("Duplicate paint")
-        self.btn_dup.setToolTip("Copy this paint as a new palette set")
+        self.btn_dup = QPushButton("Duplicate")
+        self.btn_dup.setProperty("class", "secondary")
+        self.btn_dup.setToolTip("Copy this paint to a new slot, then edit the copy")
         self.btn_dup.clicked.connect(self._duplicate_paint)
         row.addWidget(self.btn_dup)
         root.addLayout(row)
 
         if self._name:
-            root.addWidget(QLabel(f"CTEX: {self._name}"))
+            sub = QLabel(f"Texture: {self._name}")
+            sub.setStyleSheet("color:#888;")
+            root.addWidget(sub)
 
-        body = QHBoxLayout()
+        # Combined body preview (all body CLUTs side by side)
+        self.tex_preview = QLabel()
+        self.tex_preview.setMinimumHeight(96)
+        self.tex_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.tex_preview.setStyleSheet(
+            "background:#121212; border:1px solid #333; border-radius:6px;"
+        )
+        root.addWidget(self.tex_preview)
 
-        left = QVBoxLayout()
-        left.addWidget(QLabel("Materials (CLUTs)"))
+        self.lbl_body = QLabel("")
+        self.lbl_body.setWordWrap(True)
+        self.lbl_body.setStyleSheet("color:#999; font-size:11px;")
+        root.addWidget(self.lbl_body)
+
+        # --- One colour ---
+        self._target_swatch = QPushButton("Choose body colour…")
+        self._target_swatch.setMinimumHeight(48)
+        self._target_swatch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._target_swatch.clicked.connect(self._pick_target_only)
+        root.addWidget(self._target_swatch)
+        self._set_target_swatch()
+        self.btn_pick_body = self._target_swatch
+
+        srow = QHBoxLayout()
+        srow.addWidget(QLabel("Strength"))
+        self.strength = QSlider(Qt.Orientation.Horizontal)
+        self.strength.setRange(20, 100)
+        self.strength.setValue(85)
+        srow.addWidget(self.strength, stretch=1)
+        self.lbl_strength = QLabel("85%")
+        self.lbl_strength.setMinimumWidth(36)
+        self.strength.valueChanged.connect(lambda v: self.lbl_strength.setText(f"{v}%"))
+        srow.addWidget(self.lbl_strength)
+        root.addLayout(srow)
+
+        self.btn_recolor_body = QPushButton("Apply colour to car")
+        self.btn_recolor_body.setMinimumHeight(36)
+        self.btn_recolor_body.setDefault(True)
+        self.btn_recolor_body.setToolTip(
+            "Recolours every material the game uses for body paint on this car"
+        )
+        self.btn_recolor_body.clicked.connect(lambda: self._recolor_selected(True))
+        root.addWidget(self.btn_recolor_body)
+
+        # Hidden widgets needed by Fine path / rebuild (created but in advanced)
         self.clut_list = QListWidget()
         self.clut_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.clut_list.currentRowChanged.connect(self._on_clut_row)
-        left.addWidget(self.clut_list, stretch=1)
-        self.lbl_body = QLabel("")
-        self.lbl_body.setWordWrap(True)
-        self.lbl_body.setStyleSheet("color: #888; font-size: 11px;")
-        left.addWidget(self.lbl_body)
-        body.addLayout(left, stretch=2)
+        self.clut_title = QLabel("Material")
+        self.chk_hide_unused = QCheckBox("Hide unused")
+        self.chk_hide_unused.setChecked(True)
+        self.btn_recolor_this = QPushButton("Recolour selected")
+        self.btn_recolor_this.clicked.connect(lambda: self._recolor_selected(False))
 
-        right = QVBoxLayout()
-        self.clut_title = QLabel("CLUT 0")
-        right.addWidget(self.clut_title)
-
-        self.tex_preview = QLabel()
-        self.tex_preview.setFixedHeight(96)
-        self.tex_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.tex_preview.setStyleSheet("background:#111; border:1px solid #333;")
-        right.addWidget(self.tex_preview)
-
-        box = QGroupBox("Palette entries (0 often transparent)")
-        grid = QGridLayout(box)
         self.swatches: List[SwatchButton] = []
         for i in range(16):
             btn = SwatchButton(i, (0, 0, 0, 0))
             btn.colourChanged.connect(self._on_swatch_changed)
             self.swatches.append(btn)
-            grid.addWidget(btn, i // 8, i % 8)
-        right.addWidget(box)
 
-        rec = QGroupBox("Quick recolour")
-        rl = QVBoxLayout(rec)
-        rrow = QHBoxLayout()
-        self.btn_pick_body = QPushButton("Pick body colour…")
-        self.btn_pick_body.setToolTip(
-            "Choose a colour, then push body CLUTs toward it while keeping shading"
-        )
-        self.btn_pick_body.clicked.connect(self._pick_and_recolor_body)
-        rrow.addWidget(self.btn_pick_body)
-        rrow.addWidget(QLabel("Strength"))
-        self.strength = QSlider(Qt.Orientation.Horizontal)
-        self.strength.setRange(20, 100)
-        self.strength.setValue(85)
-        rrow.addWidget(self.strength, stretch=1)
-        rl.addLayout(rrow)
-        rrow2 = QHBoxLayout()
-        self.btn_recolor_this = QPushButton("Recolour this CLUT")
-        self.btn_recolor_this.clicked.connect(lambda: self._recolor_selected(False))
-        self.btn_recolor_body = QPushButton("Recolour body CLUTs")
-        self.btn_recolor_body.setToolTip("Only CLUTs scored as likely body/paint")
-        self.btn_recolor_body.clicked.connect(lambda: self._recolor_selected(True))
-        rrow2.addWidget(self.btn_recolor_this)
-        rrow2.addWidget(self.btn_recolor_body)
-        rl.addLayout(rrow2)
-        self._target_swatch = QLabel()
-        self._target_swatch.setFixedHeight(18)
-        self._set_target_swatch()
-        rl.addWidget(self._target_swatch)
-        right.addWidget(rec)
-
-        tools = QHBoxLayout()
-        tools.addWidget(QLabel("Hue°"))
         self.spin_hue = QDoubleSpinBox()
         self.spin_hue.setRange(-180, 180)
         self.spin_hue.setDecimals(0)
-        tools.addWidget(self.spin_hue)
-        tools.addWidget(QLabel("Sat×"))
         self.spin_sat = QDoubleSpinBox()
         self.spin_sat.setRange(0.0, 2.0)
         self.spin_sat.setSingleStep(0.05)
         self.spin_sat.setValue(1.0)
-        tools.addWidget(self.spin_sat)
-        tools.addWidget(QLabel("Val×"))
         self.spin_val = QDoubleSpinBox()
         self.spin_val.setRange(0.0, 2.0)
         self.spin_val.setSingleStep(0.05)
         self.spin_val.setValue(1.0)
-        tools.addWidget(self.spin_val)
-        btn_hsv = QPushButton("HSV → CLUT")
-        btn_hsv.clicked.connect(self._apply_hsv)
-        tools.addWidget(btn_hsv)
-        btn_all = QPushButton("HSV → all")
-        btn_all.clicked.connect(self._apply_hsv_all)
-        tools.addWidget(btn_all)
-        right.addLayout(tools)
 
-        body.addLayout(right, stretch=3)
-        root.addLayout(body, stretch=1)
+        # --- Advanced (collapsed) ---
+        self._adv = QWidget()
+        adv_l = QVBoxLayout(self._adv)
+        adv_l.setContentsMargins(0, 8, 0, 0)
+        adv_l.setSpacing(8)
 
-        actions = QHBoxLayout()
-        self.btn_live = QPushButton("Live preview: ON")
-        self.btn_live.setCheckable(True)
+        adv_l.addWidget(QLabel("Individual materials (game blends these together)"))
+        self.clut_list.setMaximumHeight(140)
+        adv_l.addWidget(self.clut_list)
+        self.chk_hide_unused.toggled.connect(lambda _=False: self._rebuild_clut_list())
+        adv_l.addWidget(self.chk_hide_unused)
+
+        sw = QHBoxLayout()
+        for btn in self.swatches:
+            sw.addWidget(btn)
+        adv_l.addLayout(sw)
+
+        hsv = QHBoxLayout()
+        hsv.addWidget(QLabel("Hue"))
+        hsv.addWidget(self.spin_hue)
+        hsv.addWidget(QLabel("Sat"))
+        hsv.addWidget(self.spin_sat)
+        hsv.addWidget(QLabel("Bright"))
+        hsv.addWidget(self.spin_val)
+        b1 = QPushButton("Shift selected")
+        b1.setProperty("class", "secondary")
+        b1.clicked.connect(self._apply_hsv)
+        hsv.addWidget(b1)
+        b2 = QPushButton("Shift all")
+        b2.setProperty("class", "secondary")
+        b2.clicked.connect(self._apply_hsv_all)
+        hsv.addWidget(b2)
+        adv_l.addLayout(hsv)
+        adv_l.addWidget(self.btn_recolor_this)
+
+        self._adv.setVisible(False)
+        root.addWidget(self._adv)
+
+        self.btn_adv = QPushButton("Advanced…")
+        self.btn_adv.setProperty("class", "secondary")
+        self.btn_adv.setCheckable(True)
+        self.btn_adv.toggled.connect(self._toggle_advanced)
+        root.addWidget(self.btn_adv)
+
+        root.addStretch(1)
+
+        # Footer
+        foot = QHBoxLayout()
+        self.btn_live = QCheckBox("Live preview")
         self.btn_live.setChecked(True)
         self.btn_live.toggled.connect(self._toggle_live)
-        actions.addWidget(self.btn_live)
-        btn_prev = QPushButton("Preview now")
-        btn_prev.clicked.connect(self._emit_preview_now)
-        actions.addWidget(btn_prev)
-        btn_export = QPushButton("Export .tex…")
+        foot.addWidget(self.btn_live)
+        foot.addStretch(1)
+        btn_reset = QPushButton("Reset")
+        btn_reset.setProperty("class", "secondary")
+        btn_reset.clicked.connect(self._reset)
+        foot.addWidget(btn_reset)
+        btn_export = QPushButton("Export…")
+        btn_export.setProperty("class", "secondary")
         btn_export.clicked.connect(self._export)
-        actions.addWidget(btn_export)
-        self.btn_writeback = QPushButton("Write into archive")
-        self.btn_writeback.setToolTip(
-            "Replace companion CTEX bytes in the open archive (memory only).\n"
-            "Extract / Repack to save a new .DAT."
-        )
+        foot.addWidget(btn_export)
+        self.btn_writeback = QPushButton("Save to archive")
         self.btn_writeback.setEnabled(
             self._tex_entry_index is not None and self._archive is not None
         )
-        self.btn_writeback.clicked.connect(self._write_into_archive)
-        actions.addWidget(self.btn_writeback)
-        btn_reset = QPushButton("Reset")
-        btn_reset.clicked.connect(self._reset)
-        actions.addWidget(btn_reset)
-        actions.addStretch(1)
-        root.addLayout(actions)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        self.btn_writeback.setToolTip(
+            "Update texture in the open archive (memory). Repack to write a .DAT."
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Apply & close")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
+        self.btn_writeback.clicked.connect(self._write_into_archive)
+        foot.addWidget(self.btn_writeback)
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setProperty("class", "secondary")
+        btn_cancel.clicked.connect(self.reject)
+        foot.addWidget(btn_cancel)
+        btn_done = QPushButton("Done")
+        btn_done.setDefault(True)
+        btn_done.clicked.connect(self.accept)
+        foot.addWidget(btn_done)
+        root.addLayout(foot)
+
+        self.resize(480, 420)
+        self.setMinimumSize(400, 360)
 
         self._rebuild_clut_list()
-        body_rank = rank_body_cluts(self._data, self.current_paint())
-        self.clut_list.setCurrentRow(body_rank[0] if body_rank else 0)
+        self._update_tex_preview()
 
     def result_data(self) -> bytes:
         return bytes(self._data)
@@ -310,7 +349,15 @@ class PaletteEditorDialog(QDialog):
         return max(0, self.paint_combo.currentIndex())
 
     def current_clut(self) -> int:
+        item = self.clut_list.currentItem()
+        if item is not None:
+            return int(item.data(Qt.ItemDataRole.UserRole) or 0)
         return max(0, self.clut_list.currentRow())
+
+    def _body_rank(self, top: int = 6) -> List[int]:
+        return rank_body_cluts(
+            self._data, self.current_paint(), top=top, usage=self._usage or None
+        )
 
     def _refill_paint_combo(self, select: int = 0) -> None:
         n = ctex_palette_count(self._data)
@@ -328,32 +375,71 @@ class PaletteEditorDialog(QDialog):
 
     def _rebuild_clut_list(self) -> None:
         paint = self.current_paint()
-        body_set = set(rank_body_cluts(self._data, paint, top=5))
-        row = self.clut_list.currentRow()
+        body_list = self._body_rank(top=6)
+        body_set = set(body_list)
+        prev = self.current_clut() if self.clut_list.count() else -1
+        hide_unused = bool(
+            getattr(self, "chk_hide_unused", None) is not None
+            and self.chk_hide_unused.isChecked()
+            and self._usage
+        )
         self.clut_list.blockSignals(True)
         self.clut_list.clear()
-        for ci in range(16):
+
+        order = list(range(16))
+        if self._usage:
+            order.sort(key=lambda i: (-int(self._usage.get(i, 0) or 0), i))
+
+        for ci in order:
+            faces = int(self._usage.get(ci, 0) or 0) if self._usage else 0
+            if hide_unused and faces == 0:
+                continue
             cols = read_clut(self._data, paint, ci)
-            item = QListWidgetItem(f"CLUT {ci}" + ("  ★ body?" if ci in body_set else ""))
+            tags = []
+            if ci in body_set:
+                tags.append("body")
+            if faces:
+                tags.append(f"{faces}f")
+            tag = (" · " + " · ".join(tags)) if tags else ""
+            item = QListWidgetItem(f"{ci}{tag}")
             item.setData(Qt.ItemDataRole.UserRole, ci)
-            item.setToolTip(
-                "Likely body/paint material" if ci in body_set else f"Material CLUT {ci}"
-            )
-            item.setIcon(QIcon(_clut_strip_pixmap(cols)))
+            tip = f"Material {ci}"
+            if faces:
+                tip += f" — {faces} faces on car"
+            if ci in body_set:
+                tip += " — body paint"
+            if self._usage and faces == 0:
+                tip += " — not used on this mesh"
+            item.setToolTip(tip)
+            item.setIcon(QIcon(_clut_strip_pixmap(cols, w=96, h=14)))
+            if self._usage and faces == 0:
+                item.setForeground(Qt.GlobalColor.gray)
             self.clut_list.addItem(item)
         self.clut_list.blockSignals(False)
-        if 0 <= row < 16:
-            self.clut_list.setCurrentRow(row)
-        body_ids = sorted(body_set)
-        self.lbl_body.setText(
-            "★ = CLUTs that look like body paint. "
-            + (f"Suggested: {body_ids}" if body_ids else "No strong body CLUT detected.")
-        )
+
+        select = prev if prev >= 0 else (body_list[0] if body_list else 0)
+        for row in range(self.clut_list.count()):
+            if int(self.clut_list.item(row).data(Qt.ItemDataRole.UserRole) or 0) == select:
+                self.clut_list.setCurrentRow(row)
+                break
+        else:
+            if self.clut_list.count():
+                self.clut_list.setCurrentRow(0)
+
+        if body_list:
+            n = len(body_list)
+            self.lbl_body.setText(
+                f"The game blends {n} material palette(s) for this paint — "
+                "one colour shifts them together."
+            )
+        else:
+            self.lbl_body.setText("No body materials detected for this paint.")
+        self._update_tex_preview()
 
     def _load_clut_into_swatches(self) -> None:
         paint = self.current_paint()
         clut = self.current_clut()
-        self.clut_title.setText(f"CLUT {clut}")
+        self.clut_title.setText(f"Material {clut}")
         try:
             colours = read_clut(self._data, paint, clut)
         except Exception:
@@ -364,17 +450,57 @@ class PaletteEditorDialog(QDialog):
         self._suppress = False
         self._update_tex_preview()
 
+    def _toggle_advanced(self, on: bool) -> None:
+        self._adv.setVisible(bool(on))
+        self.btn_adv.setText("Hide advanced" if on else "Advanced…")
+        if on:
+            self.resize(max(self.width(), 520), max(self.height(), 560))
+
     def _update_tex_preview(self) -> None:
+        """Show a combined strip of body-material palettes (how the car is painted)."""
         try:
-            im, _ = decode_ctex(self._data, self.current_paint(), self.current_clut())
-            im = im.resize((192, 96))
-            if im.mode != "RGBA":
-                im = im.convert("RGBA")
-            data = im.tobytes("raw", "RGBA")
-            qimg = QImage(data, im.width, im.height, QImage.Format.Format_RGBA8888)
+            from PIL import Image as PILImage
+
+            paint = self.current_paint()
+            body = self._body_rank(top=6) or [self.current_clut()]
+            strips = []
+            for ci in body[:5]:
+                cols = read_clut(self._data, paint, ci)
+                img = PILImage.new("RGBA", (128, 24))
+                px = img.load()
+                n = max(1, len(cols))
+                for x in range(128):
+                    r, g, b, a = cols[min(n - 1, x * n // 128)][:4]
+                    if a < 8:
+                        r = g = b = 40
+                    for y in range(24):
+                        px[x, y] = (int(r), int(g), int(b), 255)
+                strips.append(img)
+            if not strips:
+                self.tex_preview.clear()
+                return
+            w = max(s.width for s in strips)
+            h = sum(s.height for s in strips) + 2 * (len(strips) - 1)
+            combined = PILImage.new("RGBA", (w, h), (18, 18, 18, 255))
+            y = 0
+            for s in strips:
+                combined.paste(s, (0, y))
+                y += s.height + 2
+            combined = combined.resize((min(420, w * 2), min(120, h * 2)), PILImage.NEAREST)
+            data = combined.tobytes("raw", "RGBA")
+            qimg = QImage(data, combined.width, combined.height, QImage.Format.Format_RGBA8888)
             self.tex_preview.setPixmap(QPixmap.fromImage(qimg.copy()))
         except Exception:
-            self.tex_preview.clear()
+            try:
+                im, _ = decode_ctex(self._data, self.current_paint(), self.current_clut())
+                im = im.resize((192, 72))
+                if im.mode != "RGBA":
+                    im = im.convert("RGBA")
+                data = im.tobytes("raw", "RGBA")
+                qimg = QImage(data, im.width, im.height, QImage.Format.Format_RGBA8888)
+                self.tex_preview.setPixmap(QPixmap.fromImage(qimg.copy()))
+            except Exception:
+                self.tex_preview.clear()
 
     def _current_clut_colours(self) -> List[RGBA]:
         return [s.colour() for s in self.swatches]
@@ -401,10 +527,22 @@ class PaletteEditorDialog(QDialog):
 
     def _set_target_swatch(self) -> None:
         r, g, b = self._target_rgb
+        # Readable text colour on dark/light targets
+        lum = 0.299 * r + 0.587 * g + 0.114 * b
+        fg = "#111" if lum > 140 else "#fff"
         self._target_swatch.setStyleSheet(
-            f"background-color: rgb({r},{g},{b}); border: 1px solid #555; border-radius: 3px;"
+            f"background-color: rgb({r},{g},{b}); color: {fg};"
+            f"border: 1px solid #555; border-radius: 6px; font-weight: 600;"
         )
-        self._target_swatch.setText(f"  Target  #{r:02X}{g:02X}{b:02X}")
+        self._target_swatch.setText(f"  Target colour  #{r:02X}{g:02X}{b:02X}  ")
+
+    def _pick_target_only(self) -> None:
+        dlg = QColorDialog(QColor(*self._target_rgb), self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        c = dlg.currentColor()
+        self._target_rgb = (c.red(), c.green(), c.blue())
+        self._set_target_swatch()
 
     def _on_paint_changed(self, _i: int) -> None:
         self._rebuild_clut_list()
@@ -427,8 +565,7 @@ class PaletteEditorDialog(QDialog):
         self._schedule_preview()
 
     def _toggle_live(self, on: bool) -> None:
-        self._live = on
-        self.btn_live.setText(f"Live preview: {'ON' if on else 'OFF'}")
+        self._live = bool(on)
         if on:
             self._emit_preview_now()
 
@@ -446,7 +583,7 @@ class PaletteEditorDialog(QDialog):
         strength = self.strength.value() / 100.0
         target = self._target_rgb
         if body_only:
-            targets = rank_body_cluts(self._data, paint, top=6)
+            targets = self._body_rank(top=6)
             if not targets:
                 targets = [self.current_clut()]
         else:
@@ -633,6 +770,9 @@ def open_palette_editor(win) -> None:
             win._ctex_data = data
             viewer_mod.show_ctex_in_viewer(win, data, label="")
 
+    car_model = getattr(win, "_car_model", None)
+    lod_index = int(getattr(win, "_car_lod_index", 0) or 0)
+
     dlg = PaletteEditorDialog(
         tex,
         parent=win,
@@ -641,6 +781,8 @@ def open_palette_editor(win) -> None:
         on_preview=on_preview,
         tex_entry_index=tex_index,
         archive=archive,
+        car_model=car_model,
+        lod_index=lod_index,
     )
     result = dlg.exec()
     if result == QDialog.DialogCode.Accepted:

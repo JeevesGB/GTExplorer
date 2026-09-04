@@ -19,6 +19,7 @@ from PyQt6.QtGui import (
     QAction, QFont, QIcon, QColor, QKeySequence, QMouseEvent, QWheelEvent
 )
 from PyQt6.QtWidgets import (
+    QFrame, QSizePolicy, QMenu,
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTreeWidget, QTreeWidgetItem, QStackedWidget, QTextEdit,
     QLabel, QToolBar, QToolButton, QStatusBar, QProgressBar, QFileDialog,
@@ -97,6 +98,15 @@ class GTArcExplorer(QMainWindow):
         self._ctex_pal = 0
         self._ctex_clut = 0
         self._car_colour_index = 0
+        self._car_lod_index = 0
+        self._view_pan = (0.0, 0.0)
+        self._view_ortho = False
+        self._view_grid = True
+        self._view_lighting = True
+        self._view_shade_mode = "textured"
+        self._view_shadow = False
+        self._view_wheel_markers = False
+        self._hide_wheels = False
         self._car_data = None
         self._car_tex_data = None
         self._car_label = ""
@@ -134,6 +144,9 @@ class GTArcExplorer(QMainWindow):
         self._zoom_settle_timer.setSingleShot(True)
         self._zoom_settle_timer.setInterval(150)  # re-render full quality once scrolling stops
         self._zoom_settle_timer.timeout.connect(self._finalize_zoom)
+        self._spin_timer = QTimer(self)
+        self._spin_timer.setInterval(16)
+        self._spin_timer.timeout.connect(self._on_spin_tick)
         self.viewer_label.installEventFilter(self)
 
         self.progress_signal.connect(self._update_progress)
@@ -514,49 +527,146 @@ class GTArcExplorer(QMainWindow):
 
         viewer_page = QWidget()
         viewer_lay = QVBoxLayout(viewer_page)
+        viewer_lay.setContentsMargins(4, 2, 4, 4)
+        viewer_lay.setSpacing(2)
 
-        vtop = QHBoxLayout()
+        # Status only — never compete with buttons for horizontal space
         self.viewer_info = QLabel("Select a TIM, TIM Pack, or GT-PS model")
-        vtop.addWidget(self.viewer_info, stretch=1)
-        self.btn_zoom_in = QPushButton("Zoom +")
-        self.btn_zoom_out = QPushButton("Zoom -")
-        self.btn_fit = QPushButton("Fit")
-        self.btn_1to1 = QPushButton("1:1")
-        self.btn_pal_plus = QPushButton("Pal +")
-        self.btn_pal_minus = QPushButton("Pal -")
-        self.chk_hide_wheels = QCheckBox("Hide wheels")
-        self.car_colour_label = QLabel("Colour:")
+        self.viewer_info.setObjectName("viewerInfo")
+        self.viewer_info.setWordWrap(False)
+        self.viewer_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.viewer_info.setStyleSheet("color: #9a9a9a; padding: 0 4px;")
+        self.viewer_info.setMaximumHeight(22)
+        viewer_lay.addWidget(self.viewer_info)
+
+        def _tool_btn(text, checkable=False, tip=""):
+            b = QToolButton()
+            b.setText(text)
+            b.setCheckable(checkable)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            b.setAutoRaise(True)
+            b.setProperty("class", "secondary")
+            if tip:
+                b.setToolTip(tip)
+            return b
+
+        def _sep():
+            line = QFrame()
+            line.setFrameShape(QFrame.Shape.VLine)
+            line.setFrameShadow(QFrame.Shadow.Sunken)
+            line.setFixedWidth(8)
+            return line
+
+        # Single compact toolbar
+        self.viewer_tools_bar = QWidget()
+        self.viewer_tools_bar.setObjectName("viewerToolsBar")
+        vt = QHBoxLayout(self.viewer_tools_bar)
+        vt.setContentsMargins(4, 2, 4, 2)
+        vt.setSpacing(3)
+
+        # Camera presets as one menu button
+        self.btn_view_menu = _tool_btn("View ▾", tip="Camera presets (1–5)")
+        self._view_menu = QMenu(self)
+        self.act_view_front = self._view_menu.addAction("Front\t1")
+        self.act_view_side = self._view_menu.addAction("Side\t2")
+        self.act_view_rear = self._view_menu.addAction("Rear\t3")
+        self.act_view_tq = self._view_menu.addAction("¾\t4")
+        self.act_view_top = self._view_menu.addAction("Top\t5")
+        self._view_menu.addSeparator()
+        self.act_view_reset = self._view_menu.addAction("Reset\tR")
+        self.btn_view_menu.setMenu(self._view_menu)
+        self.btn_view_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        # Keep legacy names as aliases to menu actions (for any external refs)
+        self.btn_view_front = self.act_view_front
+        self.btn_view_side = self.act_view_side
+        self.btn_view_rear = self.act_view_rear
+        self.btn_view_tq = self.act_view_tq
+        self.btn_view_top = self.act_view_top
+        self.btn_view_reset = self.act_view_reset
+
+        self.btn_spin = _tool_btn("Spin", checkable=True, tip="Auto-rotate (Space)")
+        self.btn_zoom_out = _tool_btn("−", tip="Zoom out")
+        self.btn_fit = _tool_btn("Fit", tip="Frame model (F)")
+        self.btn_zoom_in = _tool_btn("+", tip="Zoom in")
+        self.btn_1to1 = _tool_btn("1:1", tip="Actual size (images)")
+
+        self.shade_combo = QComboBox()
+        self.shade_combo.setToolTip("Shading mode (W)")
+        self.shade_combo.setFixedWidth(100)
+        self.shade_combo.addItem("Textured", "textured")
+        self.shade_combo.addItem("Solid", "solid")
+        self.shade_combo.addItem("Wire", "wireframe")
+
+        self.lod_combo = QComboBox()
+        self.lod_combo.setToolTip("Level of detail")
+        self.lod_combo.setMinimumWidth(88)
+        self.lod_combo.setVisible(False)
+        self.lod_label = QLabel("LOD")
+        self.lod_label.setVisible(False)
+
+        self.chk_grid = QCheckBox("Grid")
+        self.chk_grid.setChecked(True)
+        self.chk_grid.setToolTip("Ground grid (G)")
+        self.chk_ortho = QCheckBox("Ortho")
+        self.chk_ortho.setToolTip("Orthographic camera (O)")
+        self.chk_lighting = QCheckBox("Light")
+        self.chk_lighting.setChecked(True)
+        self.chk_lighting.setToolTip("Directional lighting on the model")
+        self.chk_shadow = QCheckBox("Shadow")
+        self.chk_shadow.setToolTip("Show shadow mesh")
+
+        # Car-specific cluster (hidden until a car is shown)
+        self.car_tools = QWidget()
+        car_l = QHBoxLayout(self.car_tools)
+        car_l.setContentsMargins(0, 0, 0, 0)
+        car_l.setSpacing(3)
+        self.car_colour_label = QLabel("Paint")
         self.car_colour_combo = QComboBox()
-        self.car_colour_combo.setMinimumWidth(120)
-        self.car_colour_combo.setToolTip(
-            "Paint colour for multi-colour cars (CTEX palette set)"
-        )
+        self.car_colour_combo.setMinimumWidth(100)
+        self.car_colour_combo.setToolTip("Paint colour / CTEX palette set")
+        self.btn_edit_colours = _tool_btn("Edit…", tip="Palette editor")
+        self.chk_hide_wheels = QCheckBox("No wheels")
+        self.chk_hide_wheels.setToolTip("Hide wheel meshes")
+        self.btn_pal_minus = _tool_btn("Pal−", tip="Previous palette / CLUT")
+        self.btn_pal_plus = _tool_btn("Pal+", tip="Next palette / CLUT")
+        for w in (self.car_colour_label, self.car_colour_combo, self.btn_edit_colours,
+                  self.chk_hide_wheels, self.btn_pal_minus, self.btn_pal_plus):
+            car_l.addWidget(w)
         self.car_colour_label.setVisible(False)
         self.car_colour_combo.setVisible(False)
-        self.btn_edit_colours = QPushButton("Edit colours…")
-        self.btn_edit_colours.setToolTip(
-            "Interactive palette editor — create custom car paint jobs"
-        )
         self.btn_edit_colours.setVisible(False)
-        for b in (self.btn_zoom_in, self.btn_zoom_out, self.btn_fit,
-                  self.btn_1to1, self.btn_pal_plus, self.btn_pal_minus):
-            b.setProperty("class", "secondary")
-            vtop.addWidget(b)
-        vtop.addWidget(self.car_colour_label)
-        vtop.addWidget(self.car_colour_combo)
-        self.btn_edit_colours.setProperty("class", "secondary")
-        vtop.addWidget(self.btn_edit_colours)
-        vtop.addWidget(self.chk_hide_wheels)
-        viewer_lay.addLayout(vtop)
+        self.car_tools.setVisible(False)
+
+        self.btn_shot = _tool_btn("Save", tip="Save screenshot")
+        self.btn_copy_view = _tool_btn("Copy", tip="Copy view to clipboard")
+
+        for w in (
+            self.btn_view_menu, self.btn_spin, _sep(),
+            self.btn_zoom_out, self.btn_fit, self.btn_zoom_in, self.btn_1to1, _sep(),
+            self.shade_combo, self.lod_label, self.lod_combo, _sep(),
+            self.chk_grid, self.chk_ortho, self.chk_shadow, _sep(),
+        ):
+            vt.addWidget(w)
+        vt.addWidget(self.car_tools)
+        vt.addStretch(1)
+        vt.addWidget(self.btn_shot)
+        vt.addWidget(self.btn_copy_view)
+
+        self.viewer_tools_bar.setVisible(False)
+        # added under the viewport further below
 
         vbody = QSplitter(Qt.Orientation.Horizontal)
         left_v = QWidget()
+        left_v.setObjectName("timPackPanel")
         left_v_lay = QVBoxLayout(left_v)
+        left_v_lay.setContentsMargins(0, 0, 4, 0)
         left_v_lay.addWidget(QLabel("Textures in pack"))
         self.tim_list = QTreeWidget()
         self.tim_list.setHeaderLabels(["Name", "Size"])
         self.tim_list.setRootIsDecorated(False)
         left_v_lay.addWidget(self.tim_list)
+        self._tim_pack_panel = left_v
+        left_v.setVisible(False)  # only for TIM packs
         vbody.addWidget(left_v)
 
         self.viewer_label = QLabel()
@@ -581,8 +691,10 @@ class GTArcExplorer(QMainWindow):
             except Exception:
                 self.gl_viewer = None
         vbody.addWidget(self._viewer_stack)
-        vbody.setSizes([200, 800])
-        viewer_lay.addWidget(vbody)
+        vbody.setSizes([0, 1000])
+        # Viewport takes all free space; tools dock under the model
+        viewer_lay.addWidget(vbody, stretch=1)
+        viewer_lay.addWidget(self.viewer_tools_bar, stretch=0)
         self.canvas_stack.addWidget(viewer_page)
 
         left.setMinimumWidth(280)
@@ -690,6 +802,23 @@ class GTArcExplorer(QMainWindow):
         self.car_colour_combo.currentIndexChanged.connect(self._on_car_colour_changed)
         self.btn_edit_colours.clicked.connect(self._open_palette_editor)
         self.chk_hide_wheels.toggled.connect(self._on_hide_wheels_toggled)
+
+        # Viewer interaction tools
+        self.act_view_front.triggered.connect(lambda: self._view_preset("front"))
+        self.act_view_side.triggered.connect(lambda: self._view_preset("side"))
+        self.act_view_rear.triggered.connect(lambda: self._view_preset("rear"))
+        self.act_view_tq.triggered.connect(lambda: self._view_preset("three_quarter"))
+        self.act_view_top.triggered.connect(lambda: self._view_preset("top"))
+        self.act_view_reset.triggered.connect(self._view_reset)
+        self.btn_spin.toggled.connect(self._view_spin_toggled)
+        self.btn_shot.clicked.connect(self._view_screenshot)
+        self.btn_copy_view.clicked.connect(self._view_copy)
+        self.lod_combo.currentIndexChanged.connect(self._view_lod_changed)
+        self.shade_combo.currentIndexChanged.connect(self._view_shade_changed)
+        self.chk_grid.toggled.connect(self._view_grid_toggled)
+        self.chk_lighting.toggled.connect(self._view_lighting_toggled)
+        self.chk_ortho.toggled.connect(self._view_ortho_toggled)
+        self.chk_shadow.toggled.connect(self._view_shadow_toggled)
         self.filter_edit.textChanged.connect(self._apply_tree_filter)
         self.act_focus_filter.triggered.connect(lambda: self.filter_edit.setFocus())
         self.rail_group.idClicked.connect(self._switch_canvas)
@@ -776,8 +905,15 @@ class GTArcExplorer(QMainWindow):
 
     def eventFilter(self, obj, event):
         if obj is self.viewer_label and getattr(self, "_viewer_mode", None) in ("model", "car"):
-            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() in (
+                Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton
+            ):
                 self._drag_last = event.position().toPoint()
+                mods = event.modifiers()
+                self._drag_pan = (
+                    event.button() == Qt.MouseButton.MiddleButton
+                    or bool(mods & Qt.KeyboardModifier.ShiftModifier)
+                )
                 return True
 
             if event.type() == QEvent.Type.MouseMove and self._drag_last is not None:
@@ -785,10 +921,17 @@ class GTArcExplorer(QMainWindow):
                 dx = pos.x() - self._drag_last.x()
                 dy = pos.y() - self._drag_last.y()
                 self._drag_last = pos
-                prev_yaw, prev_pitch = self._pending_orbit or (0.0, 0.0)
-                self._pending_orbit = (prev_yaw + dx * 0.4, prev_pitch + dy * 0.3)
-                if not self._orbit_timer.isActive():
-                    self._orbit_timer.start()
+                if getattr(self, "_drag_pan", False):
+                    pan = getattr(self, "_view_pan", (0.0, 0.0))
+                    scale = 0.01 / max(0.25, float(getattr(self, "_car_zoom", 1.0) or 1.0))
+                    self._view_pan = (pan[0] + dx * scale, pan[1] - dy * scale)
+                    if not self._orbit_timer.isActive():
+                        self._orbit_timer.start()
+                else:
+                    prev_yaw, prev_pitch = self._pending_orbit or (0.0, 0.0)
+                    self._pending_orbit = (prev_yaw + dx * 0.45, prev_pitch + dy * 0.35)
+                    if not self._orbit_timer.isActive():
+                        self._orbit_timer.start()
                 return True
 
             if event.type() == QEvent.Type.MouseButtonRelease:
@@ -907,11 +1050,15 @@ class GTArcExplorer(QMainWindow):
         tim_tools.reencode_selected_tim(self)
 
     def _flush_orbit(self):
-        if self._pending_orbit is None:
+        if self._pending_orbit is not None:
+            d_yaw, d_pitch = self._pending_orbit
+            self._pending_orbit = None
+            model_orbit(self, d_yaw=d_yaw, d_pitch=d_pitch)
             return
-        d_yaw, d_pitch = self._pending_orbit
-        self._pending_orbit = None
-        model_orbit(self, d_yaw=d_yaw, d_pitch=d_pitch)
+        # Pan-only drag on software path
+        if getattr(self, "_viewer_mode", None) in ("car", "model"):
+            from .viewer_tools import refresh_viewer
+            refresh_viewer(self, low_quality=True)
 
     def _flush_zoom(self):
         if self._pending_zoom is None:
@@ -1235,6 +1382,76 @@ class GTArcExplorer(QMainWindow):
 
     def _hex_dump(self, chunk: bytes):
         preview.hex_dump(self, chunk)
+
+
+    def _view_preset(self, name: str) -> None:
+        from .viewer_tools import set_preset
+        set_preset(self, name)
+
+    def _view_reset(self) -> None:
+        from .viewer_tools import reset_camera
+        reset_camera(self)
+
+    def _view_spin_toggled(self, on: bool) -> None:
+        from .viewer_tools import toggle_auto_rotate
+        toggle_auto_rotate(self, on)
+
+    def _on_spin_tick(self) -> None:
+        from .viewer_tools import spin_tick
+        spin_tick(self)
+
+    def _view_screenshot(self) -> None:
+        from .viewer_tools import screenshot_to_file
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save viewer screenshot", "gt_view.png",
+            "PNG (*.png);;JPEG (*.jpg)"
+        )
+        if path and screenshot_to_file(self, path):
+            self.set_status(f"Saved screenshot: {path}")
+
+    def _view_copy(self) -> None:
+        from .viewer_tools import screenshot_to_clipboard
+        if screenshot_to_clipboard(self):
+            self.set_status("Viewer image copied to clipboard")
+
+    def _view_lod_changed(self, index: int) -> None:
+        from .viewer_tools import set_lod
+        combo = self.lod_combo
+        val = combo.itemData(index)
+        set_lod(self, int(val if val is not None else index))
+
+    def _view_shade_changed(self, index: int) -> None:
+        from .viewer_tools import set_shade_mode
+        mode = self.shade_combo.itemData(index) or "textured"
+        set_shade_mode(self, str(mode))
+
+    def _view_lighting_toggled(self, on: bool) -> None:
+        self._view_lighting = bool(on)
+        gl = getattr(self, "gl_viewer", None)
+        if gl is not None and hasattr(gl, "set_lighting"):
+            gl.set_lighting(self._view_lighting)
+        else:
+            from .viewer_tools import refresh_viewer
+            refresh_viewer(self)
+
+    def _view_grid_toggled(self, on: bool) -> None:
+        from .viewer_tools import set_grid
+        set_grid(self, on)
+
+    def _view_ortho_toggled(self, on: bool) -> None:
+        from .viewer_tools import set_ortho
+        set_ortho(self, on)
+
+    def _view_shadow_toggled(self, on: bool) -> None:
+        from .viewer_tools import set_show_shadow
+        set_show_shadow(self, on)
+
+    def keyPressEvent(self, event) -> None:
+        from .viewer_tools import handle_viewer_key
+        if handle_viewer_key(self, int(event.key()), int(event.modifiers().value) if hasattr(event.modifiers(), 'value') else int(event.modifiers())):
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def show_car_in_viewer(self, data, label="", tex_data=None):
         viewer.show_car_in_viewer(self,data,label,tex_data=tex_data)

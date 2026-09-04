@@ -234,21 +234,76 @@ def score_clut_as_body(colours: Sequence[RGBA]) -> float:
         return 0.0
     mean_s = sum(sats) / len(sats)
     mean_v = sum(vals) / len(vals)
-    # prefer moderate brightness + some saturation (paint, not pure chrome/black)
+    # Pure white / chrome plates are rarely body paint
+    if mean_s < 0.08 and mean_v > 0.85:
+        return 0.05
+    # Near-black tyre/shadow
+    if mean_v < 0.15:
+        return 0.08
     return mean_s * 0.65 + min(mean_v, 0.85) * 0.35 + min(len(sats), 8) * 0.02
 
 
-def rank_body_cluts(data: bytes, palette_index: int = 0, top: int = 4) -> List[int]:
-    """Return CLUT indices most likely used for body paint, best first."""
+def collect_palette_usage(model, lod_index: int = 0) -> dict:
+    """Map CLUT/palette_index → face count from a GTCarModel (LOD0 by default)."""
+    usage = {i: 0 for i in range(16)}
+    if model is None:
+        return usage
+    lods = getattr(model, "lods", None) or []
+    if not lods:
+        return usage
+    lod_index = max(0, min(int(lod_index), len(lods) - 1))
+    lod = lods[lod_index]
+    for poly in list(getattr(lod, "uv_triangles", []) or []) + list(getattr(lod, "uv_quads", []) or []):
+        pi = int(getattr(poly, "palette_index", 0) or 0) & 0x0F
+        usage[pi] = usage.get(pi, 0) + 1
+    return usage
+
+
+def rank_body_cluts(
+    data: bytes,
+    palette_index: int = 0,
+    top: int = 4,
+    usage: dict | None = None,
+) -> List[int]:
+    """
+    Return CLUT indices most likely used for body paint, best first.
+
+    When *usage* maps clut_index → face count from the car mesh, mesh usage
+    dominates (a saturated unused CLUT is not body paint on that car).
+    """
+    import math
     scored = []
+    usage = usage or {}
+    total_faces = sum(int(usage.get(i, 0) or 0) for i in range(16))
     for ci in range(16):
         try:
             cols = read_clut(data, palette_index, ci)
         except Exception:
             continue
-        scored.append((score_clut_as_body(cols), ci))
+        colour_score = score_clut_as_body(cols)
+        faces = int(usage.get(ci, 0) or 0)
+        if total_faces > 0:
+            # Primary signal: how much of the car actually references this CLUT
+            use_score = math.log1p(faces) / math.log1p(total_faces)  # 0..1
+            # Body paint is usually among the top-used materials with some chroma
+            score = use_score * 2.5 + colour_score * 0.35
+            if faces == 0:
+                score *= 0.15  # strongly downrank unused CLUTs
+        else:
+            score = colour_score
+        scored.append((score, faces, ci))
     scored.sort(reverse=True)
-    return [ci for sc, ci in scored[:top] if sc > 0.05]
+    # Prefer entries that are either used or have a real colour score
+    out = []
+    for sc, faces, ci in scored:
+        if len(out) >= top:
+            break
+        if total_faces > 0 and faces == 0 and sc < 0.2:
+            continue
+        if sc <= 0.05 and faces == 0:
+            continue
+        out.append(ci)
+    return out
 
 
 def recolor_clut_towards(

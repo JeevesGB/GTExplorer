@@ -146,6 +146,13 @@ def show_pack_in_viewer(win, data: bytes) -> None:
     """TIM pack – fill left list; show first texture if present."""
     win._viewer_mode = "pack"
     win._viewer_image = None
+    try:
+        from .viewer_tools import set_viewer_tools_visible
+        set_viewer_tools_visible(win, True, car=False, tim_pack=True)
+    except Exception:
+        panel = getattr(win, "_tim_pack_panel", None)
+        if panel is not None:
+            panel.setVisible(True)
 
     try:
         from ..utils.tim_pack import parse_tim_pack
@@ -384,6 +391,12 @@ def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
             f"X[{lo[0]:.0f},{hi[0]:.0f}] Y[{lo[1]:.0f},{hi[1]:.0f}] "
             f"Z[{lo[2]:.0f},{hi[2]:.0f]}"
         )
+    try:
+        from .viewer_tools import set_viewer_tools_visible, update_viewer_status
+        set_viewer_tools_visible(win, True, car=False)
+        update_viewer_status(win)
+    except Exception:
+        pass
     render_model_viewer(win)
 
 
@@ -439,6 +452,7 @@ def render_model_viewer(win, low_quality: bool = False) -> None:
             wireframe=use_wireframe,
             max_faces=max_faces,
             low_quality=low_quality,
+            lighting=bool(getattr(win, "_view_lighting", True)),
         )
         pix = QPixmap.fromImage(qimg)
         if low_quality:
@@ -613,6 +627,9 @@ def _fill_car_colour_combo(win, n_colours: int) -> None:
     btn = getattr(win, "btn_edit_colours", None)
     if btn is not None:
         btn.setVisible(True)
+    ct = getattr(win, "car_tools", None)
+    if ct is not None:
+        ct.setVisible(True)
     combo.blockSignals(False)
 
 
@@ -708,6 +725,12 @@ def show_car_in_viewer(
                 pass
 
     _fill_car_colour_combo(win, n_colours if tex_data else 1)
+    try:
+        from .viewer_tools import fill_lod_combo, set_viewer_tools_visible, update_viewer_status
+        fill_lod_combo(win)
+        set_viewer_tools_visible(win, True, car=True)
+    except Exception:
+        pass
     if not tex_data:
         combo = getattr(win, "car_colour_combo", None)
         if combo is not None:
@@ -742,6 +765,11 @@ def show_car_in_viewer(
         )
 
     render_car_viewer(win)
+    try:
+        from .viewer_tools import update_viewer_status
+        update_viewer_status(win)
+    except Exception:
+        pass
 
 
 def render_car_viewer(win, low_quality: bool = False) -> None:
@@ -753,15 +781,22 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
     if _use_gl(win) and build_car_arrays is not None:
         gl = win.gl_viewer
         try:
+            lod_i = int(getattr(win, "_car_lod_index", 0) or 0)
+            tex_images = getattr(win, "_car_tex_images", None)
+            if getattr(win, "_view_shade_mode", "textured") == "solid":
+                tex_images = None
             arrays = build_car_arrays(
                 model,
-                lod_index=0,
-                tex_images=getattr(win, "_car_tex_images", None),
+                lod_index=lod_i,
+                tex_images=tex_images,
                 show_wheels=not getattr(win, "_hide_wheels", False),
             )
             if arrays is not None:
-                # Support both old (5-tuple) and new (6-tuple with use_tex) builders
-                if len(arrays) >= 6:
+                # 5 / 6 / 7-tuple (normals optional)
+                nor = None
+                if len(arrays) >= 7:
+                    pos, idx, uv, col, ut, tex, nor = arrays[:7]
+                elif len(arrays) >= 6:
                     pos, idx, uv, col, ut, tex = arrays[:6]
                 else:
                     pos, idx, uv, col, tex = arrays[:5]
@@ -769,9 +804,12 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
                 _ensure_gl_shown(win)
                 gl.set_car_mesh(
                     pos, idx, uvs=uv, colors=col, use_tex=ut, texture_rgba=tex,
+                    normals=nor,
                     yaw=getattr(win, "_model_yaw", 40.0),
                     pitch=getattr(win, "_model_pitch", 18.0),
                 )
+                if hasattr(gl, "set_lighting"):
+                    gl.set_lighting(bool(getattr(win, "_view_lighting", True)))
                 z = float(getattr(win, "_car_zoom", 1.0) or 1.0)
                 gl.set_camera(
                     getattr(win, "_model_yaw", 40.0),
@@ -811,8 +849,8 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
             height=base_h,
             yaw_deg=getattr(win, "_model_yaw", 40.0),
             pitch_deg=getattr(win, "_model_pitch", 18.0),
-            tex_images=getattr(win, "_car_tex_images", None),
-            lod_index=0,
+            tex_images=(None if getattr(win, "_view_shade_mode", "textured") == "solid" else getattr(win, "_car_tex_images", None)),
+            lod_index=int(getattr(win, "_car_lod_index", 0) or 0),
             low_quality=low_quality,
         )
         pix = QPixmap.fromImage(qimg)
