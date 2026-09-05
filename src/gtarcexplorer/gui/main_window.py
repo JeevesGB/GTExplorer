@@ -674,10 +674,17 @@ class GTArcExplorer(QMainWindow):
         self.viewer_label.setMinimumSize(400, 300)
         self.viewer_label.setObjectName("viewerLabel")
 
+        self.viewer_label.setScaledContents(True)
+        self.viewer_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, 
+            QSizePolicy.Policy.Expanding)
+
         self._viewer_scroll = QScrollArea()
         self._viewer_scroll.setObjectName("viewerScroll")
         self._viewer_scroll.setWidgetResizable(True)
         self._viewer_scroll.setWidget(self.viewer_label)
+
+        self._viewer_scroll.setViewportMargins(0, 0, 0, 0)
 
         # Stack: software QLabel scroll area + OpenGL widget
         self._viewer_stack = QStackedWidget()

@@ -89,10 +89,18 @@ def _clear_viewer(win, msg: str = "") -> None:
         win.viewer_info.setText(msg)
 
 def _viewer_size(win) -> tuple[int, int]:
-    if getattr(win, "_viewer_scroll", None) is not None:
-        vp = win._viewer_scroll.viewport().size()
-        return max(320, vp.width() - 8), max(240, vp.height() - 8)
-    return 640, 480
+    scroll = getattr(win, "_viewer_scroll", None)
+    if scroll is not None:
+        sz = scroll.viewport().size()
+        if sz.width() > 100 and sz.height() > 100:
+            return sz.width(), sz.height()
+
+    if hasattr(win, "centralWidget") and win.centralWidget():
+        cw = win.centralWidget().size()
+        if cw.width() > 100 and cw.height() > 100:
+            return cw.width() - 320, cw.height() - 80
+
+    return 1280, 720
 
 def show_in_viewer(win, data: bytes, label: str = "", *, keep_pack: bool = False) -> None:
     if not keep_pack:
@@ -757,7 +765,6 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
                 show_wheels=not getattr(win, "_hide_wheels", False),
             )
             if arrays is not None:
-                # 5 / 6 / 7-tuple (normals optional)
                 nor = None
                 if len(arrays) >= 7:
                     pos, idx, uv, col, ut, tex, nor = arrays[:7]
@@ -781,7 +788,6 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
                     getattr(win, "_model_pitch", 18.0),
                     distance=max(0.05, gl._extent * 2.2 / max(0.35, z)),
                 )
-                # This check forces software rendering if OpenGL isn't ready on frame 1:
                 if getattr(gl, "_gl_ready", False) and getattr(gl, "_index_count", 0) > 0:
                     return
                 if getattr(gl, "_last_error", ""):
@@ -796,23 +802,20 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
         return
     _show_label_page(win)
 
+    # 1. Grab full viewport dimensions directly
+    # Inside render_car_viewer (Software path section):
     vp_w, vp_h = _viewer_size(win)
     zoom = float(getattr(win, "_car_zoom", 1.0) or 1.0)
 
-    if low_quality:
-        base_w, base_h = 900, 900
-    else:
-        base_w = min(int(vp_w * 1.5), 1280)
-        base_h = min(int(vp_h * 1.5), 960)
-    base_w = max(900, base_w)
-    base_h = max(900, base_h)
+    render_w = max(320, int(vp_w * zoom))
+    render_h = max(240, int(vp_h * zoom))
 
     try:
         from ..utils.gtcar_render import render_car_qimage
         qimg = render_car_qimage(
             model,
-            width=base_w,
-            height=base_h,
+            width=render_w,
+            height=render_h,
             yaw_deg=getattr(win, "_model_yaw", 40.0),
             pitch_deg=getattr(win, "_model_pitch", 18.0),
             tex_images=(None if getattr(win, "_view_shade_mode", "textured") == "solid" else getattr(win, "_car_tex_images", None)),
@@ -820,20 +823,15 @@ def render_car_viewer(win, low_quality: bool = False) -> None:
             low_quality=low_quality,
         )
         pix = QPixmap.fromImage(qimg)
-        target_w = max(64, int(vp_w * zoom))
-        target_h = max(64, int(vp_h * zoom))
-        xform = (
-            Qt.TransformationMode.FastTransformation
-            if low_quality
-            else Qt.TransformationMode.SmoothTransformation
-        )
-        pix = pix.scaled(
-            target_w, target_h,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            xform,
-        )
-        label.setPixmap(pix)
+
+        label = _get_viewer_label(win)
+        if label is not None:
+            # Stretch pixmap background to fill panel boundaries
+            label.setPixmap(pix.scaled(
+                vp_w, vp_h,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            ))
     except Exception as e:
         if hasattr(win, "viewer_info"):
             win.viewer_info.setText(f"Car render failed: {e}")
-        label.clear()
