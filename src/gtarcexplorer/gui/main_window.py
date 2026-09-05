@@ -853,6 +853,11 @@ class GTArcExplorer(QMainWindow):
                 is_nested = (
                     f.get("type") == "Nested GT-ARC" or f.get("ext") == ".arc"
                 )
+                # Check for GT-CAR Model type or .car extension
+                is_car = (
+                    f.get("type") == "GT-CAR Model"
+                    or (f.get("ext") or "").lower() == ".car"
+                )
             except Exception:
                 pass
 
@@ -988,6 +993,11 @@ class GTArcExplorer(QMainWindow):
             is_tim = (
                 f.get("type") == "TIM Texture"
                 or (f.get("ext") or "").lower() == ".tim"
+            )
+            # Define is_car before setting the action state
+            is_car = (
+                f.get("type") == "GT-CAR Model"
+                or (f.get("ext") or "").lower() == ".car"
             )
             act_reencode.setEnabled(is_tim and HAS_PIL)
             act_replace.setEnabled(is_tim and HAS_PIL)

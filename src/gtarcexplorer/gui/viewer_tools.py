@@ -5,9 +5,9 @@ from typing import Optional, Tuple
 
 # yaw, pitch
 VIEW_PRESETS = {
-    "front": (0.0, 8.0),
-    "side": (90.0, 8.0),
-    "rear": (180.0, 8.0),
+    "front": (0.0, 0.0),
+    "side": (90.0, 0.0),
+    "rear": (180.0, 0.0),
     "three_quarter": (40.0, 18.0),
     "top": (0.0, 89.0),
 }
@@ -48,7 +48,7 @@ def _sync_gl_camera(win) -> None:
             pan = getattr(win, "_view_pan", (0.0, 0.0))
             gl.set_pan(pan[0], pan[1])
         if hasattr(gl, "set_ortho"):
-            gl.set_ortho(bool(getattr(win, "_view_ortho", False)))
+            gl.set_ortho(not bool(getattr(win, "_view_ortho", False)))
         if hasattr(gl, "set_wireframe"):
             mode = getattr(win, "_view_shade_mode", "textured")
             gl.set_wireframe(mode == "wireframe")
@@ -78,7 +78,7 @@ def update_viewer_status(win) -> None:
     if mode not in ("car", "model"):
         return
     yaw = float(getattr(win, "_model_yaw", 0.0) or 0.0)
-    pitch = float(getattr(win, "_model_pitch", 0.0) or 0.0)
+    pitch = -float(getattr(win, "_model_pitch", 0.0) or 0.0)
     zoom = float(getattr(win, "_car_zoom", 1.0) or 1.0)
     backend = "OpenGL"
     gl = getattr(win, "gl_viewer", None)
@@ -137,7 +137,7 @@ def reset_camera(win) -> None:
 
 
 def fit_view(win) -> None:
-    win._car_zoom = 1.0
+    win._car_zoom = 5.0
     win._view_pan = (0.0, 0.0)
     gl = getattr(win, "gl_viewer", None)
     if gl is not None and hasattr(gl, "fit"):
@@ -170,7 +170,7 @@ def spin_tick(win) -> None:
     if not is_model_mode(win):
         toggle_auto_rotate(win, False)
         return
-    yaw = float(getattr(win, "_model_yaw", 0.0) or 0.0) + 1.2
+    yaw = float(getattr(win, "_model_yaw", 0.0) or 0.0) - 0.67
     win._model_yaw = yaw % 360.0
     gl = getattr(win, "gl_viewer", None)
     on_gl = gl is not None and getattr(gl, "_gl_ready", False) and getattr(gl, "_index_count", 0) > 0

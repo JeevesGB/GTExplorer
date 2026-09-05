@@ -108,7 +108,10 @@ def _gl_draw_elements(f, mode: int, count: int, typ: int) -> None:
     except Exception:
         pass
     try:
-        import sip  
+        if _QT == 6:
+            from PyQt6 import sip
+        else:
+            from PyQt5 import sip
         f.glDrawElements(mode, count, typ, sip.voidptr(0))
         return
     except Exception:
