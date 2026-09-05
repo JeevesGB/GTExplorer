@@ -115,14 +115,6 @@ class SwatchButton(QPushButton):
 
 
 class PaletteEditorDialog(QDialog):
-    """
-    Edit paint jobs (palette sets) and CLUTs in a GT-CTEX.
-
-    - CLUT overview with colour strips + body hints
-    - One-click body recolour toward a chosen paint
-    - Debounced live preview
-    - Optional write-back into the open archive entry
-    """
 
     def __init__(
         self,
@@ -138,6 +130,8 @@ class PaletteEditorDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("Car colour / palette editor")
+        self.setMinimumSize(755,729)
+        self.setMaximumSize(755,729)
 
         self._original = bytes(ctex_data)
         self._data = bytearray(ctex_data)
@@ -198,37 +192,7 @@ class PaletteEditorDialog(QDialog):
         self.lbl_body.setStyleSheet("color:#999; font-size:11px;")
         root.addWidget(self.lbl_body)
 
-        # --- One colour ---
-        self._target_swatch = QPushButton("Choose body colour…")
-        self._target_swatch.setMinimumHeight(48)
-        self._target_swatch.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._target_swatch.clicked.connect(self._pick_target_only)
-        root.addWidget(self._target_swatch)
-        self._set_target_swatch()
-        self.btn_pick_body = self._target_swatch
-
-        srow = QHBoxLayout()
-        srow.addWidget(QLabel("Strength"))
-        self.strength = QSlider(Qt.Orientation.Horizontal)
-        self.strength.setRange(20, 100)
-        self.strength.setValue(85)
-        srow.addWidget(self.strength, stretch=1)
-        self.lbl_strength = QLabel("85%")
-        self.lbl_strength.setMinimumWidth(36)
-        self.strength.valueChanged.connect(lambda v: self.lbl_strength.setText(f"{v}%"))
-        srow.addWidget(self.lbl_strength)
-        root.addLayout(srow)
-
-        self.btn_recolor_body = QPushButton("Apply colour to car")
-        self.btn_recolor_body.setMinimumHeight(36)
-        self.btn_recolor_body.setDefault(True)
-        self.btn_recolor_body.setToolTip(
-            "Recolours every material the game uses for body paint on this car"
-        )
-        self.btn_recolor_body.clicked.connect(lambda: self._recolor_selected(True))
-        root.addWidget(self.btn_recolor_body)
-
-        # Hidden widgets needed by Fine path / rebuild (created but in advanced)
+        # Widgets needed by the advanced panel / rebuild
         self.clut_list = QListWidget()
         self.clut_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.clut_list.currentRowChanged.connect(self._on_clut_row)
@@ -256,7 +220,7 @@ class PaletteEditorDialog(QDialog):
         self.spin_val.setSingleStep(0.05)
         self.spin_val.setValue(1.0)
 
-        # --- Advanced (collapsed) ---
+        # --- Advanced editing (always shown; this is the only editing mode) ---
         self._adv = QWidget()
         adv_l = QVBoxLayout(self._adv)
         adv_l.setContentsMargins(0, 8, 0, 0)
@@ -272,6 +236,25 @@ class PaletteEditorDialog(QDialog):
         for btn in self.swatches:
             sw.addWidget(btn)
         adv_l.addLayout(sw)
+
+        self._target_swatch = QPushButton("Choose target colour…")
+        self._target_swatch.setMinimumHeight(40)
+        self._target_swatch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._target_swatch.clicked.connect(self._pick_target_only)
+        adv_l.addWidget(self._target_swatch)
+        self._set_target_swatch()
+
+        srow = QHBoxLayout()
+        srow.addWidget(QLabel("Strength"))
+        self.strength = QSlider(Qt.Orientation.Horizontal)
+        self.strength.setRange(20, 100)
+        self.strength.setValue(85)
+        srow.addWidget(self.strength, stretch=1)
+        self.lbl_strength = QLabel("85%")
+        self.lbl_strength.setMinimumWidth(36)
+        self.strength.valueChanged.connect(lambda v: self.lbl_strength.setText(f"{v}%"))
+        srow.addWidget(self.lbl_strength)
+        adv_l.addLayout(srow)
 
         hsv = QHBoxLayout()
         hsv.addWidget(QLabel("Hue"))
@@ -291,14 +274,7 @@ class PaletteEditorDialog(QDialog):
         adv_l.addLayout(hsv)
         adv_l.addWidget(self.btn_recolor_this)
 
-        self._adv.setVisible(False)
         root.addWidget(self._adv)
-
-        self.btn_adv = QPushButton("Advanced…")
-        self.btn_adv.setProperty("class", "secondary")
-        self.btn_adv.setCheckable(True)
-        self.btn_adv.toggled.connect(self._toggle_advanced)
-        root.addWidget(self.btn_adv)
 
         root.addStretch(1)
 
@@ -336,8 +312,8 @@ class PaletteEditorDialog(QDialog):
         foot.addWidget(btn_done)
         root.addLayout(foot)
 
-        self.resize(480, 420)
-        self.setMinimumSize(400, 360)
+        self.resize(520, 600)
+        self.setMinimumSize(440, 520)
 
         self._rebuild_clut_list()
         self._update_tex_preview()
@@ -449,12 +425,6 @@ class PaletteEditorDialog(QDialog):
             btn.set_colour(colours[i] if i < len(colours) else (0, 0, 0, 0))
         self._suppress = False
         self._update_tex_preview()
-
-    def _toggle_advanced(self, on: bool) -> None:
-        self._adv.setVisible(bool(on))
-        self.btn_adv.setText("Hide advanced" if on else "Advanced…")
-        if on:
-            self.resize(max(self.width(), 520), max(self.height(), 560))
 
     def _update_tex_preview(self) -> None:
         """Show a combined strip of body-material palettes (how the car is painted)."""
@@ -568,15 +538,6 @@ class PaletteEditorDialog(QDialog):
         self._live = bool(on)
         if on:
             self._emit_preview_now()
-
-    def _pick_and_recolor_body(self) -> None:
-        dlg = QColorDialog(QColor(*self._target_rgb), self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        c = dlg.currentColor()
-        self._target_rgb = (c.red(), c.green(), c.blue())
-        self._set_target_swatch()
-        self._recolor_selected(body_only=True)
 
     def _recolor_selected(self, body_only: bool) -> None:
         paint = self.current_paint()
