@@ -222,7 +222,10 @@ def render_car_qimage(
     projected = _project_batch(
         verts, center, view_scale, yaw, pitch, w * 0.5, h * 0.5
     )
-
+    light = np.array([0.5,1.0,0.3], dtype=np.float64)
+    light_norm = np.linalg.norm(light)
+    if light_norm > 0:
+        light = light/light_norm
     colour = np.empty((h, w, 3), dtype=np.uint8)
     colour[:] = bg
     zbuf = np.full((h, w), np.inf, dtype=np.float32)

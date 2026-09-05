@@ -5,12 +5,20 @@ from typing import List, Sequence, Tuple
 
 from PIL import Image
 
+# Layout (GT1):
+#   0x00  @(#)GT-CTEX\0
+#   0x0C  u16 unknown (often 2)
+#   0x0E  u16 palette_set_count
+#   0x10  optional short name
+#   0x60  256×256 4bpp image (32768 bytes)
+#   0x8060  palette_set_count × 512 bytes
+#           each set = 16 CLUTs × 16 colours × 2 bytes (BGR555)
 
 IMAGE_OFF = 0x60
-IMAGE_SIZE = 256 * 256 // 2 
+IMAGE_SIZE = 256 * 256 // 2  # 4bpp
 PAL_OFF = 0x8060
-PAL_STRIDE = 512 
-CLUT_SIZE = 32  
+PAL_STRIDE = 512  # 16*16*2
+CLUT_SIZE = 32  # 16 × u16
 WIDTH = 256
 HEIGHT = 256
 
@@ -41,6 +49,7 @@ def _bgr555(c: int) -> RGBA:
 
 
 def rgba_to_bgr555(r: int, g: int, b: int, a: int = 255) -> int:
+    """Pack 8-bit RGBA into PS1 BGR555. Fully transparent / black → 0."""
     if a < 8 and r < 8 and g < 8 and b < 8:
         return 0
     r5 = max(0, min(31, (int(r) + 4) >> 3))
@@ -82,6 +91,7 @@ def write_clut(
     palette_index: int = 0,
     clut_index: int = 0,
 ) -> bytearray:
+    """Return a mutable copy of *data* with one CLUT replaced."""
     buf = bytearray(data)
     hdr = parse_ctex_header(buf)
     n = max(1, hdr["palette_count"])
@@ -120,6 +130,9 @@ def duplicate_palette_set(
     data: bytes,
     source_index: int = 0,
 ) -> bytearray:
+    """
+    Append a copy of *source_index* as a new paint job and bump palette_count.
+    """
     hdr = parse_ctex_header(data)
     n = max(1, hdr["palette_count"])
     source_index = max(0, min(source_index, n - 1))
@@ -130,6 +143,7 @@ def duplicate_palette_set(
     if len(src) < PAL_STRIDE:
         src = src + b"\0" * (PAL_STRIDE - len(src))
 
+    # Ensure room for existing sets
     need_existing = PAL_OFF + n * PAL_STRIDE
     if len(buf) < need_existing:
         buf.extend(b"\0" * (need_existing - len(buf)))
@@ -150,6 +164,7 @@ def shift_clut_hue(
     val_scale: float = 1.0,
     skip_index0: bool = True,
 ) -> List[RGBA]:
+    """Simple HSV adjust; keeps index 0 transparent by default."""
     import colorsys
 
     out: List[RGBA] = []
@@ -202,6 +217,7 @@ def decode_ctex(data: bytes, palette_index: int = 0, clut_index: int = 0):
 
 
 def score_clut_as_body(colours: Sequence[RGBA]) -> float:
+    """Higher = more likely a body/paint CLUT (saturated mid-tones, not mono)."""
     import colorsys
     vals = []
     sats = []
@@ -218,14 +234,17 @@ def score_clut_as_body(colours: Sequence[RGBA]) -> float:
         return 0.0
     mean_s = sum(sats) / len(sats)
     mean_v = sum(vals) / len(vals)
+    # Pure white / chrome plates are rarely body paint
     if mean_s < 0.08 and mean_v > 0.85:
         return 0.05
+    # Near-black tyre/shadow
     if mean_v < 0.15:
         return 0.08
     return mean_s * 0.65 + min(mean_v, 0.85) * 0.35 + min(len(sats), 8) * 0.02
 
 
 def collect_palette_usage(model, lod_index: int = 0) -> dict:
+    """Map CLUT/palette_index → face count from a GTCarModel (LOD0 by default)."""
     usage = {i: 0 for i in range(16)}
     if model is None:
         return usage
@@ -246,6 +265,12 @@ def rank_body_cluts(
     top: int = 4,
     usage: dict | None = None,
 ) -> List[int]:
+    """
+    Return CLUT indices most likely used for body paint, best first.
+
+    When *usage* maps clut_index → face count from the car mesh, mesh usage
+    dominates (a saturated unused CLUT is not body paint on that car).
+    """
     import math
     scored = []
     usage = usage or {}
@@ -258,14 +283,17 @@ def rank_body_cluts(
         colour_score = score_clut_as_body(cols)
         faces = int(usage.get(ci, 0) or 0)
         if total_faces > 0:
-            use_score = math.log1p(faces) / math.log1p(total_faces)  
+            # Primary signal: how much of the car actually references this CLUT
+            use_score = math.log1p(faces) / math.log1p(total_faces)  # 0..1
+            # Body paint is usually among the top-used materials with some chroma
             score = use_score * 2.5 + colour_score * 0.35
             if faces == 0:
-                score *= 0.15  
+                score *= 0.15  # strongly downrank unused CLUTs
         else:
             score = colour_score
         scored.append((score, faces, ci))
     scored.sort(reverse=True)
+    # Prefer entries that are either used or have a real colour score
     out = []
     for sc, faces, ci in scored:
         if len(out) >= top:
@@ -285,6 +313,10 @@ def recolor_clut_towards(
     skip_index0: bool = True,
     keep_value: bool = True,
 ) -> List[RGBA]:
+    """
+    Pull non-transparent colours toward *target_rgb*.
+    If keep_value, preserve relative brightness so shading survives.
+    """
     import colorsys
     strength = max(0.0, min(1.0, float(strength)))
     tr, tg, tb = [c / 255.0 for c in target_rgb[:3]]
@@ -309,3 +341,65 @@ def recolor_clut_towards(
         rr, gg, bb = colorsys.hsv_to_rgb(h % 1.0, max(0, min(1, s)), max(0, min(1, v)))
         out.append((int(rr * 255), int(gg * 255), int(bb * 255), a))
     return out
+
+
+def export_palettes_as_bmp(
+    data: bytes,
+    directory: str,
+    palette_index: int = 0,
+    prefix: str = "palette",
+) -> List[str]:
+    """
+    Export the texture rendered under each of the 16 material CLUTs for one
+    paint job, matching GT2TextureEditor / GT2ModelTool dump layout:
+
+        directory/palette0.bmp … directory/palette15.bmp
+
+    Each BMP is an indexed 4bpp image (256×256) so external tools can edit
+    the shared pixel indices while swapping CLUTs.
+    Returns the list of written file paths.
+    """
+    from pathlib import Path
+
+    out_dir = Path(directory)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: List[str] = []
+    # Shared 4bpp index map (same for every CLUT)
+    img_bytes = data[IMAGE_OFF : IMAGE_OFF + IMAGE_SIZE]
+    indices = []
+    for y in range(HEIGHT):
+        row = []
+        for x in range(0, WIDTH, 2):
+            bi = y * (WIDTH // 2) + x // 2
+            byte = img_bytes[bi] if bi < len(img_bytes) else 0
+            row.append(byte & 0x0F)
+            row.append((byte >> 4) & 0x0F)
+        indices.append(row)
+
+    for ci in range(16):
+        clut = read_clut(data, palette_index, ci)
+        # Build RGBA then quantise back to a PIL palette image for a clean BMP
+        pixels = []
+        for y in range(HEIGHT):
+            for x in range(WIDTH):
+                idx = indices[y][x]
+                r, g, b, a = clut[idx][:4]
+                if a < 8:
+                    r = g = b = 0
+                pixels.append((r, g, b))
+        im = Image.new("P", (WIDTH, HEIGHT))
+        # Build 16-colour palette (pad to 256 entries required by mode P)
+        pal = []
+        for c in clut:
+            r, g, b, a = c[:4]
+            pal.extend([r, g, b] if a >= 8 else [0, 0, 0])
+        while len(pal) < 256 * 3:
+            pal.extend([0, 0, 0])
+        im.putpalette(pal)
+        # Pack indices into image
+        flat = [indices[y][x] for y in range(HEIGHT) for x in range(WIDTH)]
+        im.putdata(flat)
+        path = out_dir / f"{prefix}{ci}.bmp"
+        im.save(path, format="BMP")
+        written.append(str(path))
+    return written
