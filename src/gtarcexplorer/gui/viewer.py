@@ -13,25 +13,24 @@ except ImportError:
 
 from ..utils.gtps import GTPSModel, render_qimage_faces
 
-
+# OpenGL path (optional — falls back to software if unavailable)
 _GL_AVAILABLE = False
 try:
     from .gl_viewer import ModelGLWidget, build_car_arrays
     _GL_AVAILABLE = True
-except Exception as e:
-    print(f"DEBUG: OpenGL failed to import from gl_viewer: {e}")
-    ModelGLWidget = None
-    build_car_arrays = None
+except Exception:
+    ModelGLWidget = None  # type: ignore
+    build_car_arrays = None  # type: ignore
 
 
 def _use_gl(win) -> bool:
-    if not _GL_AVAILABLE:
-        return False
-    if getattr(win, "_force_software_viewer", False) is True:
+    if not _GL_AVAILABLE or getattr(win, "_force_software_viewer", False): #    True: Software Rendering || False: OpenGL Rendering
         return False
     return getattr(win, "gl_viewer", None) is not None
 
+
 def _ensure_gl_shown(win) -> bool:
+    """Switch to GL page and force a context so initializeGL can run."""
     gl = getattr(win, "gl_viewer", None)
     if gl is None:
         return False
@@ -46,11 +45,13 @@ def _ensure_gl_shown(win) -> bool:
         app.processEvents()
     return True
 
+
 def _show_gl_page(win) -> None:
     stack = getattr(win, "_viewer_stack", None)
     gl = getattr(win, "gl_viewer", None)
     if stack is not None and gl is not None:
         stack.setCurrentWidget(gl)
+
 
 def _show_label_page(win) -> None:
     stack = getattr(win, "_viewer_stack", None)
@@ -58,8 +59,10 @@ def _show_label_page(win) -> None:
     if stack is not None and scroll is not None:
         stack.setCurrentWidget(scroll)
 
+
 def _get_viewer_label(win):
     return getattr(win, "viewer_label", None)
+
 
 def _pil_to_qpixmap(im) -> QPixmap:
     if im.mode != "RGBA":
@@ -67,6 +70,7 @@ def _pil_to_qpixmap(im) -> QPixmap:
     data = im.tobytes("raw", "RGBA")
     qimg = QImage(data, im.width, im.height, QImage.Format.Format_RGBA8888)
     return QPixmap.fromImage(qimg.copy())
+
 
 def _set_image(win, pix: QPixmap, info: str = "") -> None:
     win._viewer_image = pix
@@ -78,6 +82,7 @@ def _set_image(win, pix: QPixmap, info: str = "") -> None:
         label.adjustSize()
     if hasattr(win, "viewer_info") and info:
         win.viewer_info.setText(info)
+
 
 def _clear_viewer(win, msg: str = "") -> None:
     win._viewer_image = None
@@ -94,11 +99,13 @@ def _clear_viewer(win, msg: str = "") -> None:
     if hasattr(win, "viewer_info") and msg:
         win.viewer_info.setText(msg)
 
+
 def _viewer_size(win) -> tuple[int, int]:
     if getattr(win, "_viewer_scroll", None) is not None:
         vp = win._viewer_scroll.viewport().size()
         return max(320, vp.width() - 8), max(240, vp.height() - 8)
     return 640, 480
+
 
 def show_in_viewer(win, data: bytes, label: str = "", *, keep_pack: bool = False) -> None:
     if not keep_pack:
@@ -128,12 +135,15 @@ def show_in_viewer(win, data: bytes, label: str = "", *, keep_pack: bool = False
     except Exception as e:
         _clear_viewer(win, f"{label} – TIM error: {e}")
 
+
 def tim_to_image(data: bytes):
     from ..utils.tim_image import decode_tim
     img, _info = decode_tim(data)
     return img
 
+
 def show_pack_in_viewer(win, data: bytes) -> None:
+    """TIM pack – fill left list; show first texture if present."""
     win._viewer_mode = "pack"
     win._viewer_image = None
     try:
@@ -175,6 +185,7 @@ def show_pack_in_viewer(win, data: bytes) -> None:
     if entries:
         on_tim_list_select(win)
 
+
 def on_tim_list_select(win) -> None:
     if not hasattr(win, "tim_list"):
         return
@@ -194,12 +205,16 @@ def on_tim_list_select(win) -> None:
     show_in_viewer(win, data, name, keep_pack=True)
     win._viewer_mode = "pack"
 
+
 def export_tim_pack_pngs(win) -> None:
+    """Optional batch PNG export from current pack (no-op stub)."""
     pack = getattr(win, "_pack_tims", None)
     if not pack:
         return
 
+
 def show_ctex_in_viewer(win, data: bytes, label: str = "") -> None:
+    """Car texture with palette / CLUT controls."""
     win._viewer_mode = "ctex"
     win._ctex_data = data
     win._ctex_pal = int(getattr(win, "_ctex_pal", 0) or 0)
@@ -226,7 +241,9 @@ def show_ctex_in_viewer(win, data: bytes, label: str = "") -> None:
     except Exception as e:
         _clear_viewer(win, f"{label} – CTEX error: {e}")
 
+
 def ctex_shift_clut(win, delta: int) -> None:
+    """Pal ± / CLUT ± toolbar buttons."""
     data = getattr(win, "_ctex_data", None)
     if not data or getattr(win, "_viewer_mode", None) != "ctex":
         return
@@ -247,6 +264,7 @@ def ctex_shift_clut(win, delta: int) -> None:
     win._ctex_pal = max(0, min(pal, n_pal - 1))
     show_ctex_in_viewer(win, data, label="")
 
+
 def show_slt_in_viewer(win, data: bytes, label: str = "") -> None:
     win._viewer_mode = "image"
     win._pack_tims = []
@@ -262,6 +280,7 @@ def show_slt_in_viewer(win, data: bytes, label: str = "") -> None:
         )
     except Exception as e:
         _clear_viewer(win, f"{label} – SLT error: {e}")
+
 
 def viewer_fit(win) -> None:
     mode = getattr(win, "_viewer_mode", None)
@@ -288,6 +307,7 @@ def viewer_fit(win) -> None:
         label.setPixmap(pix)
         win._viewer_scale = 1.0
 
+
 def viewer_1to1(win) -> None:
     mode = getattr(win, "_viewer_mode", None)
     if mode == "model":
@@ -303,6 +323,7 @@ def viewer_1to1(win) -> None:
     label.setPixmap(pix)
     win._viewer_scale = 1.0
 
+
 def viewer_zoom(win, factor: float, low_quality: bool = False) -> None:
     mode = getattr(win, "_viewer_mode", None)
     if mode == "model":
@@ -314,10 +335,12 @@ def viewer_zoom(win, factor: float, low_quality: bool = False) -> None:
             z = max(0.35, min(3.0, z * factor))
             win._car_zoom = z
         if _use_gl(win):
+            # Orbit distance scales with zoom; avoid full mesh rebuild
             gl = win.gl_viewer
             if factor != 1.0 and factor > 0:
                 gl.zoom(factor)
             elif factor == 1.0:
+                # settle: re-apply camera from stored zoom
                 gl.set_camera(
                     getattr(win, "_model_yaw", 40.0),
                     getattr(win, "_model_pitch", 18.0),
@@ -342,6 +365,7 @@ def viewer_zoom(win, factor: float, low_quality: bool = False) -> None:
     )
     label.setPixmap(scaled)
 
+
 def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
     win._viewer_mode = "model"
     win._pack_tims = []
@@ -365,7 +389,7 @@ def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
         win.viewer_info.setText(
             f"{label}  •  {model.vertex_count:,} verts  •  "
             f"X[{lo[0]:.0f},{hi[0]:.0f}] Y[{lo[1]:.0f},{hi[1]:.0f}] "
-            f"Z[{lo[2]:.0f},{hi[2]:.0f}]"
+            f"Z[{lo[2]:.0f},{hi[2]:.0f]}"
         )
     try:
         from .viewer_tools import set_viewer_tools_visible, update_viewer_status
@@ -375,11 +399,13 @@ def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
         pass
     render_model_viewer(win)
 
+
 def render_model_viewer(win, low_quality: bool = False) -> None:
     model = getattr(win, "_model", None)
     if model is None:
         return
 
+    # Prefer OpenGL
     if _use_gl(win):
         gl = win.gl_viewer
         try:
@@ -403,6 +429,7 @@ def render_model_viewer(win, low_quality: bool = False) -> None:
         except Exception as e:
             if hasattr(win, "viewer_info"):
                 win.viewer_info.setText(f"GL model failed, software fallback: {e}")
+            # fall through to software
 
     label = _get_viewer_label(win)
     if label is None:
@@ -443,18 +470,23 @@ def render_model_viewer(win, low_quality: bool = False) -> None:
             win.viewer_info.setText(f"Model render failed: {e}")
         label.clear()
 
+
 def model_orbit(win, d_yaw: float, d_pitch: float) -> None:
+    """Orbit camera. OpenGL path only updates uniforms (cheap). Software uses low_quality."""
     win._model_yaw = (getattr(win, "_model_yaw", 0.0) + d_yaw) % 360.0
     win._model_pitch = max(-89.0, min(89.0, getattr(win, "_model_pitch", 20.0) + d_pitch))
     mode = getattr(win, "_viewer_mode", None)
     if _use_gl(win) and mode in ("model", "car"):
         gl = win.gl_viewer
+        # Only camera — do not rebuild or re-upload mesh
         gl.set_camera(win._model_yaw, win._model_pitch)
         return
+    # Software path: aggressive low quality while dragging
     if mode == "car":
         render_car_viewer(win, low_quality=True)
     elif mode == "model":
         render_model_viewer(win, low_quality=True)
+
 
 def model_zoom(win, factor: float, low_quality: bool = False) -> None:
     mode = getattr(win, "_viewer_mode", None)
@@ -469,10 +501,13 @@ def model_zoom(win, factor: float, low_quality: bool = False) -> None:
     if model:
         render_model_viewer(win, low_quality=low_quality)
 
+
 def viewer_orbit(win, d_yaw: float, d_pitch: float) -> None:
     model_orbit(win, d_yaw, d_pitch)
 
+
 def _find_companion_tex_entry(win, car_entry):
+    """Return (bytes, archive_index) for companion GT-CTEX, or (None, None)."""
     if not getattr(win, "arc", None) or not getattr(win.arc, "files", None):
         return None, None
 
@@ -518,6 +553,7 @@ def _find_companion_tex_entry(win, car_entry):
 
     return None, None
 
+
 def _find_companion_tex(win, car_entry) -> Optional[bytes]:
     data, idx = _find_companion_tex_entry(win, car_entry)
     if data is not None:
@@ -526,7 +562,9 @@ def _find_companion_tex(win, car_entry) -> Optional[bytes]:
         win._car_tex_entry_index = None
     return data
 
+
 def _colour_labels_for_car(win, n_colours: int) -> list:
+    """Human labels for paint slots; prefer COLOR table names when counts match."""
     labels = [f"Colour {i + 1}" for i in range(n_colours)]
     try:
         arc = getattr(win, "arc", None)
@@ -549,9 +587,11 @@ def _colour_labels_for_car(win, n_colours: int) -> list:
         by_car = {}
         for car_id, cid, name in rows:
             by_car.setdefault(car_id, []).append(name or f"Colour {cid:02X}")
+        # Prefer a car whose colour count matches CTEX palette sets
         for names in by_car.values():
             if len(names) == n_colours:
                 return [n if n else f"Colour {i + 1}" for i, n in enumerate(names)]
+        # Or first car with any colours if only one multi-colour entry fits loosely
         if len(by_car) == 1:
             names = next(iter(by_car.values()))
             if 1 < len(names) <= n_colours:
@@ -563,6 +603,7 @@ def _colour_labels_for_car(win, n_colours: int) -> list:
     except Exception:
         pass
     return labels
+
 
 def _fill_car_colour_combo(win, n_colours: int) -> None:
     combo = getattr(win, "car_colour_combo", None)
@@ -591,7 +632,9 @@ def _fill_car_colour_combo(win, n_colours: int) -> None:
         ct.setVisible(True)
     combo.blockSignals(False)
 
+
 def on_car_colour_changed(win, index: int = -1) -> None:
+    """Rebuild car textures for the selected CTEX palette set and re-render."""
     if getattr(win, "_viewer_mode", None) != "car":
         return
     data = getattr(win, "_car_data", None)
@@ -614,12 +657,15 @@ def on_car_colour_changed(win, index: int = -1) -> None:
                 win.viewer_info.setText(f"{label} – colour load failed: {e}")
             return
     render_car_viewer(win)
+    # Refresh status line colour note
     if hasattr(win, "viewer_info") and win._car_tex_images:
         n = int((win._car_tex_images or {}).get("colour_count") or 1)
         ci = int(getattr(win, "_car_colour_index", 0) or 0) + 1
         info = win.viewer_info.text()
+        # keep existing verts/faces text; append colour
         if "colour" not in info.lower():
             win.viewer_info.setText(info + f"  •  colour {ci}/{n}")
+
 
 def show_car_in_viewer(
     win,
@@ -627,6 +673,7 @@ def show_car_in_viewer(
     label: str = "",
     tex_data: Optional[bytes] = None,
 ) -> None:
+    """Parse GT-CAR and render LOD0 (optionally textured from companion .tex)."""
     win._viewer_mode = "car"
     win._pack_tims = []
     if hasattr(win, "tim_list"):
@@ -724,23 +771,13 @@ def show_car_in_viewer(
     except Exception:
         pass
 
-def render_car_viewer(win, low_quality: bool = False, highlight_palettes=None) -> None:
-    print(
-    "DEBUG GL:",
-    "available =", _GL_AVAILABLE,
-    "widget =", getattr(win, "gl_viewer", None),
-    "forced_software =", getattr(win, "_force_software_viewer", None),
-    "gl_ready =", getattr(getattr(win, "gl_viewer", None), "_gl_ready", None),
-    "last_error =", repr(getattr(getattr(win, "gl_viewer", None), "_last_error", None)),
-    "index_count =", getattr(getattr(win, "gl_viewer", None), "_index_count", None),
-)
+
+def render_car_viewer(win, low_quality: bool = False) -> None:
     model = getattr(win, "_car_model", None)
     if model is None:
         return
 
-    if highlight_palettes is None:
-        highlight_palettes = getattr(win, "_palette_highlight", None)
-
+    # Prefer OpenGL
     if _use_gl(win) and build_car_arrays is not None:
         gl = win.gl_viewer
         try:
@@ -753,9 +790,9 @@ def render_car_viewer(win, low_quality: bool = False, highlight_palettes=None) -
                 lod_index=lod_i,
                 tex_images=tex_images,
                 show_wheels=not getattr(win, "_hide_wheels", False),
-                highlight_palettes=highlight_palettes,
             )
             if arrays is not None:
+                # 5 / 6 / 7-tuple (normals optional)
                 nor = None
                 if len(arrays) >= 7:
                     pos, idx, uv, col, ut, tex, nor = arrays[:7]
@@ -787,6 +824,7 @@ def render_car_viewer(win, low_quality: bool = False, highlight_palettes=None) -
             if hasattr(win, "viewer_info"):
                 win.viewer_info.setText(f"GL car failed, software fallback: {e}")
 
+    # Software path
     label = _get_viewer_label(win)
     if label is None:
         return

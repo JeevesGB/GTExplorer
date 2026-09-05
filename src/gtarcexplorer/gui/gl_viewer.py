@@ -31,8 +31,9 @@ except ImportError:
             QOpenGLShader, QOpenGLShaderProgram,
             QOpenGLBuffer, QOpenGLVertexArrayObject,
         )
-        QOpenGLTexture = None 
+        QOpenGLTexture = None  
     _QT = 5
+
 
 VERT_SRC = """
 attribute vec3 aPos;
@@ -89,6 +90,9 @@ GL_FRONT_AND_BACK = 0x0408
 GL_LINE = 0x1B01
 GL_FILL = 0x1B02
 
+
+
+
 def _gl_draw_elements(f, mode: int, count: int, typ: int) -> None:
     if count <= 0:
         return
@@ -104,12 +108,13 @@ def _gl_draw_elements(f, mode: int, count: int, typ: int) -> None:
     except Exception:
         pass
     try:
-        import sip 
+        import sip  
         f.glDrawElements(mode, count, typ, sip.voidptr(0))
         return
     except Exception:
         pass
     f.glDrawElements(mode, count, typ, 0)
+
 
 def _resolve_gl_functions(widget):
     ctx = widget.context()
@@ -176,7 +181,7 @@ def _resolve_gl_functions(widget):
             continue
 
     try:
-        from OpenGL import GL as gl
+        from OpenGL import GL as gl  # type: ignore
 
         class _PyOpenGLFuncs:
             def initializeOpenGLFunctions(self):
@@ -211,6 +216,7 @@ def _resolve_gl_functions(widget):
         "Could not obtain OpenGL functions (context has no functions/versionFunctions)"
     )
 
+
 def configure_default_surface_format() -> None:
     import os
     os.environ.setdefault("QT_OPENGL", "desktop")
@@ -229,17 +235,20 @@ def configure_default_surface_format() -> None:
         pass
     QSurfaceFormat.setDefaultFormat(fmt)
 
+
 def _buffer_type_vertex():
     t = getattr(QOpenGLBuffer, "Type", None)
     if t is not None and hasattr(t, "VertexBuffer"):
         return t.VertexBuffer
     return getattr(QOpenGLBuffer, "VertexBuffer", 0x8892)
 
+
 def _buffer_type_index():
     t = getattr(QOpenGLBuffer, "Type", None)
     if t is not None and hasattr(t, "IndexBuffer"):
         return t.IndexBuffer
     return getattr(QOpenGLBuffer, "IndexBuffer", 0x8893)
+
 
 class ModelGLWidget(QOpenGLWidget):
 
@@ -416,7 +425,7 @@ class ModelGLWidget(QOpenGLWidget):
         self._yaw = float(yaw) % 360.0
         self._pitch = max(-89.0, min(89.0, float(pitch)))
         if distance is not None:
-            self._distance = max(0.05, float(distance))
+            self._distance = max(0.10, float(distance))
         self.update()
         win = self._main_window
         if win is not None:
@@ -500,7 +509,7 @@ class ModelGLWidget(QOpenGLWidget):
             extent = 1.0
         self._target = QVector3D(float(center[0]), float(center[1]), float(center[2]))
         self._extent = extent
-        self._distance = extent * 2.2 
+        self._distance = extent * 2.2  
 
     def _mvp(self) -> QMatrix4x4:
         aspect = max(0.1, self.width() / max(1.0, float(self.height())))
@@ -610,9 +619,8 @@ class ModelGLWidget(QOpenGLWidget):
             self.ready.emit()
         except Exception as e:
             self._gl_ready = False
-            self._last_error = f"{type(e).__name__}: {e}"
-            print("OPENGL INITIALIZATION FAILED:", self._last_error)
-            self.failed.emit(self._last_error)
+            self._last_error = str(e)
+            self.failed.emit(str(e))
 
     def _upload_pending(self) -> None:
         if not self._gl_ready or self._pending_mesh is None:
@@ -769,7 +777,7 @@ class ModelGLWidget(QOpenGLWidget):
                 return
 
             self._vbo.bind()
-            stride = 48 
+            stride = 48  
             if self._loc_pos >= 0:
                 self._program.enableAttributeArray(self._loc_pos)
                 self._program.setAttributeBuffer(self._loc_pos, GL_FLOAT, 0, 3, stride)
@@ -807,7 +815,7 @@ class ModelGLWidget(QOpenGLWidget):
                     poly_mode_set = True
                 except Exception:
                     try:
-                        import OpenGL.GL as GL  
+                        import OpenGL.GL as GL  # type: ignore
                         GL.glPolygonMode(GL.GL_FRONT_AND_BACK, GL.GL_LINE)
                         poly_mode_set = True
                     except Exception:
@@ -826,7 +834,7 @@ class ModelGLWidget(QOpenGLWidget):
                     f.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
                 except Exception:
                     try:
-                        import OpenGL.GL as GL 
+                        import OpenGL.GL as GL  # type: ignore
                         GL.glPolygonMode(GL.GL_FRONT_AND_BACK, GL.GL_FILL)
                     except Exception:
                         pass
@@ -928,9 +936,15 @@ class ModelGLWidget(QOpenGLWidget):
             pass
         event.accept()
 
+
+# Mesh builders
 def _build_wheel_geometry(
     cx: float, cy: float, cz: float, radius: float, width: float, segments: int = 20
 ):
+    """
+    Wheel disc in the YZ plane (axle along X = left/right).
+    Returns (positions, colors, indices).
+    """
     positions: list = []
     colors: list = []
     indices: list = []
@@ -938,7 +952,7 @@ def _build_wheel_geometry(
         return positions, colors, indices
 
     half = max(radius * 0.18, abs(width) * 0.5)
-    tyre_inner = radius * 0.72          
+    tyre_inner = radius * 0.72         
     rim_outer = radius * 0.70
     rim_inner = radius * 0.28
     tyre_col = (0.06, 0.06, 0.07)
@@ -986,7 +1000,7 @@ def _build_wheel_geometry(
     return positions, colors, indices
 
 
-_HIGHLIGHT_COLOUR = (1.0, 0.95, 0.10)  # bright yellow, flat-shaded | TO BE FIXED
+_HIGHLIGHT_COLOUR = (1.0, 0.95, 0.10)  # bright yellow, flat-shaded
 
 
 def build_car_arrays(
@@ -1055,6 +1069,7 @@ def build_car_arrays(
                 h, w = min(256, arr.shape[0]), min(256, arr.shape[1])
                 out[:h, :w] = arr[:h, :w, :4]
                 arr = out
+            # Keep original CLUT alpha (index 0 is transparent in GT-CTEX)
             pals[int(k)] = arr
 
     def pick_key(pidx: int):
@@ -1068,6 +1083,7 @@ def build_car_arrays(
         keys = list(pals.keys())
         return min(keys, key=lambda k: abs(k - pidx))
 
+    # Atlas rows = unique palette keys used by this LOD
     used_keys = []
     seen = set()
     for poly in list(getattr(lod, "uv_triangles", []) or []) + list(getattr(lod, "uv_quads", []) or []):
@@ -1137,6 +1153,8 @@ def build_car_arrays(
             normals_list.append(_nvec(normal))
         return len(positions) - 1
 
+
+    # UV faces (file order — matches earlier working GPU path)
     for poly in list(getattr(lod, "uv_triangles", []) or []):
         pidx = int(getattr(poly, "palette_index", 0) or 0)
         fn = _face_normal(poly)
@@ -1160,6 +1178,13 @@ def build_car_arrays(
         else:
             indices.extend(ids)
 
+    # Solid / untextured faces: GT1 face_colour is not reliably available, and
+    # drawing them caused white wheel-arch fills. Software also skips fc==0.
+    # Wheel wells intentionally remain holes (dark clear colour shows through).
+
+    # --- Procedural wheels fitted to body wheel-arches ---
+    # body_l from the FULL mesh is often too long (rear wing / front splitter).
+    # Use lower-body Z span so axles sit closer together in the real arches.
     wheels = list(getattr(model, "wheels", []) or [])
     if show_wheels and positions:
         import statistics as _stats
@@ -1175,10 +1200,12 @@ def build_car_arrays(
         body_w = max(1e-6, max_x - min_x)
         cx_body = 0.5 * (min_x + max_x)
 
+        # Lower-body length (ignore high rear wings / roof)
         y_cut = min_y + body_h * 0.40
         low = [p for p in pts if p[1] <= y_cut]
         if len(low) >= 10:
             lzs = [p[2] for p in low]
+            # Trim extreme 5% each end to drop splitter/wing tips
             lzs.sort()
             lo_i = max(0, len(lzs) // 20)
             hi_i = min(len(lzs) - 1, len(lzs) - 1 - len(lzs) // 20)
@@ -1196,6 +1223,8 @@ def build_car_arrays(
 
         track = body_w * 0.5 * 0.88
 
+        # Tighter wheelbase — fronts/rears were too far apart on winged cars
+        # Total axle span ≈ 36% of lower-body length
         wb_f = body_l * 0.40
         wb_r = body_l * 0.19
 
@@ -1265,7 +1294,7 @@ def build_car_arrays(
             ax, ay = a
             bx = ax * 0.70 + dx * 0.30
             by = ay * 0.60 + dy * 0.40
-            bz = dz 
+            bz = dz  # keep tight wheelbase
             bx = max(min_x - radius * 0.1, min(max_x + radius * 0.1, bx))
             by = max(min_y + radius * 0.70, min(min_y + radius * 1.10, by))
             targets.append((bx, by, bz))
