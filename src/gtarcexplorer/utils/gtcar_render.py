@@ -1,18 +1,20 @@
 from __future__ import annotations
-
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from PyQt6.QtGui import QImage, QColor
+else:
+    try:
+        from PyQt6.QtGui import QImage, QColor
+    except ImportError:
+        try:
+            from PyQt5.QtGui import QImage, QColor
+        except ImportError:
+            QImage = None 
+            QColor = None
 
 import numpy as np
-
-try:
-    from PyQt6.QtGui import QImage, QColor
-except ImportError:
-    try:
-        from PyQt5.QtGui import QImage, QColor
-    except ImportError:
-        QImage = None 
-        QColor = None 
 
 try:
     from .gtcar import (
@@ -25,10 +27,8 @@ except ImportError:
         convert_scale, UNITS_TO_METRES,
     )
 
-
 _tex_cache: Dict[int, dict] = {}  
 _lod_cache: Dict[int, dict] = {}  
-
 
 def _project_batch(
     pts: np.ndarray,
@@ -55,7 +55,6 @@ def _project_batch(
     out[:, 1] = screen_cy - ry2 * view_scale
     out[:, 2] = rz2
     return out
-
 
 def _raster_triangle(
     colour_buf: np.ndarray,
@@ -139,7 +138,6 @@ def _raster_triangle(
         )
         colour_buf[min_y:max_y + 1, min_x:max_x + 1][nearer] = sr
 
-
 def _get_lod_prep(lod: LOD, scale_factor: float) -> dict:
     key = id(lod)
     cached = _lod_cache.get(key)
@@ -172,7 +170,6 @@ def _get_lod_prep(lod: LOD, scale_factor: float) -> dict:
     _lod_cache[key] = prep
     return prep
 
-
 def render_car_qimage(
     model: GTCarModel,
     width: int = 640,
@@ -185,7 +182,7 @@ def render_car_qimage(
     bg: Tuple[int, int, int] = (18, 20, 26),
     low_quality: bool = False,
     lighting: bool = True,
-) -> "QImage":
+) -> Optional[QImage]:
     w = max(64, int(width))
     h = max(64, int(height))
 
@@ -215,7 +212,7 @@ def render_car_qimage(
     extent = float(np.max(hi - lo))
     if extent < 1e-6:
         extent = 1.0
-    view_scale = (min(w, h) * 0.55) / extent
+    view_scale = (min(w, h) * 0.95) / extent
 
     yaw = math.radians(yaw_deg)
     pitch = math.radians(pitch_deg)
@@ -288,7 +285,7 @@ def render_car_qimage(
                 (pts[1, 0] - pts[0, 0]) * (pts[2, 1] - pts[0, 1])
                 - (pts[2, 0] - pts[0, 0]) * (pts[1, 1] - pts[0, 1])
             )
-            if area <= 0:
+            if area >= 0: # changed < to > to fix camera flip bug 
                 continue
             uvs_arr = np.array(
                 [uv_list[ia], uv_list[ib], uv_list[ic]], dtype=np.float64
@@ -363,7 +360,6 @@ def render_car_qimage(
 
     out = QImage(bgra.tobytes(), w, h, w * 4, QImage.Format.Format_ARGB32)
     return out.copy()
-
 
 def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict:
     cache_key = hash(ctex_data)
@@ -452,7 +448,6 @@ def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict
     _tex_cache[cache_key] = result
     return result
 
-
 def build_tex_images_for_colour(ctex_data: bytes, colour_index: int = 0) -> dict:
     from .ctex import ctex_palette_count, decode_ctex
     import numpy as np
@@ -500,7 +495,6 @@ def build_tex_images_for_colour(ctex_data: bytes, colour_index: int = 0) -> dict
         _tex_cache.clear()
     _tex_cache[cache_key] = result
     return result
-
 
 def clear_render_caches() -> None:
     _lod_cache.clear()

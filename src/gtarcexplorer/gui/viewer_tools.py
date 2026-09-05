@@ -78,7 +78,7 @@ def update_viewer_status(win) -> None:
     if mode not in ("car", "model"):
         return
     yaw = float(getattr(win, "_model_yaw", 0.0) or 0.0)
-    pitch = -float(getattr(win, "_model_pitch", 0.0) or 0.0)
+    pitch = float(getattr(win, "_model_pitch", 0.0) or 0.0)
     zoom = float(getattr(win, "_car_zoom", 1.0) or 1.0)
     backend = "OpenGL"
     gl = getattr(win, "gl_viewer", None)
