@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
-
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QImage, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
@@ -11,7 +9,6 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
     QSlider, QSplitter, QVBoxLayout, QWidget,
 )
-
 from ..utils.ctex import (
     RGBA,
     collect_palette_usage,
@@ -29,15 +26,12 @@ from ..utils.ctex import (
     write_palette_set,
 )
 
-
 def _qcolor(c: RGBA) -> QColor:
     r, g, b, a = c[:4]
     return QColor(int(r), int(g), int(b), int(a if a is not None else 255))
 
-
 def _rgba(qc: QColor) -> RGBA:
     return (qc.red(), qc.green(), qc.blue(), qc.alpha())
-
 
 def _clut_strip_pixmap(colours: Sequence[RGBA], w: int = 128, h: int = 18) -> QPixmap:
     img = QImage(w, h, QImage.Format.Format_ARGB32)
@@ -53,7 +47,6 @@ def _clut_strip_pixmap(colours: Sequence[RGBA], w: int = 128, h: int = 18) -> QP
         for y in range(h):
             img.setPixelColor(x, y, col)
     return QPixmap.fromImage(img)
-
 
 class SwatchButton(QPushButton):
     colourChanged = pyqtSignal(int, int, object)  # material_ci, index, colour
@@ -97,7 +90,6 @@ class SwatchButton(QPushButton):
             col = (col[0], col[1], col[2], 255)
         self.set_colour(col)
         self.colourChanged.emit(self.material_ci, self.index, col)
-
 
 class PaletteEditorDialog(QDialog):
     def __init__(
@@ -144,7 +136,6 @@ class PaletteEditorDialog(QDialog):
         root.setSpacing(10)
         root.setContentsMargins(16, 16, 16, 16)
 
-        # --- Paint job header ---
         row = QHBoxLayout()
         row.addWidget(QLabel("Paint job"))
         self.paint_combo = QComboBox()
@@ -166,12 +157,10 @@ class PaletteEditorDialog(QDialog):
             sub.setStyleSheet("color:#888;")
             root.addWidget(sub)
 
-        # ================= Three-panel inspector =================
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
         splitter.setObjectName("paletteSplitter")
 
-        # ---- Left: material list ----
         left = QWidget()
         left_l = QVBoxLayout(left)
         left_l.setContentsMargins(0, 0, 0, 0)
@@ -179,7 +168,6 @@ class PaletteEditorDialog(QDialog):
         left_l.addWidget(QLabel("Materials"))
         self.clut_list = QListWidget()
         self.clut_list.setObjectName("clutList")
-        # Checkbox per material — clearer multi-select than shift-click only
         self.clut_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.clut_list.itemChanged.connect(self._on_item_checked)
         self.clut_list.itemSelectionChanged.connect(self._on_selection_changed)
@@ -206,7 +194,6 @@ class PaletteEditorDialog(QDialog):
         left_l.addWidget(self.chk_highlight)
         splitter.addWidget(left)
 
-        # ---- Center: preview + swatches ----
         center = QWidget()
         center_l = QVBoxLayout(center)
         center_l.setContentsMargins(0, 0, 0, 0)
@@ -234,7 +221,6 @@ class PaletteEditorDialog(QDialog):
         center_l.addWidget(materials_scroll, stretch=1)
         splitter.addWidget(center)
 
-        # ---- Right: colour tools (no persistent target bar) ----
         right = QWidget()
         right_l = QVBoxLayout(right)
         right_l.setContentsMargins(0, 0, 0, 0)
@@ -314,7 +300,6 @@ class PaletteEditorDialog(QDialog):
         splitter.setSizes([190, 360, 220])
         root.addWidget(splitter, stretch=1)
 
-        # Footer
         foot = QHBoxLayout()
         self.btn_live = QCheckBox("Live preview")
         self.btn_live.setChecked(True)
@@ -374,7 +359,6 @@ class PaletteEditorDialog(QDialog):
         return cis[0] if cis else 0
 
     def _selected_cluts(self) -> List[int]:
-        """Materials with checkbox checked (preferred) or list selection as fallback."""
         checked = []
         for row in range(self.clut_list.count()):
             it = self.clut_list.item(row)
@@ -384,7 +368,6 @@ class PaletteEditorDialog(QDialog):
                 checked.append(int(it.data(Qt.ItemDataRole.UserRole) or 0))
         if checked:
             return sorted(set(checked))
-        # Fallback: highlight selection if nothing checked yet
         items = self.clut_list.selectedItems()
         if not items:
             cur = self.clut_list.currentItem()
@@ -689,11 +672,9 @@ class PaletteEditorDialog(QDialog):
         self._schedule_preview()
 
     def _on_item_checked(self, item) -> None:
-        """Checkbox is the source of truth for which materials are being edited."""
         if item is None:
             return
         on = item.checkState() == Qt.CheckState.Checked
-        # Mirror into list selection so keyboard multi-select still feels right
         self.clut_list.blockSignals(True)
         item.setSelected(on)
         self.clut_list.blockSignals(False)
@@ -701,13 +682,11 @@ class PaletteEditorDialog(QDialog):
         self._update_highlight()
 
     def _on_selection_changed(self) -> None:
-        """Shift/Ctrl list selection pushes into checkboxes (multi-select friendly)."""
         if self.clut_list.signalsBlocked():
             return
         self.clut_list.blockSignals(True)
         selected_rows = {self.clut_list.row(it) for it in self.clut_list.selectedItems()}
-        # Only sync checks from selection when the user has an active multi-select
-        # or a single selected row — keeps checkbox clicks authoritative otherwise.
+
         if selected_rows:
             for row in range(self.clut_list.count()):
                 it = self.clut_list.item(row)
@@ -823,7 +802,6 @@ class PaletteEditorDialog(QDialog):
             QMessageBox.warning(self, "Export failed", str(e))
 
     def _export_palettes(self) -> None:
-        """Dump palette0.bmp … palette15.bmp (GT2TextureEditor / GT2ModelTool style)."""
         directory = QFileDialog.getExistingDirectory(
             self,
             "Export palettes (folder for palette0.bmp … palette15.bmp)",
@@ -932,7 +910,6 @@ def _resolve_companion_index(win, tex_data: bytes) -> Optional[int]:
         if d == tex_data:
             return int(f["index"])
     return None
-
 
 def open_palette_editor(win) -> None:
     tex = getattr(win, "_car_tex_data", None)

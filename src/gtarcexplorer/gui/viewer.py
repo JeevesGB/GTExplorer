@@ -31,7 +31,6 @@ def _use_gl(win) -> bool:
         return False
     return getattr(win, "gl_viewer", None) is not None
 
-
 def _ensure_gl_shown(win) -> bool:
     gl = getattr(win, "gl_viewer", None)
     if gl is None:
@@ -47,13 +46,11 @@ def _ensure_gl_shown(win) -> bool:
         app.processEvents()
     return True
 
-
 def _show_gl_page(win) -> None:
     stack = getattr(win, "_viewer_stack", None)
     gl = getattr(win, "gl_viewer", None)
     if stack is not None and gl is not None:
         stack.setCurrentWidget(gl)
-
 
 def _show_label_page(win) -> None:
     stack = getattr(win, "_viewer_stack", None)
@@ -61,10 +58,8 @@ def _show_label_page(win) -> None:
     if stack is not None and scroll is not None:
         stack.setCurrentWidget(scroll)
 
-
 def _get_viewer_label(win):
     return getattr(win, "viewer_label", None)
-
 
 def _pil_to_qpixmap(im) -> QPixmap:
     if im.mode != "RGBA":
@@ -72,7 +67,6 @@ def _pil_to_qpixmap(im) -> QPixmap:
     data = im.tobytes("raw", "RGBA")
     qimg = QImage(data, im.width, im.height, QImage.Format.Format_RGBA8888)
     return QPixmap.fromImage(qimg.copy())
-
 
 def _set_image(win, pix: QPixmap, info: str = "") -> None:
     win._viewer_image = pix
@@ -84,7 +78,6 @@ def _set_image(win, pix: QPixmap, info: str = "") -> None:
         label.adjustSize()
     if hasattr(win, "viewer_info") and info:
         win.viewer_info.setText(info)
-
 
 def _clear_viewer(win, msg: str = "") -> None:
     win._viewer_image = None
@@ -101,13 +94,11 @@ def _clear_viewer(win, msg: str = "") -> None:
     if hasattr(win, "viewer_info") and msg:
         win.viewer_info.setText(msg)
 
-
 def _viewer_size(win) -> tuple[int, int]:
     if getattr(win, "_viewer_scroll", None) is not None:
         vp = win._viewer_scroll.viewport().size()
         return max(320, vp.width() - 8), max(240, vp.height() - 8)
     return 640, 480
-
 
 def show_in_viewer(win, data: bytes, label: str = "", *, keep_pack: bool = False) -> None:
     if not keep_pack:
@@ -137,12 +128,10 @@ def show_in_viewer(win, data: bytes, label: str = "", *, keep_pack: bool = False
     except Exception as e:
         _clear_viewer(win, f"{label} – TIM error: {e}")
 
-
 def tim_to_image(data: bytes):
     from ..utils.tim_image import decode_tim
     img, _info = decode_tim(data)
     return img
-
 
 def show_pack_in_viewer(win, data: bytes) -> None:
     win._viewer_mode = "pack"
@@ -186,7 +175,6 @@ def show_pack_in_viewer(win, data: bytes) -> None:
     if entries:
         on_tim_list_select(win)
 
-
 def on_tim_list_select(win) -> None:
     if not hasattr(win, "tim_list"):
         return
@@ -206,12 +194,10 @@ def on_tim_list_select(win) -> None:
     show_in_viewer(win, data, name, keep_pack=True)
     win._viewer_mode = "pack"
 
-
 def export_tim_pack_pngs(win) -> None:
     pack = getattr(win, "_pack_tims", None)
     if not pack:
         return
-
 
 def show_ctex_in_viewer(win, data: bytes, label: str = "") -> None:
     win._viewer_mode = "ctex"
@@ -240,7 +226,6 @@ def show_ctex_in_viewer(win, data: bytes, label: str = "") -> None:
     except Exception as e:
         _clear_viewer(win, f"{label} – CTEX error: {e}")
 
-
 def ctex_shift_clut(win, delta: int) -> None:
     data = getattr(win, "_ctex_data", None)
     if not data or getattr(win, "_viewer_mode", None) != "ctex":
@@ -262,7 +247,6 @@ def ctex_shift_clut(win, delta: int) -> None:
     win._ctex_pal = max(0, min(pal, n_pal - 1))
     show_ctex_in_viewer(win, data, label="")
 
-
 def show_slt_in_viewer(win, data: bytes, label: str = "") -> None:
     win._viewer_mode = "image"
     win._pack_tims = []
@@ -278,7 +262,6 @@ def show_slt_in_viewer(win, data: bytes, label: str = "") -> None:
         )
     except Exception as e:
         _clear_viewer(win, f"{label} – SLT error: {e}")
-
 
 def viewer_fit(win) -> None:
     mode = getattr(win, "_viewer_mode", None)
@@ -305,7 +288,6 @@ def viewer_fit(win) -> None:
         label.setPixmap(pix)
         win._viewer_scale = 1.0
 
-
 def viewer_1to1(win) -> None:
     mode = getattr(win, "_viewer_mode", None)
     if mode == "model":
@@ -320,7 +302,6 @@ def viewer_1to1(win) -> None:
         return
     label.setPixmap(pix)
     win._viewer_scale = 1.0
-
 
 def viewer_zoom(win, factor: float, low_quality: bool = False) -> None:
     mode = getattr(win, "_viewer_mode", None)
@@ -361,7 +342,6 @@ def viewer_zoom(win, factor: float, low_quality: bool = False) -> None:
     )
     label.setPixmap(scaled)
 
-
 def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
     win._viewer_mode = "model"
     win._pack_tims = []
@@ -394,7 +374,6 @@ def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
     except Exception:
         pass
     render_model_viewer(win)
-
 
 def render_model_viewer(win, low_quality: bool = False) -> None:
     model = getattr(win, "_model", None)
@@ -464,7 +443,6 @@ def render_model_viewer(win, low_quality: bool = False) -> None:
             win.viewer_info.setText(f"Model render failed: {e}")
         label.clear()
 
-
 def model_orbit(win, d_yaw: float, d_pitch: float) -> None:
     win._model_yaw = (getattr(win, "_model_yaw", 0.0) + d_yaw) % 360.0
     win._model_pitch = max(-89.0, min(89.0, getattr(win, "_model_pitch", 20.0) + d_pitch))
@@ -477,7 +455,6 @@ def model_orbit(win, d_yaw: float, d_pitch: float) -> None:
         render_car_viewer(win, low_quality=True)
     elif mode == "model":
         render_model_viewer(win, low_quality=True)
-
 
 def model_zoom(win, factor: float, low_quality: bool = False) -> None:
     mode = getattr(win, "_viewer_mode", None)
@@ -492,10 +469,8 @@ def model_zoom(win, factor: float, low_quality: bool = False) -> None:
     if model:
         render_model_viewer(win, low_quality=low_quality)
 
-
 def viewer_orbit(win, d_yaw: float, d_pitch: float) -> None:
     model_orbit(win, d_yaw, d_pitch)
-
 
 def _find_companion_tex_entry(win, car_entry):
     if not getattr(win, "arc", None) or not getattr(win.arc, "files", None):
@@ -543,7 +518,6 @@ def _find_companion_tex_entry(win, car_entry):
 
     return None, None
 
-
 def _find_companion_tex(win, car_entry) -> Optional[bytes]:
     data, idx = _find_companion_tex_entry(win, car_entry)
     if data is not None:
@@ -551,7 +525,6 @@ def _find_companion_tex(win, car_entry) -> Optional[bytes]:
     else:
         win._car_tex_entry_index = None
     return data
-
 
 def _colour_labels_for_car(win, n_colours: int) -> list:
     labels = [f"Colour {i + 1}" for i in range(n_colours)]
@@ -591,7 +564,6 @@ def _colour_labels_for_car(win, n_colours: int) -> list:
         pass
     return labels
 
-
 def _fill_car_colour_combo(win, n_colours: int) -> None:
     combo = getattr(win, "car_colour_combo", None)
     if combo is None:
@@ -618,7 +590,6 @@ def _fill_car_colour_combo(win, n_colours: int) -> None:
     if ct is not None:
         ct.setVisible(True)
     combo.blockSignals(False)
-
 
 def on_car_colour_changed(win, index: int = -1) -> None:
     if getattr(win, "_viewer_mode", None) != "car":
@@ -649,7 +620,6 @@ def on_car_colour_changed(win, index: int = -1) -> None:
         info = win.viewer_info.text()
         if "colour" not in info.lower():
             win.viewer_info.setText(info + f"  •  colour {ci}/{n}")
-
 
 def show_car_in_viewer(
     win,
@@ -754,9 +724,16 @@ def show_car_in_viewer(
     except Exception:
         pass
 
-
 def render_car_viewer(win, low_quality: bool = False, highlight_palettes=None) -> None:
-    print("DEBUG GL:", _GL_AVAILABLE, getattr(win, "gl_viewer", None), getattr(win, "_force_software_viewer", None))
+    print(
+    "DEBUG GL:",
+    "available =", _GL_AVAILABLE,
+    "widget =", getattr(win, "gl_viewer", None),
+    "forced_software =", getattr(win, "_force_software_viewer", None),
+    "gl_ready =", getattr(getattr(win, "gl_viewer", None), "_gl_ready", None),
+    "last_error =", repr(getattr(getattr(win, "gl_viewer", None), "_last_error", None)),
+    "index_count =", getattr(getattr(win, "gl_viewer", None), "_index_count", None),
+)
     model = getattr(win, "_car_model", None)
     if model is None:
         return
