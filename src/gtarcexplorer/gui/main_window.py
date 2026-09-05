@@ -16,7 +16,10 @@ except Exception:
 
 from PyQt6.QtCore import Qt, QSize, QSettings, pyqtSignal, QEvent, QTimer
 from PyQt6.QtGui import (
-    QAction, QFont, QIcon, QColor, QKeySequence, QMouseEvent, QWheelEvent
+    QAction, QFont, 
+    QIcon, QColor, 
+    QKeySequence, QMouseEvent, 
+    QWheelEvent
 )
 from PyQt6.QtWidgets import (
     QFrame, QSizePolicy, QMenu,

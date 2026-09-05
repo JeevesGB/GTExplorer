@@ -105,7 +105,7 @@ For a simple single-root setup, point the default project paths at something lik
 
 ---
 
-## Typical mod loop
+## [Typical mod loop](doc/usage.md)
 
 1. **Dump the disc** *(optional, once)* — **Tools → Dump disc (dumpsxiso)…** or from Setup.
 2. Open a `.DAT` → **Extract All**.
@@ -115,8 +115,8 @@ For a simple single-root setup, point the default project paths at something lik
 6. **Tools → Build disc (mkpsxiso)…**, then boot the new `.cue` in an emulator.
 
 ---
+## [Archive kinds](doc/archives.md)
 
-## Archive kinds
 
 | Kind | Detection | Examples |
 |---|---|---|
@@ -126,7 +126,7 @@ For a simple single-root setup, point the default project paths at something lik
 
 ---
 
-## Detected file types
+## [Detected file types](doc/filelists/index.md)
 
 | Content | Extension | Notes |
 |---|---|---|

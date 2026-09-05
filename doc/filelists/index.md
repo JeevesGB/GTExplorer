@@ -1,0 +1,16 @@
+# Filetype Index
+
+### [ARCADE](ARCADE.DAT.MD)
+### [ARCADE2](ARCADE2.DAT.MD)
+### [BG](BG.DAT.MD)
+### [CAR](CAR.DAT.MD)
+### [COURSE](COURSE.DAT.MD)
+### [MENU_IMG](MENU_IMG.ARC.MD)
+### [MENU_RAW](MENU_RAW.ARC.MD)
+### [PITMENU](PITMENU.DAT.MD)
+### [REPLAY](REPLAY.DAT.MD)
+### [SOUND](SOUND.DAT.MD)
+---
+
+#### [GO BACK](../../README.md)
+
