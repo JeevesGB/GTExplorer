@@ -1207,10 +1207,9 @@ def build_car_arrays(model, lod_index: int = 0, tex_images: Optional[dict] = Non
     # drawing them caused white wheel-arch fills. Software also skips fc==0.
     # Wheel wells intentionally remain holes (dark clear colour shows through).
 
-    # --- Procedural wheels ---
-    # Base placement: fixed fractions of lower-body length (works for most GT1
-    # cars). Density valleys only refine within those front/rear zones so door
-    # gaps / side scoops cannot steal an axle.
+    # --- Procedural wheels fitted to body wheel-arches ---
+    # body_l from the FULL mesh is often too long (rear wing / front splitter).
+    # Use lower-body Z span so axles sit closer together in the real arches.
     wheels = list(getattr(model, "wheels", []) or [])
     if show_wheels and positions:
         import statistics as _stats
@@ -1226,96 +1225,73 @@ def build_car_arrays(model, lod_index: int = 0, tex_images: Optional[dict] = Non
         body_w = max(1e-6, max_x - min_x)
         cx_body = 0.5 * (min_x + max_x)
 
-        y_cut = min_y + body_h * 0.42
+        # Lower-body length (ignore high rear wings / roof)
+        y_cut = min_y + body_h * 0.40
         low = [p for p in pts if p[1] <= y_cut]
         if len(low) >= 10:
-            lzs = sorted(p[2] for p in low)
-            lo_i = max(0, len(lzs) // 25)
-            hi_i = min(len(lzs) - 1, len(lzs) - 1 - len(lzs) // 25)
-            z_front_body, z_rear_body = lzs[lo_i], lzs[hi_i]
-            if z_front_body > z_rear_body:
-                z_front_body, z_rear_body = z_rear_body, z_front_body
-            body_l = max(1e-6, z_rear_body - z_front_body)
+            lzs = [p[2] for p in low]
+            # Trim extreme 5% each end to drop splitter/wing tips
+            lzs.sort()
+            lo_i = max(0, len(lzs) // 20)
+            hi_i = min(len(lzs) - 1, len(lzs) - 1 - len(lzs) // 20)
+            z0, z1 = lzs[lo_i], lzs[hi_i]
+            body_l = max(1e-6, z1 - z0)
+            cz_body = 0.5 * (z0 + z1)
         else:
-            z_front_body, z_rear_body = min_z, max_z
-            if z_front_body > z_rear_body:
-                z_front_body, z_rear_body = z_rear_body, z_front_body
-            body_l = max(1e-6, z_rear_body - z_front_body)
+            body_l = max(1e-6, max_z - min_z)
+            cz_body = 0.5 * (min_z + max_z)
 
-        # Nose direction from file wheel Z if available
-        z_sign = 1.0  # +1 → larger Z is forward
-        if len(wheels) >= 4:
-            raw_z = [float(getattr(w, "z", 0.0)) for w in wheels[:4]]
-            fz = 0.5 * (raw_z[0] + raw_z[1])
-            rz = 0.5 * (raw_z[2] + raw_z[3])
-            if abs(fz) + abs(rz) > 1e-6 and fz < rz:
-                z_sign = -1.0
-
-        # Map "front fraction along car" into Z depending on nose direction
-        # Front axle ~26% from nose, rear ~74% from nose
-        def _z_at_frac(frac_from_nose: float) -> float:
-            if z_sign >= 0:
-                # nose at z_rear_body (high Z)
-                return z_rear_body - frac_from_nose * body_l
-            else:
-                # nose at z_front_body (low Z)
-                return z_front_body + frac_from_nose * body_l
-
-        z_front_default = _z_at_frac(0.26)
-        z_rear_default = _z_at_frac(0.74)
-
-        radius = max(0.05, min(0.26, body_h * 0.160))
-        width = max(0.04, min(0.14, body_w * 0.065))
+        radius = max(0.05, min(0.40, body_h * 0.18))
+        width = max(0.04, min(0.14, body_w * 0.062))
         radius_f, radius_r = radius, radius * 1.02
         width_f, width_r = width, width * 1.04
+
         track = body_w * 0.5 * 0.88
-        ground = min_y + radius * 0.90
 
-        def _refine_z(z_guess: float, zone_half: float) -> float:
-            """Lowest-density bin near z_guess (within ±zone_half)."""
-            side = [
-                p for p in low
-                if abs(p[2] - z_guess) <= zone_half
-                and abs(p[0] - cx_body) >= body_w * 0.12
-            ]
-            if len(side) < 8:
-                return z_guess
-            n_bins = 12
-            z_lo = z_guess - zone_half
-            z_hi = z_guess + zone_half
-            span = max(1e-6, z_hi - z_lo)
-            counts = [0] * n_bins
-            for _x, _y, z in side:
-                bi = int((z - z_lo) / span * (n_bins - 1e-6))
-                bi = max(0, min(n_bins - 1, bi))
-                counts[bi] += 1
-            best_i = min(range(n_bins), key=lambda i: counts[i])
-            return z_lo + (best_i + 0.5) / n_bins * span
+        # Tighter wheelbase — fronts/rears were too far apart on winged cars
+        # Total axle span ≈ 36% of lower-body length
+        wb_f = body_l * 0.40
+        wb_r = body_l * 0.19
 
-        zone = body_l * 0.10
-        z_front = _refine_z(z_front_default, zone)
-        z_rear = _refine_z(z_rear_default, zone)
+        if len(wheels) >= 4:
+            raw_z = [float(getattr(w, "z", 0.0)) for w in wheels[:4]]
+            z_f = 0.5 * (raw_z[0] + raw_z[1])
+            z_r = 0.5 * (raw_z[2] + raw_z[3])
+            z_c = 0.5 * (z_f + z_r)
+            hf, hr = abs(z_f - z_c), abs(z_r - z_c)
+            tot = hf + hr
+            if tot > 1e-6:
+                span = wb_f + wb_r
+                wb_f = span * max(0.40, min(0.55, hf / tot))
+                wb_r = span - wb_f
 
-        # Keep order / minimum span
-        if abs(z_front - z_rear) < body_l * 0.30:
-            z_front, z_rear = z_front_default, z_rear_default
+        z_sign = 1.0
+        if len(wheels) >= 4:
+            raw_z = [float(getattr(w, "z", 0.0)) for w in wheels[:4]]
+            front_z = 0.5 * (raw_z[0] + raw_z[1])
+            rear_z = 0.5 * (raw_z[2] + raw_z[3])
+            if abs(front_z) + abs(rear_z) > 1e-6 and front_z < rear_z:
+                z_sign = -1.0
+
+        ground = min_y + radius * 0.88
 
         defaults = [
-            (cx_body - track, ground, z_front),
-            (cx_body + track, ground, z_front),
-            (cx_body - track, ground, z_rear),
-            (cx_body + track, ground, z_rear),
+            (cx_body - track, ground, cz_body + z_sign * wb_f),
+            (cx_body + track, ground, cz_body + z_sign * wb_f),
+            (cx_body - track, ground, cz_body - z_sign * wb_r),
+            (cx_body + track, ground, cz_body - z_sign * wb_r),
         ]
 
-        def _arch_xy(x_sign: float, z_target: float, r_guess: float):
-            z_band = body_l * 0.09
+        def _arch_xy(x_sign: float, z_front: bool, r_guess: float):
+            z_target = defaults[0][2] if z_front else defaults[2][2]
+            z_band = body_l * 0.14
             cand = []
             for x, y, z in pts:
                 if abs(z - z_target) > z_band:
                     continue
-                if (x - cx_body) * x_sign < body_w * 0.10:
+                if x_sign < 0 and x > cx_body - body_w * 0.10:
                     continue
-                if y > min_y + body_h * 0.38:
+                if x_sign > 0 and x < cx_body + body_w * 0.10:
                     continue
                 cand.append((x, y, z))
             if len(cand) < 4:
@@ -1326,20 +1302,27 @@ def build_car_arrays(model, lod_index: int = 0, tex_images: Optional[dict] = Non
             ay = _stats.median([p[1] for p in low_c])
             return (ax, ay + r_guess * 0.90)
 
+        arch_xy = [
+            _arch_xy(-1.0, True, radius_f),
+            _arch_xy(+1.0, True, radius_f),
+            _arch_xy(-1.0, False, radius_r),
+            _arch_xy(+1.0, False, radius_r),
+        ]
+
         targets = []
         for i, d in enumerate(defaults):
             dx, dy, dz = d
-            x_sign = -1.0 if (i % 2 == 0) else 1.0
-            a = _arch_xy(x_sign, dz, radius_f if i < 2 else radius_r)
+            a = arch_xy[i]
             if a is None:
                 targets.append(d)
                 continue
             ax, ay = a
             bx = ax * 0.70 + dx * 0.30
             by = ay * 0.60 + dy * 0.40
+            bz = dz  # keep tight wheelbase
             bx = max(min_x - radius * 0.1, min(max_x + radius * 0.1, bx))
             by = max(min_y + radius * 0.70, min(min_y + radius * 1.10, by))
-            targets.append((bx, by, dz))
+            targets.append((bx, by, bz))
 
         for wi, (cx, cy, cz) in enumerate(targets):
             is_front = wi < 2

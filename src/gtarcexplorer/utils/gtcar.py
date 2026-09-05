@@ -9,7 +9,6 @@ from typing import BinaryIO, List, Optional, TextIO, Tuple
 
 UNITS_TO_METRES = 1.0 / 4096.0
 
-# GT1 cars are small; absurd counts almost always mean truncated/misaligned data
 _MAX_LODS = 8
 _MAX_VERTS = 4096
 _MAX_NORMS = 4096
@@ -58,7 +57,6 @@ def _skip(f: BinaryIO, n: int) -> None:
 
 
 def _clamp_count(n: int, maximum: int, label: str, bytes_each: int, f: BinaryIO) -> int:
-    """Reject impossible table sizes so we fail early with a clear message."""
     if n < 0:
         raise ValueError(f"Invalid {label} count {n}")
     if n > maximum:
@@ -91,7 +89,7 @@ class Vertex:
 
     def read_car(self, f: BinaryIO) -> None:
         self.x, self.y, self.z, self.w = struct.unpack("<hhhh", _read_exact(f, 8, "vertex"))
-        self.z = -self.z  #- GT1 convention
+        self.z = -self.z 
 
     def to_obj(self, scale: float) -> str:
         s = scale * UNITS_TO_METRES
@@ -125,7 +123,6 @@ class UVCoordinate:
         self.y = _u8(f)
 
     def to_obj(self) -> str:
-        #- Same mapping as GT2ModelTool
         return f"vt {self.x / 255.0:.8f} {1.0 - (self.y / 223.0):.8f}"
 
 
@@ -138,7 +135,7 @@ class WheelPosition:
 
     def read_car(self, f: BinaryIO) -> None:
         self.x, self.y, self.z, self.menu_x = struct.unpack("<hhhh", _read_exact(f, 8, "wheel"))
-        self.menu_x = self.x  #- GT1 stores 0; approximate with race X
+        self.menu_x = self.x  
 
     def to_obj_group(self, wheel_number: int, first_vert: int) -> Tuple[List[str], int]:
         """Emit a tiny quad at the wheel centre for visualisation."""
@@ -171,7 +168,7 @@ class Polygon:
     render_order: int = 0b10000
     render_flags: int = 0
     face_type: int = 0
-    face_colour: int = 0  #- BGR888 (only meaningful for untextured)
+    face_colour: int = 0  
 
     @property
     def is_quad(self) -> bool:
@@ -222,8 +219,6 @@ class Polygon:
         self.n3 = _safe_normal(n3)
 
         t1, t2, t3, face_type_data = struct.unpack("<4B", _read_exact(f, 4, "face type"))
-        # NOTE: face_colour is not reliably encoded in t1..t3 on GT1; leave 0
-        # so software/GL skip untextured fills (wheel wells stay as dark holes).
         if face_type_data in (33, 41):
             self.face_type = face_type_data - 1
         else:
@@ -272,14 +267,12 @@ class UVPolygon(Polygon):
         self.uv1.read_car(f)
         unk13 = _u8(f)
         unk14 = _u8(f)
-        #- GT1 sometimes has non-zero unknowns; ignore rather than hard-fail
         self.uv2.read_car(f)
         self.uv3.read_car(f)
 
-        #- GT1 temp hack from GT2ModelTool
         self.render_flags = 0b1000
         if self.palette_index == 14:
-            self.render_flags |= 0b0100  #- brake light
+            self.render_flags |= 0b0100 
 
     def material_name(self) -> str:
         base = super().material_name().replace("untextured_", "")
@@ -320,16 +313,14 @@ class LOD:
         normal_count = _u16(f)
         triangle_count = _u16(f)
         quad_count = _u16(f)
-        _skip(f, 4)  #- two unused ushorts
+        _skip(f, 4) 
         uv_triangle_count = _u16(f)
         uv_quad_count = _u16(f)
-        _skip(f, 20)  #- ten unused ushorts
+        _skip(f, 20) 
         self.scale = _u16(f)
         _skip(f, 2)
 
-        # Face record is 16 bytes; UV face adds more after the base
         vertex_count = _clamp_count(vertex_count, _MAX_VERTS, "vertex", 8, f)
-        # remaining after verts must still fit normals + faces — check verts first
         self.vertices = []
         for _ in range(vertex_count):
             v = Vertex()
@@ -357,7 +348,6 @@ class LOD:
             p.read_car(f, True, self.vertices, self.normals)
             self.quads.append(p)
 
-        # UV poly: base 16 + uvs/palette (~12+) — use conservative 28
         uv_triangle_count = _clamp_count(uv_triangle_count, _MAX_FACES, "uv triangle", 28, f)
         self.uv_triangles = []
         for _ in range(uv_triangle_count):
@@ -436,7 +426,7 @@ class ShadowVertex:
 
     def read_car(self, f: BinaryIO) -> None:
         self.x = _i16(f)
-        _i16(f)  #- unused Y
+        _i16(f)
         self.z = _i16(f)
         self.z = -self.z
         _skip(f, 2)
@@ -470,11 +460,10 @@ class Shadow:
     quads: List[ShadowPolygon] = field(default_factory=list)
 
     def read_car(self, f: BinaryIO) -> None:
-        _u16(f)  #- unknown, usually 0
+        _u16(f)  
         quad_count = _u16(f)
         self.scale = _u16(f)
-        _u16(f)  #- unknown2
-        #- 8 shorts bounds
+        _u16(f)  
         _skip(f, 16)
         _skip(f, 8)
 
@@ -485,7 +474,6 @@ class Shadow:
             sv.read_car(f)
             self.vertices.append(sv)
 
-        #- GT1 uses a fixed mockup mapping (Leo / pez2k)
         mockups = [
             [0, 1, 2, 3],
             [3, 2, 7, 6],
@@ -495,7 +483,6 @@ class Shadow:
         self.quads = []
         for i in range(quad_count):
             m = mockups[i] if i < len(mockups) else [i * 4 + j for j in range(4)]
-            #- clamp to available vertices
             m = [min(x, len(self.vertices) - 1) for x in m]
             sp = ShadowPolygon(
                 v0=self.vertices[m[0]],
@@ -532,24 +519,20 @@ class GTCarModel:
         if not data:
             raise ValueError("Empty car data")
 
-        # Nested GT-ZIP: some archive slots store a compressed car body
         if data.startswith(b"@(#)GT-ZIP"):
             try:
                 from .gtzip import gtzip_decompress
-                # Payload may omit declared size; inflate with a generous cap
                 data = gtzip_decompress(data, max(0x100000, len(data) * 16))
             except Exception as e:
                 raise ValueError(f"GT-CAR payload is GT-ZIP but decompress failed: {e}") from e
 
         if not data.startswith(b"@(#)GT-CAR"):
-            # Sometimes a short header precedes the real magic
             idx = data.find(b"@(#)GT-CAR")
             if idx > 0 and idx < 64:
                 data = data[idx:]
             else:
                 raise ValueError("Not a GT-CAR file (missing magic)")
 
-        # Header through LOD count needs at least ~0x10 + 32 + 8 + 4 + 2 + 0x42
         if len(data) < 0x80:
             raise ValueError(
                 f"GT-CAR too small ({len(data)} bytes) — entry may be truncated or not fully extracted"
@@ -561,13 +544,11 @@ class GTCarModel:
 
         f.seek(0x10)
 
-        #- 4 wheel positions
         wheels = []
         for _ in range(4):
             w = WheelPosition()
             w.read_car(f)
             wheels.append(w)
-        #- GT1 order is different from GT2 – reorder to FL, FR, RL, RR
         model.wheels = [wheels[2], wheels[3], wheels[0], wheels[1]]
 
         model.menu_front_radius = _u16(f)
@@ -591,13 +572,12 @@ class GTCarModel:
                 lod.read_car(f)
             except ValueError as e:
                 if model.lods:
-                    # Keep earlier LODs if a later one is truncated
                     break
                 raise ValueError(f"LOD{i}: {e}") from e
             model.lods.append(lod)
             if i != lod_count - 1:
                 try:
-                    _skip(f, 40)  #- gap between LODs
+                    _skip(f, 40) 
                 except ValueError:
                     break
 
@@ -608,7 +588,6 @@ class GTCarModel:
         try:
             model.shadow.read_car(f)
         except Exception:
-            #- some cars may have truncated / missing shadow data
             model.shadow = None
 
         return model
@@ -657,25 +636,21 @@ class GTCarModel:
             first_n = 1
             first_vt = 1
 
-            #- Wheel position markers
             for i, w in enumerate(self.wheels):
                 lines, first_v = w.to_obj_group(i, first_v)
                 for line in lines:
                     out.write(line + "\n")
                 out.write("\n")
 
-            #- LODs
             for i, lod in enumerate(self.lods):
                 first_v, first_n, first_vt = lod.write_obj(
                     out, i, first_v, first_n, first_vt, materials
                 )
                 out.write("\n")
 
-            #- Shadow
             if self.shadow and self.shadow.vertices:
                 first_v = self.shadow.write_obj(out, first_v)
 
-        #- Minimal MTL
         with mtl_path.open("w", encoding="utf-8") as mtl:
             mtl.write("#- GT1 materials\n")
             mtl.write("newmtl untextured\nKd 0.2 0.2 0.2\n\n")
@@ -686,7 +661,6 @@ class GTCarModel:
                     continue
                 mtl.write(f"newmtl {name}\n")
                 if name.startswith("palette"):
-                    #- placeholder – real texture comes from companion .tex
                     mtl.write(f"#- map_Kd {name.split('_')[0]}.bmp\n")
                     mtl.write("Kd 0.8 0.8 0.8\n\n")
                 else:

@@ -1,12 +1,3 @@
-"""
-GT-PS model parser and robust QPainter renderer for Gran Turismo 1 track/car models (.ps).
-
-Performance notes:
-- Vertices projected once per frame via numpy batch
-- Camera yaw/pitch are respected
-- Antialiasing disabled for large meshes / interaction
-"""
-
 from __future__ import annotations
 
 import math
@@ -30,7 +21,6 @@ def _dist(a: Vec3, b: Vec3) -> float:
     dx, dy, dz = a[0] - b[0], a[1] - b[1], a[2] - b[2]
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 
-
 @dataclass
 class StripFace:
     run_offset: int
@@ -43,7 +33,6 @@ class StripFace:
     ia: int = -1
     ib: int = -1
     ic: int = -1
-
 
 @dataclass
 class Camera:
@@ -76,7 +65,6 @@ class GTPSModel:
         faces: List[StripFace] = []
         valid_track_nodes: List[Vec3] = []
 
-        # 1. Scan for continuous GT1 Track Node Sequences
         candidates: List[Vec3] = []
         for ptr in range(0, len(data) - 8, 8):
             x, y, z = struct.unpack_from("<hhh", data, ptr)
@@ -84,7 +72,6 @@ class GTPSModel:
                 if not (x == 0 and y == 0 and z == 0):
                     candidates.append((float(x), -float(y), float(z)))
 
-        # 2. Filter by point-to-point continuity
         if candidates:
             filtered_nodes: List[Vec3] = [candidates[0]]
             for i in range(1, len(candidates)):
@@ -97,7 +84,6 @@ class GTPSModel:
                     continue
             valid_track_nodes = filtered_nodes
 
-        # 3. Construct Track Ribbon Mesh
         if len(valid_track_nodes) >= 4:
             for i in range(0, len(valid_track_nodes) - 3, 2):
                 v0 = valid_track_nodes[i]
@@ -120,7 +106,6 @@ class GTPSModel:
         self.vertices = valid_track_nodes
         self._faces_cache = faces
 
-        # Pre-build numpy arrays for fast rendering
         if valid_track_nodes:
             self._verts_np = np.asarray(valid_track_nodes, dtype=np.float64)
             idx = []
@@ -196,7 +181,6 @@ def _project_batch_gtps(
     screen_cx: float,
     screen_cy: float,
 ) -> np.ndarray:
-    """Project (N,3) world points → (N,2) screen coords."""
     p = pts - center
     cos_y, sin_y = math.cos(yaw), math.sin(yaw)
     cos_p, sin_p = math.cos(pitch), math.sin(pitch)
@@ -242,7 +226,6 @@ def render_qimage_faces(
     extent = max(extent_x, extent_y, extent_z, 1.0)
     scale = (min(w, h) * 0.75) / extent
 
-    # Use real camera parameters (fall back to sensible track defaults)
     cam = camera or model.camera
     yaw_deg = getattr(cam, "yaw_deg", None)
     pitch_deg = getattr(cam, "pitch_deg", None)
@@ -259,7 +242,6 @@ def render_qimage_faces(
     screen_cx = w * 0.5
     screen_cy = h * 0.5
 
-    # Batch-project all vertices once
     verts_np = model._verts_np
     if verts_np is None:
         verts_np = np.asarray(model.vertices, dtype=np.float64)
@@ -268,7 +250,6 @@ def render_qimage_faces(
     )
 
     painter = QPainter(img)
-    # Disable AA for large meshes or low-quality interaction frames
     n_faces = min(len(model.faces), max_faces)
     use_aa = (not low_quality) and n_faces < 8000
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, use_aa)
@@ -282,7 +263,6 @@ def render_qimage_faces(
         painter.setPen(pen)
 
         if face_idx is not None and len(face_idx) > 0:
-            # Fast path: index into pre-projected points
             limit = min(len(face_idx), max_faces)
             for i in range(limit):
                 ia, ib, ic = int(face_idx[i, 0]), int(face_idx[i, 1]), int(face_idx[i, 2])
@@ -301,8 +281,6 @@ def render_qimage_faces(
                 painter.drawPolygon(poly)
         else:
             for f in faces:
-                # Fallback when indices unavailable
-                # project via nearest vertex match is expensive; use face coords
                 def _proj(pt: Vec3):
                     x = pt[0] - cx
                     y = pt[1] - cy
@@ -324,7 +302,6 @@ def render_qimage_faces(
                     painter.setBrush(brush)
                 painter.drawPolygon(poly)
 
-    # Track centre-line path
     path_pen = QPen(QColor(255, 180, 0, 240), 2)
     painter.setPen(path_pen)
     n_v = len(projected)
@@ -334,7 +311,6 @@ def render_qimage_faces(
             QPointF(float(projected[i + 1, 0]), float(projected[i + 1, 1])),
         )
 
-    # Camera orientation gizmo (top-right)
     giz_size = 64
     giz_margin = 10
     giz_cx = w - giz_margin - giz_size / 2

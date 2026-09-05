@@ -8,7 +8,6 @@ from typing import Optional
 
 PATHS_FILENAME = "user_paths.json"
 
-# (field name, folder name used in "Create Automatically" mode, description shown to the user)
 FOLDER_SPECS = [
     ("disk_dir", "Disk",
      "Place your original Gran Turismo disc image (.bin / .cue) here."),
@@ -60,7 +59,6 @@ class UserPaths:
 
 
 def load_user_paths() -> Optional[UserPaths]:
-    """Returns None if user_paths.json doesn't exist or can't be read."""
     f = paths_file()
     if not f.is_file():
         return None
@@ -101,7 +99,6 @@ def clear_user_paths() -> UserPaths:
     return up
 
 def default_auto_paths(root: Optional[Path] = None) -> UserPaths:
-    """Paths used when the user chooses 'Create Automatically'."""
     root = root or app_root()
     up = UserPaths()
     for field_name, folder_name, _desc in FOLDER_SPECS:
@@ -110,8 +107,6 @@ def default_auto_paths(root: Optional[Path] = None) -> UserPaths:
 
 
 def create_missing_folders(up: UserPaths) -> list[str]:
-    """Create any of the 5 workspace folders that don't already exist.
-    Returns the list of paths that were created."""
     created: list[str] = []
     for field_name in FOLDER_FIELDS:
         val = getattr(up, field_name, "")

@@ -161,13 +161,6 @@ def encode_tim(
     transparent_index: int = 0,
     force_black_transparent: bool = True,
 ) -> bytes:
-    """
-    Convert a PIL Image to a standard PS1 TIM.
-    bpp 4 / 8 → quantize + CLUT
-    bpp 16 → direct 15-bit colour, no CLUT
-    """
-    from PIL import Image
-
     if bpp not in (4, 8, 16):
         raise ValueError("bpp must be 4, 8 or 16")
 

@@ -1,6 +1,3 @@
-"""
-GT-CAR software rasterizer with performance-oriented caches and tighter loops.
-"""
 from __future__ import annotations
 
 import math
@@ -14,8 +11,8 @@ except ImportError:
     try:
         from PyQt5.QtGui import QImage, QColor
     except ImportError:
-        QImage = None  # type: ignore
-        QColor = None  # type: ignore
+        QImage = None 
+        QColor = None 
 
 try:
     from .gtcar import (
@@ -29,11 +26,8 @@ except ImportError:
     )
 
 
-# ---------------------------------------------------------------------------
-# Global caches (keyed by id(model)/bytes)
-# ---------------------------------------------------------------------------
-_tex_cache: Dict[int, dict] = {}  # id(ctex_bytes) or hash → tex_images
-_lod_cache: Dict[int, dict] = {}  # id(lod) → precomputed face lists / verts
+_tex_cache: Dict[int, dict] = {}  
+_lod_cache: Dict[int, dict] = {}  
 
 
 def _project_batch(
@@ -75,7 +69,6 @@ def _raster_triangle(
     depth_epsilon: float = 2e-3,
     shade: float = 1.0,
 ) -> None:
-    """Barycentric rasterizer. Uses meshgrid only over the tight AABB."""
     h, w = zbuf.shape
     x0, y0, z0 = float(pts[0, 0]), float(pts[0, 1]), float(pts[0, 2])
     x1, y1, z1 = float(pts[1, 0]), float(pts[1, 1]), float(pts[1, 2])
@@ -88,10 +81,9 @@ def _raster_triangle(
     if min_x > max_x or min_y > max_y:
         return
 
-    # Skip tiny / degenerate triangles early
     bw = max_x - min_x + 1
     bh = max_y - min_y + 1
-    if bw * bh > 250_000:  # safety for huge on-screen tris
+    if bw * bh > 250_000:  
         return
 
     area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
@@ -149,7 +141,6 @@ def _raster_triangle(
 
 
 def _get_lod_prep(lod: LOD, scale_factor: float) -> dict:
-    """Cache vertex array + sorted UV face list per LOD instance."""
     key = id(lod)
     cached = _lod_cache.get(key)
     if cached is not None:
@@ -176,7 +167,6 @@ def _get_lod_prep(lod: LOD, scale_factor: float) -> dict:
         "triangles": list(lod.triangles),
         "quads": list(lod.quads),
     }
-    # Bound cache size
     if len(_lod_cache) > 32:
         _lod_cache.clear()
     _lod_cache[key] = prep
@@ -237,7 +227,6 @@ def render_car_qimage(
     colour[:] = bg
     zbuf = np.full((h, w), np.inf, dtype=np.float32)
 
-    # Resolve palettes once
     palettes: Dict[int, np.ndarray] = {}
     if tex_images:
         for k, v in (tex_images.get("palettes") or {}).items():
@@ -292,7 +281,6 @@ def render_car_qimage(
 
         for ia, ib, ic in tris:
             pts = projected[[idxs[ia], idxs[ib], idxs[ic]]]
-            # Back-face cull in screen space (skip if winding is clockwise)
             area = (
                 (pts[1, 0] - pts[0, 0]) * (pts[2, 1] - pts[0, 1])
                 - (pts[2, 0] - pts[0, 0]) * (pts[1, 1] - pts[0, 1])
@@ -302,7 +290,6 @@ def render_car_qimage(
             uvs_arr = np.array(
                 [uv_list[ia], uv_list[ib], uv_list[ic]], dtype=np.float64
             )
-            # Face normal in model space from original verts
             shade = 1.0
             if lighting:
                 a = verts[idxs[ia]]
@@ -312,7 +299,6 @@ def render_car_qimage(
                 ln = float(np.linalg.norm(n))
                 if ln > 1e-9:
                     n = n / ln
-                    # Wrap lighting — strong contrast so it's obvious
                     ndl = abs(float(np.dot(n, light)))
                     shade = 0.30 + 0.70 * ndl
             _raster_triangle(
@@ -356,7 +342,6 @@ def render_car_qimage(
     for p in prep["quads"]:
         draw_solid(p, True)
 
-    # Second pass for texture edge cleanup — skip in low_quality
     if not low_quality:
         for p, is_quad in uv_faces:
             draw_uv(
@@ -378,7 +363,6 @@ def render_car_qimage(
 
 
 def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict:
-    """Decode GT-CTEX with a simple content-hash cache."""
     cache_key = hash(ctex_data)
     cached = _tex_cache.get(cache_key)
     if cached is not None:
@@ -467,12 +451,6 @@ def build_tex_images_from_ctex(ctex_data: bytes, max_palettes: int = 16) -> dict
 
 
 def build_tex_images_for_colour(ctex_data: bytes, colour_index: int = 0) -> dict:
-    """
-    Decode GT-CTEX using a single paint / palette set.
-
-    Face palette_index values (0..15) are mapped to that set's CLUTs so the
-    car viewer can switch body colours without rebinding mesh UVs.
-    """
     from .ctex import ctex_palette_count, decode_ctex
     import numpy as np
 
@@ -522,6 +500,5 @@ def build_tex_images_for_colour(ctex_data: bytes, colour_index: int = 0) -> dict
 
 
 def clear_render_caches() -> None:
-    """Optional: free LOD / texture caches (e.g. on archive close)."""
     _lod_cache.clear()
     _tex_cache.clear()
