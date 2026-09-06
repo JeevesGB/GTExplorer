@@ -1,3 +1,8 @@
+"""Interactive GT-CTEX palette / paint editor for car models.
+
+Layout: three-panel inspector (materials | preview+swatches | colour tools).
+Live OpenGL preview via on_preview; optional material highlight via on_highlight.
+"""
 from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
@@ -5,11 +10,26 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QImage, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QColorDialog, QComboBox,
-    QDialog, QDoubleSpinBox, QFileDialog, QFrame,
-    QGridLayout, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
-    QSlider, QSplitter, QVBoxLayout, QWidget,
+    QAbstractItemView,
+    QCheckBox,
+    QColorDialog,
+    QComboBox,
+    QDialog,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..utils.ctex import (
@@ -903,11 +923,6 @@ class PaletteEditorDialog(QDialog):
                 pass
         super().closeEvent(event)
 
-def mousePressEvent(self, event):
-    item = self.itemAt(event.pos())
-    if not item:
-        return
-    super().mousePressEvent(event)
 
 def _resolve_companion_index(win, tex_data: bytes) -> Optional[int]:
     arc = getattr(win, "arc", None)
