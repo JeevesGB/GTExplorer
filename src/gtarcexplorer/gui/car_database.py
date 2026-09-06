@@ -1,11 +1,6 @@
-"""
-Lightweight multi-table database editor for GT1 CARINF tables.
-
-Loads SPEC + part tables from an open archive, lets you browse/edit cells,
-add/remove rows, backup sources, and save rebuilt binaries.
-"""
 from __future__ import annotations
 
+import csv
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,13 +22,6 @@ from ..utils.spec import (
     PART_TABLE_TITLES, PART_PARAM_LABELS,
 )
 
-
-
-
-# ---------------------------------------------------------------------------
-# Undo commands
-# ---------------------------------------------------------------------------
-
 class _EditCellCommand(QUndoCommand):
     def __init__(self, model, row: int, col: int, old_val, new_val, old_raw: bytes, new_raw: bytes, old_row: dict, new_row: dict):
         super().__init__(f"Edit cell ({row},{col})")
@@ -53,7 +41,6 @@ class _EditCellCommand(QUndoCommand):
     def undo(self):
         self.model.apply_row_state(self.row, self.old_row, self.old_raw, self.col)
 
-
 class _AddRowCommand(QUndoCommand):
     def __init__(self, model, row_data: dict, raw: bytes, index: int):
         super().__init__("Add row")
@@ -68,10 +55,8 @@ class _AddRowCommand(QUndoCommand):
     def undo(self):
         self.model.remove_row_at(self.index)
 
-
 class _RemoveRowsCommand(QUndoCommand):
     def __init__(self, model, entries: list):
-        """entries: list of (index, row_dict, raw) sorted ascending by index."""
         super().__init__(f"Remove {len(entries)} row(s)")
         self.model = model
         self.entries = entries
@@ -84,15 +69,9 @@ class _RemoveRowsCommand(QUndoCommand):
         for idx, row_data, raw in sorted(self.entries, key=lambda e: e[0]):
             self.model.insert_row_at(idx, row_data, raw)
 
-# ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
-
 class SpecTableModel(QAbstractTableModel):
-    """Editable model for 456-byte Car Spec records."""
     HEADERS = ["Code", "PS", "Nm", "cc", "W", "H", "WB", "Track F/R"]
-    KEYS = ["code", "power_ps", "torque", "displacement_cc",
-            "width_mm", "height_mm", "wheelbase_mm", "track"]
+    KEYS = ["code", "power_ps", "torque", "displacement_cc", "width_mm", "height_mm", "wheelbase_mm", "track"]
     changed = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -247,9 +226,7 @@ class SpecTableModel(QAbstractTableModel):
             for r, _, _ in sorted(entries, key=lambda e: e[0], reverse=True):
                 self.remove_row_at(r)
 
-
 class GenericPartModel(QAbstractTableModel):
-    """Editable model for CARINF part tables (code + params + name)."""
     changed = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -271,7 +248,6 @@ class GenericPartModel(QAbstractTableModel):
         f = super().flags(index)
         if not index.isValid():
             return f
-        # index column read-only
         if index.column() == 0:
             return f
         return f | Qt.ItemFlag.ItemIsEditable
@@ -304,7 +280,6 @@ class GenericPartModel(QAbstractTableModel):
             return False
         row, col = index.row(), index.column()
         if col == 0 or col == 2:
-            # index and car_key are derived / read-only
             return False
         old_rec = dict(self._rows[row])
         old_raw = bytes(self._raw[row] if row < len(self._raw) else bytes(self._struct_size or 32))
@@ -314,10 +289,8 @@ class GenericPartModel(QAbstractTableModel):
         text_v = str(value).strip()
         try:
             if col == 1:
-                # patch code at code_offset
                 code_bytes = text_v.encode("ascii", errors="replace")[:10]
                 off = int(rec.get("code_offset", self._code_offset))
-                # clear old run then write
                 for i in range(10):
                     if off + i < len(raw):
                         raw[off + i] = code_bytes[i] if i < len(code_bytes) else 0
@@ -451,18 +424,7 @@ class GenericPartModel(QAbstractTableModel):
             for r, _, _ in sorted(entries, key=lambda e: e[0], reverse=True):
                 self.remove_row_at(r)
 
-
-# ---------------------------------------------------------------------------
-# Editor widget
-# ---------------------------------------------------------------------------
-
 class CarDatabaseWidget(QWidget):
-    """
-    Lightweight DB editor canvas:
-      left  = table list
-      center = editable grid
-      right  = record detail / notes
-    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -481,14 +443,11 @@ class CarDatabaseWidget(QWidget):
         self._wire()
         self._set_empty()
 
-    # ----- UI -----
-
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 8, 10, 8)
         root.setSpacing(6)
 
-        # Toolbar
         bar = QHBoxLayout()
         bar.setSpacing(6)
         title = QLabel("Database Editor")
@@ -512,8 +471,9 @@ class CarDatabaseWidget(QWidget):
         self.btn_revert = _btn("Revert", "Reload current table from last loaded data", self._revert)
         self.btn_add = _btn("Add", "Insert a row below the selection (right-click for above/below)", self._add_row)
         self.btn_remove = _btn("Remove", "Remove selected row(s)", self._remove_rows)
+        self.btn_export_csv = _btn("Export CSV…", "Export current table to CSV", self._export_csv)
+        self.btn_import_csv = _btn("Import CSV…", "Import CSV into current table (matches by row # or Code)", self._import_csv)
 
-        # Keyboard shortcuts for undo/redo (widget-scoped)
         self._act_undo = QAction("Undo", self)
         self._act_undo.setShortcut(QKeySequence.StandardKey.Undo)
         self._act_undo.triggered.connect(self._undo.undo)
@@ -522,7 +482,6 @@ class CarDatabaseWidget(QWidget):
         self._act_redo.setShortcut(QKeySequence.StandardKey.Redo)
         self._act_redo.triggered.connect(self._undo.redo)
         self.addAction(self._act_redo)
-        # Extra Ctrl+Y redo common on Windows
         self._act_redo2 = QAction("RedoY", self)
         self._act_redo2.setShortcut(QKeySequence("Ctrl+Y"))
         self._act_redo2.triggered.connect(self._undo.redo)
@@ -543,7 +502,6 @@ class CarDatabaseWidget(QWidget):
         bar.addWidget(self.dirty_label)
         root.addLayout(bar)
 
-        # Body: tables | grid | detail
         body = QSplitter(Qt.Orientation.Horizontal)
         body.setChildrenCollapsible(False)
         body.setHandleWidth(5)
@@ -566,7 +524,7 @@ class CarDatabaseWidget(QWidget):
         hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         hdr.setMinimumSectionSize(48)
-        self.grid.setSortingEnabled(False)  # keep source order for reliable insert/delete
+        self.grid.setSortingEnabled(False) 
         self.grid.setModel(self._proxy)
         self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.grid.customContextMenuRequested.connect(self._grid_context_menu)
@@ -619,14 +577,11 @@ class CarDatabaseWidget(QWidget):
             self.btn_redo.setToolTip("Nothing to redo")
 
     def _on_clean_changed(self, clean: bool):
-        # Stack clean does not always mean table clean (multi-table), keep dirty flags
         pass
 
     def _clear_undo(self):
         self._undo.clear()
         self._update_undo_buttons()
-
-    # ----- Public load API -----
 
     def load_tables(
         self,
@@ -634,18 +589,12 @@ class CarDatabaseWidget(QWidget):
         source_paths: Optional[Dict[str, Path]] = None,
         joined_cars: Optional[List[dict]] = None,
     ):
-        """
-        tables: { "SPEC": parsed, "BRAKE": parsed, ... }
-        source_paths: optional paths for backup/save defaults
-        joined_cars: optional pre-joined SPEC car list (with parts)
-        """
         self._tables = dict(tables or {})
         self._source_paths = dict(source_paths or {})
         self._dirty = {k: False for k in self._tables}
         self._joined_cars = joined_cars
         self._clear_undo()
         self.table_list.clear()
-        # SPEC first, then alpha
         tags = sorted(self._tables.keys(), key=lambda t: (0 if t == "SPEC" else 1, t))
         for tag in tags:
             p = self._tables[tag]
@@ -703,8 +652,6 @@ class CarDatabaseWidget(QWidget):
         self.dirty_label.setText("")
         self.status.setText("No tables loaded")
 
-    # ----- Table selection -----
-
     def _on_table_selected(self, cur: Optional[QListWidgetItem], _prev):
         if not cur:
             return
@@ -712,7 +659,6 @@ class CarDatabaseWidget(QWidget):
         self._show_table(tag)
 
     def _show_table(self, tag: str):
-        # Per-table undo would be nicer; for now clear stack when switching tables
         if tag != self._current_tag:
             self._clear_undo()
         self._current_tag = tag
@@ -725,7 +671,6 @@ class CarDatabaseWidget(QWidget):
                 rows = self._joined_cars
             else:
                 rows = build_car_database(parsed)
-            # If we already edited, prefer model raw count
             self._spec_model.load(rows, list(parsed.get("structs") or []))
             self._proxy.setSourceModel(self._spec_model)
             self._proxy.setFilterKeyColumn(0)
@@ -806,22 +751,18 @@ class CarDatabaseWidget(QWidget):
             "Double-click cells to edit. Save writes the table binary.",
         ])
 
-    # ----- Dirty / edit ops -----
-
     def _mark_dirty(self, tag: Optional[str]):
         if not tag:
             return
         self._dirty[tag] = True
         if tag == self._current_tag:
             self.dirty_label.setText("modified")
-        # update list label
         for i in range(self.table_list.count()):
             item = self.table_list.item(i)
             if item.data(Qt.ItemDataRole.UserRole) == tag:
                 n = self._proxy.rowCount() if tag == self._current_tag else (
                     self._tables[tag].get("struct_count") or 0
                 )
-                # Prefer live model counts
                 model = self._proxy.sourceModel()
                 if tag == self._current_tag and model:
                     n = model.rowCount()
@@ -837,12 +778,10 @@ class CarDatabaseWidget(QWidget):
         return [self._proxy.mapToSource(i).row() for i in sm.selectedRows()]
 
     def _insert_anchor(self) -> Optional[int]:
-        """Source-model row index of the primary selection, or None."""
         rows = self._selected_src_rows()
         return rows[0] if rows else None
 
     def _add_row(self):
-        """Toolbar Add — insert below selection (or append)."""
         self._add_row_relative(below=True)
 
     def _add_row_relative(self, below: bool = True):
@@ -875,7 +814,6 @@ class CarDatabaseWidget(QWidget):
         self._select_source_row(new_row)
 
     def _select_source_row(self, src_row: int):
-        """Map source row to proxy and select it."""
         if src_row < 0:
             return
         src_index = self._proxy.sourceModel().index(src_row, 0)
@@ -902,7 +840,6 @@ class CarDatabaseWidget(QWidget):
         else:
             return
         self._mark_dirty(self._current_tag)
-        # Select nearby row after delete
         n = model.rowCount()
         if n:
             self._select_source_row(min(min(rows), n - 1))
@@ -919,6 +856,9 @@ class CarDatabaseWidget(QWidget):
         act_redo = menu.addAction("Redo")
         menu.addSeparator()
         act_copy = menu.addAction("Copy cell text")
+        menu.addSeparator()
+        act_export = menu.addAction("Export CSV…")
+        act_import = menu.addAction("Import CSV…")
 
         act_undo.setEnabled(self._undo.canUndo())
         act_redo.setEnabled(self._undo.canRedo())
@@ -928,7 +868,6 @@ class CarDatabaseWidget(QWidget):
         act_below.setEnabled(has_model)
         act_remove.setEnabled(bool(self._selected_src_rows()))
 
-        # Select row under cursor if nothing selected
         index = self.grid.indexAt(pos)
         if index.isValid() and not self.grid.selectionModel().selectedRows():
             self.grid.selectRow(index.row())
@@ -952,6 +891,10 @@ class CarDatabaseWidget(QWidget):
                 from PyQt6.QtWidgets import QApplication
                 text = idx.data(Qt.ItemDataRole.DisplayRole)
                 QApplication.clipboard().setText("" if text is None else str(text))
+        elif chosen == act_export:
+            self._export_csv()
+        elif chosen == act_import:
+            self._import_csv()
 
     def _revert(self):
         tag = self._current_tag
@@ -965,10 +908,7 @@ class CarDatabaseWidget(QWidget):
                 return
         self._dirty[tag] = False
         self._clear_undo()
-        # Reload from stored parsed (original structs)
         self._show_table(tag)
-
-    # ----- Backup / save -----
 
     def _backup(self):
         start = ""
@@ -1029,7 +969,6 @@ class CarDatabaseWidget(QWidget):
         try:
             data = rebuild_spec_table(parsed, self._raw_for_tag(tag))
             path.write_bytes(data)
-            # refresh parsed structs from what we wrote
             parsed = parse_spec_table(data)
             self._tables[tag] = parsed
             self._source_paths[tag] = path
@@ -1060,8 +999,172 @@ class CarDatabaseWidget(QWidget):
                 ok += 1
         self.status.setText(f"Saved {ok}/{len(modified)} table(s)")
 
+    def _csv_headers_and_rows(self):
+        model = self._proxy.sourceModel()
+        if model is None:
+            return [], []
+        cols = model.columnCount()
+        headers = []
+        for c in range(cols):
+            h = model.headerData(c, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
+            headers.append("" if h is None else str(h))
+        rows = []
+        for r in range(model.rowCount()):
+            row = []
+            for c in range(cols):
+                idx = model.index(r, c)
+                val = model.data(idx, Qt.ItemDataRole.DisplayRole)
+                row.append("" if val is None else str(val))
+            rows.append(row)
+        return headers, rows
 
-# Keep dialog wrapper for compatibility
+    def _export_csv(self):
+        tag = self._current_tag
+        if not tag:
+            QMessageBox.information(self, "Export CSV", "No table selected.")
+            return
+        headers, rows = self._csv_headers_and_rows()
+        if not headers:
+            QMessageBox.information(self, "Export CSV", "Table is empty.")
+            return
+        title = PART_TABLE_TITLES.get(tag, tag)
+        default = f"{tag.lower()}.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self, f"Export {title} to CSV", default,
+            "CSV (*.csv);;All (*.*)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                w = csv.writer(f)
+                w.writerow([f"# table={tag}"])
+                w.writerow([f"# title={title}"])
+                w.writerow([f"# rows={len(rows)}"])
+                w.writerow(headers)
+                w.writerows(rows)
+            self.status.setText(f"Exported {len(rows)} rows → {Path(path).name}")
+            QMessageBox.information(
+                self, "Export CSV",
+                f"Wrote {len(rows)} rows\n→ {path}",
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Export failed", str(e))
+
+    def _import_csv(self):
+        tag = self._current_tag
+        if not tag:
+            QMessageBox.information(self, "Import CSV", "No table selected.")
+            return
+        model = self._proxy.sourceModel()
+        if model is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, f"Import CSV into {tag}", "",
+            "CSV (*.csv);;All (*.*)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", newline="", encoding="utf-8-sig") as f:
+                lines = [ln for ln in f if not ln.lstrip().startswith("#")]
+            reader = csv.reader(lines)
+            all_rows = list(reader)
+            if not all_rows:
+                QMessageBox.warning(self, "Import CSV", "File is empty.")
+                return
+            headers = [h.strip() for h in all_rows[0]]
+            data_rows = all_rows[1:]
+        except Exception as e:
+            QMessageBox.critical(self, "Import failed", f"Could not read CSV:\n{e}")
+            return
+
+        model_headers = []
+        for c in range(model.columnCount()):
+            h = model.headerData(c, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
+            model_headers.append("" if h is None else str(h))
+
+        col_map = {}
+        for ci, h in enumerate(headers):
+            if h in model_headers:
+                col_map[ci] = model_headers.index(h)
+        if not col_map:
+            QMessageBox.warning(
+                self, "Import CSV",
+                "No matching column headers.\n"
+                f"CSV: {headers}\n"
+                f"Table: {model_headers}",
+            )
+            return
+
+        idx_csv = headers.index("#") if "#" in headers else None
+        code_csv = headers.index("Code") if "Code" in headers else None
+
+        updated = 0
+        added = 0
+        errors = []
+
+        self._undo.clear()
+
+        for ri, row in enumerate(data_rows):
+            if not row or all(not str(c).strip() for c in row):
+                continue
+            target = None
+            if idx_csv is not None and idx_csv < len(row) and str(row[idx_csv]).strip().isdigit():
+                target = int(str(row[idx_csv]).strip())
+            elif code_csv is not None and code_csv < len(row):
+                code = str(row[code_csv]).strip()
+                for sr in range(model.rowCount()):
+                    if str(model.data(model.index(sr, model_headers.index("Code")), Qt.ItemDataRole.DisplayRole)) == code:
+                        target = sr
+                        break
+
+            if target is None or target < 0 or target >= model.rowCount():
+                if model is self._spec_model:
+                    target = self._spec_model.add_row(at=model.rowCount())
+                elif model is self._part_model:
+                    target = self._part_model.add_row(at=model.rowCount())
+                else:
+                    errors.append(f"Line {ri+2}: cannot add row")
+                    continue
+                added += 1
+            else:
+                updated += 1
+
+            for ci, mc in col_map.items():
+                if ci >= len(row):
+                    continue
+                h = model_headers[mc]
+                if h in ("#", "Car"):
+                    continue
+                val = row[ci]
+                idx = model.index(target, mc)
+                stack = getattr(model, "undo_stack", None)
+                model.undo_stack = None
+                try:
+                    model.setData(idx, val, Qt.ItemDataRole.EditRole)
+                except Exception as e:
+                    errors.append(f"Line {ri+2} col {h}: {e}")
+                finally:
+                    model.undo_stack = stack
+
+        if model is self._spec_model:
+            self._tables[tag]["structs"] = self._spec_model.raw_list()
+            self._tables[tag]["struct_count"] = len(self._spec_model.raw_list())
+        elif model is self._part_model:
+            self._tables[tag]["structs"] = self._part_model.raw_list()
+            self._tables[tag]["struct_count"] = len(self._part_model.raw_list())
+        self._mark_dirty(tag)
+        n = model.rowCount()
+        self.meta_label.setText(
+            f"{tag}  ·  {n} rows  ·  {self._tables[tag].get('struct_size', '?')} B/record"
+        )
+        msg = f"Import complete: {updated} updated, {added} added"
+        if errors:
+            msg += f"\n{len(errors)} issue(s):\n" + "\n".join(errors[:8])
+        self.status.setText(msg.replace("\n", " | "))
+        QMessageBox.information(self, "Import CSV", msg)
+
 class CarDatabaseDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
