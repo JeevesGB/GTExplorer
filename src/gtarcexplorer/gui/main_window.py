@@ -63,6 +63,7 @@ TYPE_COLORS = {
 CANVAS_PREVIEW = 0
 CANVAS_STRUCTURE = 1
 CANVAS_VIEWER = 2
+CANVAS_CAR_DB = 3
 
 class GTArcExplorer(QMainWindow):
     progress_signal = pyqtSignal(int, int)
@@ -304,6 +305,8 @@ class GTArcExplorer(QMainWindow):
         self.act_batch_tim.setToolTip("Convert every image in a folder to TIM with the same settings")
         self.act_export_car_obj = QAction("Export car model to OBJ", self)
         self.act_export_car_obj.setToolTip("Convert selected GT-CAR (.car) to Wavefront OBJ + MTL")
+        self.act_car_database = QAction("Car Database…", self)
+        self.act_car_database.setToolTip("Browse SPEC car data and joined upgrade parts from CARINF")
 
         menubar = self.menuBar()
 
@@ -346,7 +349,7 @@ class GTArcExplorer(QMainWindow):
         m_tools.addAction(self.act_batch_tim)
         m_tools.addSeparator()
         m_tools.addAction(self.act_export_car_obj)
-
+        m_tools.addAction(self.act_car_database)
 
         m_view = menubar.addMenu("&View")
         m_view.addAction(self.act_theme)
@@ -411,6 +414,7 @@ class GTArcExplorer(QMainWindow):
             ("Preview",             "preview",   style.StandardPixmap.SP_FileDialogDetailedView),
             ("Extracted structure", "structure", style.StandardPixmap.SP_DirIcon),
             ("Asset viewer",        "viewer",    style.StandardPixmap.SP_DesktopIcon),
+            ("Car Database",        "db",        style.StandardPixmap.SP_FileDialogListView),
         ]
         for i, (tip, icon_name, fallback) in enumerate(rail_defs):
             btn = QToolButton()
@@ -704,6 +708,11 @@ class GTArcExplorer(QMainWindow):
         viewer_lay.addWidget(self.viewer_tools_bar, stretch=0)
         self.canvas_stack.addWidget(viewer_page)
 
+        # Car Database canvas page
+        from .car_database import CarDatabaseWidget
+        self.car_db_page = CarDatabaseWidget()
+        self.canvas_stack.addWidget(self.car_db_page)
+
         left.setMinimumWidth(280)
         canvas_container.setMinimumWidth(280)
         self.main_splitter.setCollapsible(0, False)
@@ -740,6 +749,9 @@ class GTArcExplorer(QMainWindow):
         self.canvas_stack.setCurrentIndex(idx)
         if 0 <= idx < len(self._rail_buttons):
             self._rail_buttons[idx].setChecked(True)
+        # Refresh car DB when entering that canvas
+        if idx == CANVAS_CAR_DB:
+            self._load_car_database()
 
     def _restore_geometry(self):
         geo = self.settings.value("geometry")
@@ -792,6 +804,7 @@ class GTArcExplorer(QMainWindow):
         self.act_replace_tim.triggered.connect(self.replace_selected_with_image)
         self.act_batch_tim.triggered.connect(self.batch_convert_folder)
         self.act_export_car_obj.triggered.connect(self.export_car_obj)
+        self.act_car_database.triggered.connect(self.open_car_database)
         self.act_repack.triggered.connect(self.repack)
         self.act_folder.triggered.connect(self.open_extract_folder)
         self.act_load_list.triggered.connect(self.load_custom_filelist)
@@ -1210,6 +1223,78 @@ class GTArcExplorer(QMainWindow):
             )
         except Exception as e:
             QMessageBox.critical(self, "Export failed", str(e))
+
+    def open_car_database(self):
+        """Load SPEC + part tables into the Car Database canvas and switch to it."""
+        self._load_car_database()
+        self._switch_canvas(CANVAS_CAR_DB)
+
+    def _load_car_database(self):
+        """Parse current archive into the embedded Car Database widget."""
+        if not getattr(self, "car_db_page", None):
+            return
+
+        if not getattr(self, "arc", None) or not getattr(self.arc, "files", None):
+            self.car_db_page.clear()
+            return
+
+        from ..utils.spec import parse_spec_table
+
+        spec_data = None
+        parts: dict[str, bytes] = {}
+        tag_map = {
+            "Brake": "BRAKE",
+            "Gearbox": "GEAR",
+            "Suspension": "SUSPENS",
+            "Turbo / Turbine": "TURBINE",
+            "Clutch": "CLUTCH",
+            "Muffler": "MUFFLER",
+            "Flywheel": "FLYWHEL",
+            "Intercooler": "INCOOL",
+            "NA Tune": "NATUNE",
+            "Stabilizer": "STABILZ",
+            "Computer": "COMPUTE",
+            "Computer / ECU": "COMPRES",
+            "Aero Parts": "AEROPAT",
+            "Tire Size": "TIRESZ",
+            "Wheel Size": "WHEELSZ",
+        }
+        for i, f in enumerate(self.arc.files):
+            typ = f.get("type") or ""
+            try:
+                data = self.arc.get_data(i)
+            except Exception:
+                continue
+            if typ == "Car Spec" or (f.get("ext") or "").lower() == ".spec":
+                if spec_data is None:
+                    spec_data = data
+            elif typ in tag_map:
+                tag = tag_map[typ]
+                if tag not in parts:
+                    parts[tag] = data
+
+        try:
+            parsed_parts = {}
+            for tag, blob in parts.items():
+                try:
+                    parsed_parts[tag] = parse_spec_table(blob)
+                except Exception:
+                    pass
+            spec_parsed = parse_spec_table(spec_data) if spec_data else None
+            if not spec_parsed and not parsed_parts:
+                self.car_db_page.clear()
+                return
+            # load_from_parsed accepts SPEC + parts; if no SPEC, pass empty shell
+            if spec_parsed is None:
+                # Parts-only mode: feed tables dict via load_tables
+                self.car_db_page.load_tables(parsed_parts)
+            else:
+                self.car_db_page.load_from_parsed(spec_parsed, parsed_parts)
+            n_tables = (1 if spec_parsed else 0) + len(parsed_parts)
+            self.set_status(f"Database editor: {n_tables} table(s) loaded")
+        except Exception as e:
+            self.car_db_page.clear()
+            self.set_status(f"Car Database error: {e}")
 
     def open_archive(self):
         actions.open_archive(self)

@@ -15,6 +15,8 @@ _PREFIX_MAGICS = [
     (b"@(#)GTHTML", "GT HTML", ".gthtml"),
     (b"@(#)GTENV", "GT-ENV System Config", ".gtenv"),
     # Car / tuning part tables (CARINF-style)
+    # Longer / more specific tags first
+    (b"@(#)AEROPAT", "Aero Parts", ".aeropat"),
     (b"@(#)ADJUST", "Align Adjustment", ".adjust"),
     (b"@(#)BALANCE", "Balance Weight", ".balance"),
     (b"@(#)BRAKE", "Brake", ".brake"),
@@ -38,9 +40,11 @@ _PREFIX_MAGICS = [
     (b"@(#)STABILZ", "Stabilizer", ".stabilz"),
     (b"@(#)SUSPENS", "Suspension", ".suspens"),
     (b"@(#)TIRECMP", "Tire Compound", ".tirecmp"),
-    (b"@(#)TIRESIZ", "Tire Size", ".tiresiz"),
+    (b"@(#)TIRESIZ", "Tire Size", ".tiresiz"),  # alternate spelling
+    (b"@(#)TIRESZ", "Tire Size", ".tiresz"),
     (b"@(#)TIRE", "Tire", ".tire"),
     (b"@(#)TURBINE", "Turbo / Turbine", ".turbine"),
+    (b"@(#)WHEELSZ", "Wheel Size", ".wheelsz"),
     # Sound / sequence (4-byte)
     (b"INST", "Sound Instrument", ".ins"),
     (b"ENGN", "Engine Sound", ".es"),
