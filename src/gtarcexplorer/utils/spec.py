@@ -301,11 +301,11 @@ PART_TABLE_TITLES = {
 PART_PARAM_LAYOUT = {
     "BRAKE":   (4, ["Front", "Rear", "Bias", "Flags"]),
     "GEAR":    (6, ["1st", "2nd", "3rd", "4th", "5th", "Final"]),
-    "STABILZ": (2, ["Rate", "Damping"]),
+    "STABILZ": (2, ["Stiffness", "Unk"]),
     "CLUTCH":  (3, ["Torque", "Feel", "Stage"]),
     "FLYWHEL": (2, ["Weight", "Inertia"]),
     "PRPSHFT": (2, ["Strength", "Weight"]),
-    "SUSPENS": (4, ["Camber", "F.Ride", "R.Ride", "Flags"]),
+    "SUSPENS": (4, ["Flags", "Base", "SpecId", "Pad"]),
     "AEROPAT": (4, ["Drag", "Lift", "Downforce", "Flags"]),
     "TIRESZ":  (2, ["Width", "Profile"]),
     "WHEELSZ": (2, ["Diameter", "Width"]),

@@ -64,6 +64,7 @@ CANVAS_PREVIEW = 0
 CANVAS_STRUCTURE = 1
 CANVAS_VIEWER = 2
 CANVAS_CAR_DB = 3
+CANVAS_SAVE_EDITOR = 4
 
 class GTArcExplorer(QMainWindow):
     progress_signal = pyqtSignal(int, int)
@@ -307,6 +308,8 @@ class GTArcExplorer(QMainWindow):
         self.act_export_car_obj.setToolTip("Convert selected GT-CAR (.car) to Wavefront OBJ + MTL")
         self.act_car_database = QAction("Car Database…", self)
         self.act_car_database.setToolTip("Browse SPEC car data and joined upgrade parts from CARINF")
+        self.act_save_editor = QAction("Save Editor…", self)
+        self.act_save_editor.setToolTip("Edit GT1 REPLAY.DAT / PS1 memory-card saves")
 
         menubar = self.menuBar()
 
@@ -350,6 +353,7 @@ class GTArcExplorer(QMainWindow):
         m_tools.addSeparator()
         m_tools.addAction(self.act_export_car_obj)
         m_tools.addAction(self.act_car_database)
+        m_tools.addAction(self.act_save_editor)
 
         m_view = menubar.addMenu("&View")
         m_view.addAction(self.act_theme)
@@ -415,6 +419,7 @@ class GTArcExplorer(QMainWindow):
             ("Extracted structure", "structure", style.StandardPixmap.SP_DirIcon),
             ("Asset viewer",        "viewer",    style.StandardPixmap.SP_DesktopIcon),
             ("Car Database",        "db",        style.StandardPixmap.SP_FileDialogListView),
+            ("Save Editor",         "save",      style.StandardPixmap.SP_DialogSaveButton),
         ]
         for i, (tip, icon_name, fallback) in enumerate(rail_defs):
             btn = QToolButton()
@@ -713,6 +718,11 @@ class GTArcExplorer(QMainWindow):
         self.car_db_page = CarDatabaseWidget()
         self.canvas_stack.addWidget(self.car_db_page)
 
+        # Save Editor canvas page
+        from .save_editor import SaveEditorWidget
+        self.save_editor_page = SaveEditorWidget()
+        self.canvas_stack.addWidget(self.save_editor_page)
+
         left.setMinimumWidth(280)
         canvas_container.setMinimumWidth(280)
         self.main_splitter.setCollapsible(0, False)
@@ -752,6 +762,8 @@ class GTArcExplorer(QMainWindow):
         # Refresh car DB when entering that canvas
         if idx == CANVAS_CAR_DB:
             self._load_car_database()
+        if idx == CANVAS_SAVE_EDITOR:
+            self._load_save_editor()
 
     def _restore_geometry(self):
         geo = self.settings.value("geometry")
@@ -805,6 +817,7 @@ class GTArcExplorer(QMainWindow):
         self.act_batch_tim.triggered.connect(self.batch_convert_folder)
         self.act_export_car_obj.triggered.connect(self.export_car_obj)
         self.act_car_database.triggered.connect(self.open_car_database)
+        self.act_save_editor.triggered.connect(self.open_save_editor)
         self.act_repack.triggered.connect(self.repack)
         self.act_folder.triggered.connect(self.open_extract_folder)
         self.act_load_list.triggered.connect(self.load_custom_filelist)
@@ -1295,6 +1308,52 @@ class GTArcExplorer(QMainWindow):
         except Exception as e:
             self.car_db_page.clear()
             self.set_status(f"Car Database error: {e}")
+
+    def open_save_editor(self):
+        """Switch to the Save Editor canvas."""
+        self._load_save_editor()
+        self._switch_canvas(CANVAS_SAVE_EDITOR)
+
+    def _load_save_editor(self):
+        """Load memory card / replay / SC save into the Save Editor when possible."""
+        page = getattr(self, "save_editor_page", None)
+        if page is None:
+            return
+        from ..utils.memcard import is_memcard
+        from ..utils.replay import is_replay_save
+
+        arc = getattr(self, "arc", None)
+        # Full file path opened as archive (e.g. .mcd dropped on the app)
+        if arc is not None and getattr(arc, "path", None):
+            try:
+                p = Path(arc.path)
+                if p.is_file():
+                    data = p.read_bytes()
+                    if is_memcard(data) or is_replay_save(data) or (len(data) >= 0x60 and data[:2] == b"SC"):
+                        page.load_bytes(data, p)
+                        return
+            except Exception as e:
+                self.set_status(f"Save editor: {e}")
+        if arc is not None and getattr(arc, "kind", None) == "replay_save":
+            try:
+                raw = getattr(arc, "raw", None)
+                if raw:
+                    page.load_bytes(raw, Path(arc.path) if getattr(arc, "path", None) else None)
+                    return
+            except Exception as e:
+                self.set_status(f"Save editor: {e}")
+        try:
+            idx = None
+            if hasattr(self, "tree") and self.tree.currentItem():
+                item = self.tree.currentItem()
+                idx = item.data(0, Qt.ItemDataRole.UserRole)
+            if idx is not None and arc is not None:
+                data = arc.get_data(int(idx))
+                if is_memcard(data) or is_replay_save(data) or (len(data) >= 0x60 and data[:2] == b"SC"):
+                    page.load_bytes(data, Path(arc.path) if getattr(arc, "path", None) else None)
+                    return
+        except Exception:
+            pass
 
     def open_archive(self):
         actions.open_archive(self)

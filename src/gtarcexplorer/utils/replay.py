@@ -103,3 +103,34 @@ def detect_replay(data: bytes) -> Optional[Tuple[str, str]]:
     if is_replay_save(data):
         return ("GT Replay Save", ".replay")
     return None
+
+def set_entry_name(raw: bytes, entry_index: int, name: str) -> bytes:
+    """Return a copy of the save with entry name updated (max 24 ASCII bytes)."""
+    data = bytearray(raw)
+    off = ENTRY_TABLE_OFF + entry_index * ENTRY_SIZE
+    if off + ENTRY_SIZE > len(data):
+        raise IndexError(f"entry index {entry_index} out of range")
+    name_bytes = name.encode("ascii", errors="replace")[:NAME_MAX]
+    # clear name field then write
+    for i in range(NAME_MAX):
+        data[off + NAME_OFF + i] = name_bytes[i] if i < len(name_bytes) else 0
+    return bytes(data)
+
+
+def set_save_title(raw: bytes, title: str) -> bytes:
+    """Update the Shift-JIS title at 0x04 (64 bytes)."""
+    data = bytearray(raw)
+    try:
+        tb = title.encode("shift_jis", errors="replace")[:0x3F]
+    except Exception:
+        tb = title.encode("ascii", errors="replace")[:0x3F]
+    for i in range(0x40):
+        data[0x04 + i] = tb[i] if i < len(tb) else 0
+    return bytes(data)
+
+
+def set_icon_frames(raw: bytes, frames: int) -> bytes:
+    data = bytearray(raw)
+    if len(data) > 0x02:
+        data[0x02] = max(0, min(255, int(frames)))
+    return bytes(data)
