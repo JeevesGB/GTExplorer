@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from ..utils.spec import (
     parse_spec_table, build_car_database, join_parts_to_cars,
     decode_spec_record, decode_part_record, patch_spec_record, rebuild_spec_table,
+    build_car_name_map,
     PART_TABLE_TITLES, PART_PARAM_LABELS,
 )
 
@@ -84,9 +85,9 @@ class _RemoveRowsCommand(QUndoCommand):
 # ---------------------------------------------------------------------------
 
 class SpecTableModel(QAbstractTableModel):
-    """Editable model for 456-byte Car Spec records."""
-    HEADERS = ["Code", "PS", "Nm", "cc", "W", "H", "WB", "Track F/R"]
-    KEYS = ["code", "power_ps", "torque", "displacement_cc",
+    """Editable model for 424-byte Car Spec records."""
+    HEADERS = ["Code", "Name", "PS", "Nm", "cc", "W", "H", "WB", "Track F/R"]
+    KEYS = ["code", "display_name", "power_ps", "torque", "displacement_cc",
             "width_mm", "height_mm", "wheelbase_mm", "track"]
     changed = pyqtSignal()
 
@@ -104,7 +105,12 @@ class SpecTableModel(QAbstractTableModel):
 
     def flags(self, index):
         f = super().flags(index)
-        return f | Qt.ItemFlag.ItemIsEditable if index.isValid() else f
+        if not index.isValid():
+            return f
+        # Name is derived from string tables — display-only
+        if index.column() == 1:
+            return f
+        return f | Qt.ItemFlag.ItemIsEditable
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -117,7 +123,9 @@ class SpecTableModel(QAbstractTableModel):
         c = index.column()
         if c == 0:
             return r.get("code", "")
-        if c == 7:
+        if c == 1:
+            return r.get("display_name") or r.get("code", "")
+        if c == 8:
             return f"{r.get('track_front_mm', 0)}/{r.get('track_rear_mm', 0)}"
         key = self.KEYS[c]
         return r.get(key, "")
@@ -386,7 +394,7 @@ class GenericPartModel(QAbstractTableModel):
                 return Qt.AlignmentFlag.AlignCenter
         return None
 
-    def load(self, tag: str, parsed: dict):
+    def load(self, tag: str, parsed: dict, car_names: Optional[dict] = None):
         self.beginResetModel()
         self._tag = tag
         tables = parsed.get("string_tables") or []
@@ -397,7 +405,7 @@ class GenericPartModel(QAbstractTableModel):
         max_params = 0
         labels: list = []
         for i, buf in enumerate(structs):
-            rec = decode_part_record(tag, buf, tables, i)
+            rec = decode_part_record(tag, buf, tables, i, car_names=car_names)
             self._rows.append(rec)
             max_params = max(max_params, len(rec.get("params") or []))
             if not labels and rec.get("param_labels"):
@@ -726,12 +734,17 @@ class CarDatabaseWidget(QWidget):
             self._spec_model.load(rows, list(parsed.get("structs") or []))
             self._proxy.setSourceModel(self._spec_model)
             self._proxy.setFilterKeyColumn(0)
-            widths = [72, 56, 56, 64, 56, 56, 64, 100]
+            widths = [72, 200, 56, 56, 64, 56, 56, 64, 100]
         else:
-            self._part_model.load(tag, parsed)
+            # Resolve Car column from SPEC model/trim names when available
+            car_names = None
+            spec_parsed = self._tables.get("SPEC")
+            if spec_parsed:
+                car_names = build_car_name_map(spec_parsed)
+            self._part_model.load(tag, parsed, car_names=car_names)
             self._proxy.setSourceModel(self._part_model)
-            self._proxy.setFilterKeyColumn(1)
-            widths = [40, 96, 56, 220] + [56] * 8
+            self._proxy.setFilterKeyColumn(2)  # filter by Car name
+            widths = [40, 96, 220, 160] + [56] * 8
         for i, w in enumerate(widths):
             self.grid.setColumnWidth(i, w)
         n = self._proxy.rowCount()

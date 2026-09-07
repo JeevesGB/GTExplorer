@@ -602,7 +602,8 @@ def save_selected(win) -> None:
             idx = int(it.text(0))
             f = win.arc.files[idx]
             data = win.arc.get_data(idx)
-            name = f.get("real_name") or f"{f['label']}{f.get('ext', '.bin')}"
+            # Prefer original name; do not invent a type-detected extension.
+            name = f.get("real_name") or f.get("label") or f"{idx:03d}"
             dest = outp / Path(name).name
             dest.write_bytes(data)
             n += 1
@@ -614,7 +615,7 @@ def save_selected(win) -> None:
 def save_entry(win, idx: int) -> None:
     f = win.arc.files[idx]
     data = win.arc.get_data(idx)
-    default_name = f.get("real_name") or f"{f['label']}{f.get('ext', '.bin')}"
+    default_name = f.get("real_name") or f.get("label") or f"{idx:03d}"
     path, _ = QFileDialog.getSaveFileName(
         win, "Save file",
         str(Path(win._last_dir("last_extract_dir")) / Path(default_name).name),

@@ -26,16 +26,11 @@ def apply_filelist(win) -> None:
     for f in win.arc.files:
         real = lookup(win.arc.name_map, win.arc.stem, f["index"])
         if real:
+            # Keep original filename and extension exactly — do not rename TIM packs to .tpk.
             f["label"] = Path(real).stem
-
-            if f.get("type") == "TIM Pack":
-                f["ext"] = ".tpk"
-                f["real_name"] = f"{Path(real).stem}.tpk"
-            else:
-
-                if Path(real).suffix:
-                    f["ext"] = Path(real).suffix
-                f["real_name"] = real
+            if Path(real).suffix:
+                f["ext"] = Path(real).suffix
+            f["real_name"] = real
         else:
             f["label"] = f.get("label") or f"{f['index']:03d}"
             f["real_name"] = None
@@ -304,14 +299,9 @@ def load_custom_filelist(win):
         win.set_status(f"Applied names from {Path(path).name}  •  {named} named")
 
 def normalize_entry_exit(f: dict) -> None:
-    t = f.get("type") or ""
-    if t != "TIM Pack":
-        return
-    stem = Path(f.get("real_name") or f.get("label") or f"{f['index']:03d}").stem
-    f["ext"] = ".tpk"
-    f["label"] = stem 
-    f["real_name"] = f"{stem}.tpk"
+    """No-op: do not alter original filenames or extensions (including TIM packs)."""
+    return
 
-def normalize_all_exits(win) -> None: 
-    for f in win.arc.files: 
-        normalize_entry_exit(f)
+def normalize_all_exits(win) -> None:
+    """No-op: preserve original names/extensions on load."""
+    return

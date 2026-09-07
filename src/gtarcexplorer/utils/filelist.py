@@ -10,7 +10,8 @@ _UNKNOWN_RE = re.compile(
     re.IGNORECASE,
 )
 _DEST_RE = re.compile(
-    r"[\\/]([^\\/]+)[\\/]_?([^\\/\s]+)$",
+    # Keep leading "_" in the filename — GT names are often "_0logn.tex" etc.
+    r"[\\/]([^\\/]+)[\\/]([^\\/\s]+)$",
     re.IGNORECASE,
 )
 
@@ -31,7 +32,7 @@ def parse_filelist(path: str | Path) -> NameMap:
             continue
         folder = m_src.group(1).upper()
         index = int(m_src.group(2))
-        name = m_dst.group(2).lstrip("_")
+        name = m_dst.group(2)  # preserve leading "_" (part of real GT names)
         if not name:
             continue
         mapping[(folder, index)] = name

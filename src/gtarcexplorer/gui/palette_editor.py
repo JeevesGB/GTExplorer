@@ -5,6 +5,7 @@ Live OpenGL preview via on_preview; optional material highlight via on_highlight
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -878,15 +879,48 @@ class PaletteEditorDialog(QDialog):
             return
         try:
             data = bytes(self._data)
-            f = self._archive.files[self._tex_entry_index]
+            idx = self._tex_entry_index
+            f = self._archive.files[idx]
             f["data"] = data
             f["decomp_size"] = len(data)
-            f["comp_size"] = len(data)
+            f["_dirty"] = True
+            # Keep original comp_size (slot size) when known — do not set equal to decomp.
+
+            # Prefer in-place patch of the open .DAT so other entries stay identical.
+            path = getattr(self._archive, "path", None)
+            kind = getattr(self._archive, "kind", None)
+            if path and kind == "gtarc" and Path(path).is_file():
+                try:
+                    from ..utils.archive import GTArc
+                    result = GTArc.patch_file_entry(path, idx, data)
+                    f["comp_size"] = result["slot_size"]
+                    QMessageBox.information(
+                        self,
+                        "Saved in place",
+                        f"Patched entry {idx} inside:\n{path}\n\n"
+                        f"Compressed {result['comp_size']} / slot {result['slot_size']} bytes.\n"
+                        f"File size unchanged ({result['file_size']}).\n\n"
+                        "Safe to put back on the disc (size matches).",
+                    )
+                    self._emit_preview_now()
+                    return
+                except ValueError as e:
+                    # Slot too small — fall through to memory-only + user must rebuild
+                    QMessageBox.warning(
+                        self,
+                        "In-place save failed",
+                        f"{e}\n\nEntry updated in memory only. "
+                        "Use Save preserving / Repack carefully.",
+                    )
+                except Exception as e:
+                    QMessageBox.warning(self, "In-place save failed", str(e))
+
             QMessageBox.information(
                 self,
                 "Write into archive",
-                f"Updated entry {self._tex_entry_index} in memory.\n"
-                "Use Extract / Repack to save a new .DAT.",
+                f"Updated entry {idx} in memory.\n"
+                "Original DAT path unavailable for in-place patch — "
+                "export the .tex or use a preserving save.",
             )
             self._emit_preview_now()
         except Exception as e:

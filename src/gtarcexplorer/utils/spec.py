@@ -132,15 +132,16 @@ def rebuild_spec_table(parsed: dict, structs: Optional[List[bytes]] = None) -> b
 
 def patch_spec_record(buf: bytes, **fields) -> bytes:
     """
-    Patch known fields into a 456-byte SPEC record, leaving the rest intact.
+    Patch known fields into a SPEC record (typically 424 bytes), leaving the rest intact.
 
     Supported kwargs: code, flags, width_mm, height_mm, wheelbase_mm,
     track_front_mm, track_rear_mm, displacement_cc, power_ps, power_rpm,
     torque, torque_rpm, dim0, dim1
     """
     data = bytearray(buf)
-    if len(data) < 0x1B0:
-        data.extend(bytes(0x1B0 - len(data)))
+    # Do not pad past the real record size — retail SPEC is 424 bytes.
+    if len(data) < 0x18:
+        data.extend(bytes(0x18 - len(data)))
 
     if "code" in fields and fields["code"] is not None:
         code = str(fields["code"]).encode("ascii", errors="replace")[:6]
@@ -158,13 +159,16 @@ def patch_spec_record(buf: bytes, **fields) -> bytes:
     _u16(0x0C, "width_mm")
     _u16(0x0E, "height_mm")
     _u16(0x10, "wheelbase_mm")
+    _u16(0x12, "unk_0x12")  # scale
     _u16(0x14, "track_front_mm")
     _u16(0x16, "track_rear_mm")
-    _u16(0x1A4, "displacement_cc")
-    _u16(0x1A6, "power_ps")
-    _u16(0x1A8, "power_rpm")
-    _u16(0x1AA, "torque")
-    _u16(0x1AC, "torque_rpm")
+    # Stats block (424-byte retail layout)
+    _u16(0x194, "weight")
+    _u16(0x196, "displacement_cc")
+    _u16(0x198, "power_ps")
+    _u16(0x19A, "power_rpm")
+    _u16(0x19C, "torque")
+    _u16(0x19E, "torque_rpm")
     return bytes(data)
 
 def colour_rows(parsed: dict) -> List[Tuple[int, int, str]]:
@@ -192,90 +196,203 @@ def colour_rows(parsed: dict) -> List[Tuple[int, int, str]]:
 
 def decode_spec_record(buf: bytes, string_tables: Optional[List[List[str]]] = None) -> dict:
     """
-    Decode a single 456-byte Car Spec record (GT1 CARINF SPEC table).
+    Decode a single Car Spec record (GT1 CARINF SPEC table).
 
-    Mapped layout (little-endian, still partial):
-      0x00: char[6]   car code (e.g. "tcegn" = Toyota Celica GT-Four)
+    Verified against retail CARINF extract: **424 bytes/record**, 178 cars.
+
+    Layout (little-endian):
+      0x00: char[6]   car code (e.g. "tcegn")
       0x06: u16       flags
-      0x08: u16       dim0 — model-space / unknown (not physical length)
-      0x0A: u16       dim1 — model-space / unknown
-      0x0C: u16       width_mm (matches real cars)
+      0x08: u16       dim0
+      0x0A: u16       dim1
+      0x0C: u16       width_mm
       0x0E: u16       height_mm
       0x10: u16       wheelbase_mm
-      0x12: u16       scale/physics constant (~15405–15425, nearly fixed)
+      0x12: u16       scale (~15420)
       0x14: u16       track_front_mm
       0x16: u16       track_rear_mm
-      0x140: u16[14]  torque curve samples
-      0x168: 15×(u16,u16)  part/upgrade slot indices
-      0x1A4: u16      displacement_cc
-      0x1A6: u16      power_ps
-      0x1A8: u16      power_rpm
-      0x1AA: u16      torque (peak)
-      0x1AC: u16      torque_rpm
-
-    Joining parts: part codes embed the car key as chars [3:8]
-    e.g. BRAKE "brktcegn" ↔ SPEC "tcegn". Name index is at +0x18 in part records.
+      0x140: u16[14]  torque curve samples (when present)
+      0x194: u16      weight-related value
+      0x196: u16      displacement_cc
+      0x198: u16      power_ps
+      0x19A: u16      power_rpm
+      0x19C: u16      torque (0.01 kgfm; 3100 = 31.00 kgfm)
+      0x19E: u16      torque_rpm
     """
-    if len(buf) < 0x1B0:
-        return {"raw_len": len(buf)}
+    code = ""
+    if len(buf) >= 6:
+        code = buf[0:6].split(b"\0")[0].decode("ascii", errors="replace")
 
-    code = buf[0:6].split(b"\0")[0].decode("ascii", errors="replace")
-    flags = struct.unpack_from("<H", buf, 6)[0]
-    dim0, dim1, width, height, wheelbase, unk12, track_f, track_r = struct.unpack_from(
-        "<8H", buf, 8
-    )
-
-    # Power / torque curve (14 samples observed before trailing zeros)
-    curve = list(struct.unpack_from("<14H", buf, 0x140))
-
-    # Part / upgrade slot indices (16 pairs observed)
-    slots = []
-    for i in range(15):
-        a, b = struct.unpack_from("<HH", buf, 0x168 + i * 4)
-        slots.append((a, b))
-
-    disp, power_ps, power_rpm, torque, torque_rpm = struct.unpack_from("<5H", buf, 0x1A4)
-
-    # Trailing identifiers / hashes
-    trailing = list(struct.unpack_from("<8H", buf, 0x1AE))
-
-    return {
+    out = {
         "code": code,
-        "flags": flags,
-        "width_mm": width,
-        "height_mm": height,
-        "wheelbase_mm": wheelbase,
-        "track_front_mm": track_f,
-        "track_rear_mm": track_r,
-        "dim0": dim0,
-        "dim1": dim1,
-        "unk_0x12": unk12,
-        "torque_curve": curve,
-        "part_slots": slots,
-        "displacement_cc": disp,
-        "power_ps": power_ps,
-        "power_rpm": power_rpm,
-        "torque": torque,
-        "torque_rpm": torque_rpm,
-        "trailing": trailing,
+        "raw_len": len(buf),
+        "flags": 0,
+        "width_mm": 0,
+        "height_mm": 0,
+        "wheelbase_mm": 0,
+        "track_front_mm": 0,
+        "track_rear_mm": 0,
+        "dim0": 0,
+        "dim1": 0,
+        "unk_0x12": 0,
+        "weight": 0,
+        "torque_curve": [],
+        "part_slots": [],
+        "displacement_cc": 0,
+        "power_ps": 0,
+        "power_rpm": 0,
+        "torque": 0,
+        "torque_rpm": 0,
+        "trailing": [],
     }
 
+    if len(buf) < 0x18:
+        return out
 
-# Preferred code-field offset per table tag (from CARINF binary survey).
+    out["flags"] = struct.unpack_from("<H", buf, 6)[0]
+    dim0, dim1, width, height, wheelbase, scale, track_f, track_r = struct.unpack_from(
+        "<8H", buf, 8
+    )
+    out["dim0"] = dim0
+    out["dim1"] = dim1
+    out["width_mm"] = width
+    out["height_mm"] = height
+    out["wheelbase_mm"] = wheelbase
+    out["unk_0x12"] = scale
+    out["track_front_mm"] = track_f
+    out["track_rear_mm"] = track_r
+
+    if len(buf) >= 0x140 + 28:
+        out["torque_curve"] = list(struct.unpack_from("<14H", buf, 0x140))
+
+    slot_off = 0x168
+    if len(buf) >= slot_off + 4:
+        max_pairs = min(15, max(0, (min(len(buf), 0x194) - slot_off) // 4))
+        slots = []
+        for i in range(max_pairs):
+            a, b = struct.unpack_from("<HH", buf, slot_off + i * 4)
+            slots.append((a, b))
+        out["part_slots"] = slots
+
+    # Stats block — fixed offsets verified on retail 424-byte records
+    if len(buf) >= 0x1A0:
+        weight, disp, power_ps, power_rpm, torque, torque_rpm = struct.unpack_from(
+            "<6H", buf, 0x194
+        )
+        out["weight"] = weight
+        out["displacement_cc"] = disp
+        out["power_ps"] = power_ps
+        out["power_rpm"] = power_rpm
+        out["torque"] = torque
+        out["torque_rpm"] = torque_rpm
+        out["power_offset"] = 0x196
+    elif len(buf) >= 0x196 + 10:
+        disp, power_ps, power_rpm, torque, torque_rpm = struct.unpack_from(
+            "<5H", buf, 0x196
+        )
+        out["displacement_cc"] = disp
+        out["power_ps"] = power_ps
+        out["power_rpm"] = power_rpm
+        out["torque"] = torque
+        out["torque_rpm"] = torque_rpm
+        out["power_offset"] = 0x196
+
+    if len(buf) > 0x1A0:
+        n_trail = (len(buf) - 0x1A0) // 2
+        if n_trail:
+            out["trailing"] = list(struct.unpack_from("<" + "H" * n_trail, buf, 0x1A0))
+
+    # Model / trim name indices (verified: 0x188 → str0, 0x18C → str1)
+    out["model_name"] = ""
+    out["trim_name"] = ""
+    out["display_name"] = out["code"]
+    tables = string_tables or []
+    if len(buf) >= 0x18E:
+        model_idx = struct.unpack_from("<H", buf, 0x188)[0]
+        trim_idx = struct.unpack_from("<H", buf, 0x18C)[0]
+        out["model_index"] = model_idx
+        out["trim_index"] = trim_idx
+        st0 = tables[0] if len(tables) > 0 else []
+        st1 = tables[1] if len(tables) > 1 else []
+        if model_idx < len(st0):
+            out["model_name"] = st0[model_idx]
+        if trim_idx < len(st1):
+            out["trim_name"] = st1[trim_idx]
+        parts = [p for p in (out["model_name"], out["trim_name"]) if p]
+        if parts:
+            out["display_name"] = " ".join(parts)
+        elif out["code"]:
+            out["display_name"] = out["code"]
+
+    return out
+
+
+def build_car_name_map(spec_parsed: dict) -> dict:
+    """
+    Map SPEC record index → display label for the Database Car column.
+
+    Uses code + model/trim from SPEC string tables (0x188 / 0x18C).
+    Example: 5 → "tcegn — CELICA GT-FOUR"
+    """
+    tables = spec_parsed.get("string_tables") or []
+    structs = spec_parsed.get("structs") or []
+    out = {}
+    for i, buf in enumerate(structs):
+        rec = decode_spec_record(buf, tables)
+        code = rec.get("code") or f"{i:03d}"
+        disp = rec.get("display_name") or code
+        if disp and disp != code:
+            out[i] = f"{code} — {disp}"
+        else:
+            out[i] = code
+    return out
+
+
+# Preferred code-field offset per table tag (verified on retail CARINF extract).
+# Only tables that embed a real ASCII part code (e.g. tubtcegnbs) are listed.
+# Most tables have no code — only numeric params + string-table names.
 PART_CODE_OFFSETS = {
-    "BRAKE": 8, "CLUTCH": 8, "FLYWHEL": 8, "STABILZ": 8, "PRPSHFT": 8,
-    "GEAR": 20, "MUFFLER": 20, "COMPUTE": 20, "INCOOL": 20, "SUSPENS": 20,
-    "POLISH": 20, "BALANCE": 20, "COMPRES": 20, "DISPLAC": 20,
-    "NATUNE": 22,
-    "TURBINE": 24,
-    "AEROPAT": 16,
-    "TIRESZ": 4, "WHEELSZ": 4,
+    "TURBINE": 32,  # "tubtlevnbs", "tubtcegnbs", …
 }
+
+# u16 field index of car_id (SPEC record index) — verified on retail CARINF.
+# Resolve stock part: first row where field[car_id] == SPEC index.
+PART_CAR_ID_FIELD = {
+    "BRAKE": 6,
+    "TIRE": 6,
+    "GEAR": 30,
+    "CLUTCH": 8,
+    "STABILZ": 6,
+    "FLYWHEL": 6,
+    "LWEIGHT": 4,
+}
+
+# u16 field index of upgrade tier where present.
+# Raw values: 0 = stock, 257 (0x101) = stage 2, 514 (0x202) = stage 3.
+PART_TIER_FIELD = {
+    "CLUTCH": 4,
+    "STABILZ": 3,
+    "FLYWHEL": 3,
+    "LWEIGHT": 8,
+}
+
+def tier_label(raw: int) -> str:
+    """Human label for 0 / 257 / 514 tier encoding."""
+    if raw == 0:
+        return "S1"
+    if raw == 257:
+        return "S2"
+    if raw == 514:
+        return "S3"
+    if raw in (1, 2):
+        return f"S{raw + 1}"
+    return str(raw)
 
 # Human-readable table titles for the DB editor list.
 PART_TABLE_TITLES = {
     "SPEC": "Car Spec",
     "BRAKE": "Brake",
+    "BRKCTRL": "Brake Controller",
     "GEAR": "Gearbox",
     "CLUTCH": "Clutch",
     "FLYWHEL": "Flywheel",
@@ -291,25 +408,39 @@ PART_TABLE_TITLES = {
     "PRPSHFT": "Prop Shaft",
     "AEROPAT": "Aero Parts",
     "TIRESZ": "Tire Size",
+    "TIRESIZ": "Tire Size",
     "WHEELSZ": "Wheel Size",
     "BALANCE": "Balance Weight",
     "DISPLAC": "Displacement",
+    "EQUIP": "Equipment",
+    "COLOR": "Car Color",
+    "TIRE": "Tire",
+    "TIRECMP": "Tire Compound",
+    "RACING": "Racing Modify",
+    "LWEIGHT": "Lightweight",
+    "ADJUST": "Align Adjustment",
 }
 
 # How many leading u16 params to expose, and their column headers.
-# Tables whose pre-code region is a power/ROM curve (not tuning scalars) use 0.
+# Tables whose leading region is a curve/map (not tuning scalars) use 0.
 PART_PARAM_LAYOUT = {
-    "BRAKE":   (4, ["Front", "Rear", "Bias", "Flags"]),
-    "GEAR":    (6, ["1st", "2nd", "3rd", "4th", "5th", "Final"]),
-    "STABILZ": (2, ["Stiffness", "Unk"]),
-    "CLUTCH":  (3, ["Torque", "Feel", "Stage"]),
-    "FLYWHEL": (2, ["Weight", "Inertia"]),
-    "PRPSHFT": (2, ["Strength", "Weight"]),
-    "SUSPENS": (4, ["Flags", "Base", "SpecId", "Pad"]),
+    "BRAKE":   (4, ["Front", "Rear", "RowId", "Flags"]),
+    "BRKCTRL": (4, ["P0", "P1", "P2", "P3"]),
+    "GEAR":    (7, ["Gears", "1st", "2nd", "3rd", "4th", "5th", "Final"]),
+    "STABILZ": (5, ["Stiffness", "Rate", "RowId", "Tier", "Price"]),
+    "CLUTCH":  (5, ["TypeA", "TypeB", "Torque", "RowId", "Tier"]),
+    "FLYWHEL": (5, ["TypeA", "TypeB", "RowId", "Tier", "Price"]),
+    "PRPSHFT": (2, ["Stage", "Flags"]),
+    "SUSPENS": (4, ["P0", "P1", "P2", "P3"]),
     "AEROPAT": (4, ["Drag", "Lift", "Downforce", "Flags"]),
-    "TIRESZ":  (2, ["Width", "Profile"]),
+    "TIRESZ":  (4, ["W1", "W2", "W3", "Flags"]),
+    "TIRESIZ": (4, ["W1", "W2", "W3", "Flags"]),
     "WHEELSZ": (2, ["Diameter", "Width"]),
-    # Curve / map data before the code — hide as columns
+    "TIRE":    (4, ["Front", "Rear", "RowId", "Flags"]),
+    "RACING":  (4, ["P0", "P1", "P2", "P3"]),
+    "LWEIGHT": (3, ["WeightPct", "RowId", "Price"]),
+    "ADJUST":  (4, ["P0", "P1", "P2", "P3"]),
+    # Curve / map data — no scalar columns
     "COMPUTE": (0, []),
     "MUFFLER": (0, []),
     "INCOOL":  (0, []),
@@ -319,6 +450,9 @@ PART_PARAM_LAYOUT = {
     "POLISH":  (0, []),
     "NATUNE":  (0, []),
     "TURBINE": (0, []),
+    "EQUIP":   (0, []),
+    "COLOR":   (0, []),
+    "TIRECMP": (0, []),
 }
 
 # Back-compat alias used by the UI
@@ -326,90 +460,159 @@ PART_PARAM_LABELS = {k: v[1] for k, v in PART_PARAM_LAYOUT.items()}
 
 
 def _extract_part_code(buf: bytes, tag: str) -> tuple:
-    """Return (code, offset, length) using known offsets then a scan fallback."""
+    """
+    Return (code, offset, length).
+
+    Most CARINF part records have *no* ASCII part code — only numeric params
+    and a string-table name. Curve/map bytes often look printable but are not
+    codes (e.g. "njhggfeddd"). Only accept strings that start with a known
+    part prefix and match prefix + car-id form (e.g. tubtcegnbs).
+    """
     import re
+    tag_u = (tag or "").upper()
+    preferred = PART_CODE_OFFSETS.get(tag_u)
+
+    prefixes = (
+        "tub", "brk", "clh", "fly", "stf", "str", "ger", "mfa", "com", "int",
+        "suf", "sur", "prt", "bla", "nat", "pps", "sz2", "sz3", "whe", "tir",
+        "aer", "dis", "pol", "bal", "rac", "lwg", "equ",
+    )
+
+    def _is_real_code(chunk: str) -> bool:
+        if not chunk or not (8 <= len(chunk) <= 12):
+            return False
+        if not chunk.isascii() or not chunk.islower():
+            return False
+        if not chunk[:3] in prefixes:
+            return False
+        # Reject runs of 3+ identical letters (curve garbage)
+        if re.search(r"(.)\1{2,}", chunk):
+            return False
+        # Need a 4–6 char car-id-like segment after the prefix
+        rest = chunk[3:]
+        if not re.match(r"^[a-z0-9]{4,9}$", rest):
+            return False
+        if len(set(rest)) < 3:
+            return False
+        return True
+
     candidates = []
-    preferred = PART_CODE_OFFSETS.get(tag.upper() if tag else "")
+    # Prefer the known offset; also scan for prefix-based codes
     offsets = []
     if preferred is not None:
         offsets.append(preferred)
-    offsets.extend([8, 20, 24, 16, 22, 4, 0, 12])
+    for off in range(0, max(0, len(buf) - 7)):
+        if buf[off:off+3].isalpha() and buf[off:off+3].islower():
+            offsets.append(off)
+
     seen = set()
     for off in offsets:
-        if off in seen or off + 5 > len(buf):
+        if off in seen or off + 8 > len(buf):
             continue
         seen.add(off)
-        # read up to 10 printable bytes
         end = off
-        while end < len(buf) and end < off + 10 and 32 <= buf[end] < 127:
+        while end < len(buf) and end < off + 12 and 97 <= buf[end] <= 122:
             end += 1
-        if end - off < 5:
+        chunk = buf[off:end].decode("ascii", errors="replace")
+        if not _is_real_code(chunk):
             continue
-        chunk = buf[off:end].decode("ascii", errors="replace").split("\0")[0]
-        if len(chunk) < 5:
-            continue
-        score = 0
-        if preferred is not None and off == preferred:
-            score += 50
-        if re.match(r"^[a-zA-Z]{2,4}[a-zA-Z0-9]{4,7}$", chunk):
-            score += 30
-        if chunk[:3].lower() in (
-            "brk", "clh", "fly", "stf", "str", "ger", "mfa", "com", "int",
-            "suf", "sur", "tub", "prt", "bla", "nat", "pps", "sz2", "sz3",
-        ):
-            score += 20
-        # penalize pure curve-looking high-ascii garbage already filtered
+        score = 10 + (50 if preferred is not None and off == preferred else 0)
         candidates.append((score, off, chunk))
+
     if not candidates:
-        return "", preferred or 8, 0
+        return "", preferred if preferred is not None else 0, 0
     candidates.sort(key=lambda x: (-x[0], x[1]))
     _, off, code = candidates[0]
     return code, off, len(code)
 
 
-def decode_part_record(tag: str, buf: bytes, string_tables: Optional[List[List[str]]] = None, index: int = 0) -> dict:
-    """Decode a CARINF part-table record with tag-aware code / param layout."""
-    out: dict = {"tag": tag, "index": index, "raw_len": len(buf)}
+def decode_part_record(
+    tag: str,
+    buf: bytes,
+    string_tables: Optional[List[List[str]]] = None,
+    index: int = 0,
+    car_names: Optional[dict] = None,
+) -> dict:
+    """Decode a CARINF part-table record with tag-aware code / param / car_id layout.
+
+    car_names: optional {spec_index: "tcegn — CELICA GT-FOUR"} from build_car_name_map.
+    """
+    out: dict = {
+        "tag": tag,
+        "index": index,
+        "raw_len": len(buf),
+        "car_id": None,
+        "tier": None,
+        "tier_label": "",
+    }
     if len(buf) < 8:
         return out
+
+    tag_u = (tag or "").upper()
+    n_u16 = len(buf) // 2
 
     code, code_off, code_len = _extract_part_code(buf, tag)
     out["code"] = code
     out["code_offset"] = code_off
     out["code_len"] = code_len
 
-    # Car key: 3-letter part prefix + 5-char car id, e.g. brktstln -> tstln
+    # Numeric car_id from verified field index (SPEC record index)
+    car_fi = PART_CAR_ID_FIELD.get(tag_u)
+    if car_fi is not None and car_fi < n_u16:
+        out["car_id"] = struct.unpack_from("<H", buf, car_fi * 2)[0]
+
+    # Upgrade tier (0 / 257 / 514)
+    tier_fi = PART_TIER_FIELD.get(tag_u)
+    if tier_fi is not None and tier_fi < n_u16:
+        raw_tier = struct.unpack_from("<H", buf, tier_fi * 2)[0]
+        out["tier"] = raw_tier
+        out["tier_label"] = tier_label(raw_tier)
+
+    # Car column label: SPEC name map > ASCII part code > numeric id
     if len(code) >= 8:
         out["car_key"] = code[3:8]
         out["part_prefix"] = code[:3]
-    elif len(code) >= 5:
-        out["car_key"] = code[-5:]
-        out["part_prefix"] = code[:-5]
+    elif len(code) >= 5 and code[:3].isalpha():
+        out["car_key"] = code[-5:] if len(code) >= 5 else code
+        out["part_prefix"] = code[:-5] if len(code) >= 5 else ""
     else:
-        out["car_key"] = code
         out["part_prefix"] = ""
+        out["car_key"] = ""
 
-    # Params = leading u16s before the code field (layout-driven)
-    tag_u = (tag or "").upper()
+    if out["car_id"] is not None and car_names and out["car_id"] in car_names:
+        out["car_key"] = car_names[out["car_id"]]
+    elif out["car_id"] is not None and not out["car_key"]:
+        out["car_key"] = str(out["car_id"])
+    elif not out["car_key"]:
+        out["car_key"] = code or ""
+
+    # Params = leading u16s (layout-driven)
     layout = PART_PARAM_LAYOUT.get(tag_u)
     if layout is not None:
         n_params, labels = layout
     else:
-        n_params = min(max(0, code_off // 2), 4)
+        n_params = min(4, n_u16)
         labels = [f"P{i}" for i in range(n_params)]
-    n_params = min(n_params, max(0, code_off // 2))
-    out["params"] = list(struct.unpack_from("<" + "H" * n_params, buf, 0)) if n_params else []
+    n_params = min(n_params, n_u16)
+    params = list(struct.unpack_from("<" + "H" * n_params, buf, 0)) if n_params else []
+    # Present tier as S1/S2/S3 in the Tier column when that label is used
+    disp_params = list(params)
+    for i, lab in enumerate(labels[:n_params]):
+        if lab == "Tier" and i < len(disp_params):
+            disp_params[i] = tier_label(params[i])
+    out["params"] = disp_params
+    out["params_raw"] = params
     out["param_labels"] = list(labels)[:n_params]
 
-    # Name: prefer sequential index into string table 0 (matches GT1 order for most tables)
-    name_idx = index
+    # Name: string table 0 is ordered by *row*, not car_id (cars with dual
+    # stock rows shift later names). Only use index when in range.
     tables0 = (string_tables or [None])[0] or []
     if tables0 and index < len(tables0):
         out["name"] = tables0[index]
         out["name_index"] = index
     else:
         out["name"] = ""
-        out["name_index"] = name_idx
+        out["name_index"] = index
 
     return out
 
@@ -434,7 +637,7 @@ def join_parts_to_cars(spec_parsed: dict, parts_by_tag: dict) -> list:
             lookup.setdefault(key, {}).setdefault(tag, []).append(rec)
 
     for car in cars:
-        key = car["code"]  # e.g. tcegn
+        key = car.get("code") or ""  # e.g. tcegn
         car["parts"] = lookup.get(key, {})
     return cars
 
@@ -460,7 +663,7 @@ def format_spec_preview(parsed: dict, max_strings: int = 40, max_cars: int = 40)
             lines.append(f"{car_id:6d}  {cid:02X}    {name}")
         if len(rows) > 80:
             lines.append(f"... ({len(rows) - 80} more)")
-    elif tag == "SPEC" and parsed.get("struct_size") == 456:
+    elif tag == "SPEC" and parsed.get("struct_size") in (424, 432, 456):
         lines.append("Car database (core + power):")
         lines.append(
             f"{'Code':6s}  {'PS':>4}  {'@rpm':>5}  {'Nm':>4}  {'@rpm':>5}  "
@@ -580,15 +783,16 @@ def format_car_database_summary(cars: list, max_cars: int = 50) -> str:
             lines.append(f"... ({len(cars) - max_cars} more)")
             break
         lines.append(
-            f"{rec['code']:6s}  {rec['power_ps']:4d}  {rec['torque']:4d}  "
-            f"{rec['displacement_cc']:5d}  {rec['wheelbase_mm']:4d}  "
-            f"{rec['width_mm']}x{rec['height_mm']}"
+            f"{rec.get('code', ''):6s}  {rec.get('power_ps', 0):4d}  "
+            f"{rec.get('torque', 0):4d}  {rec.get('displacement_cc', 0):5d}  "
+            f"{rec.get('wheelbase_mm', 0):4d}  "
+            f"{rec.get('width_mm', 0)}x{rec.get('height_mm', 0)}"
         )
     return "\n".join(lines)
 
 def export_car_database(parsed: dict) -> str:
     """Export a human-readable car list from a SPEC table."""
-    if parsed.get("tag") != "SPEC" or parsed.get("struct_size") != 456:
+    if parsed.get("tag") != "SPEC" or parsed.get("struct_size") not in (424, 432, 456):
         return export_strings_as_text(parsed)
 
     lines = [
@@ -617,6 +821,6 @@ def export_spec_strings(data: bytes, colour_mode: bool = True) -> str:
     parsed = parse_spec_table(data)
     if colour_mode and parsed.get("tag") == "COLOR":
         return export_colour_names_as_text(parsed)
-    if parsed.get("tag") == "SPEC" and parsed.get("struct_size") == 456:
+    if parsed.get("tag") == "SPEC" and parsed.get("struct_size") in (424, 432, 456):
         return export_car_database(parsed)
     return export_strings_as_text(parsed)
