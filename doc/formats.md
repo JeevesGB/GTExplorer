@@ -53,3 +53,7 @@ Offset  Size   Description
 | `gtarc` | `@(#)GT-ARC` | Multi-file; GT-ZIP when `content_type = 0x8001` |
 | `gtarc_compressed` | Mangled `@(#)GT-A` / `RC` | Whole-archive compression |
 | `gtzip_raw` | No ARC header | Single GT-ZIP stream |
+
+
+---
+### [Go Back](../README.md)

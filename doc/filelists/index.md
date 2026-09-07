@@ -12,5 +12,5 @@
 ### [SOUND](SOUND.DAT.MD)
 ---
 
-#### [GO BACK](../../README.md)
+#### [Go Back](../../README.md)
 

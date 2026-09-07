@@ -59,3 +59,6 @@ Supported TIM formats: 4-bit + CLUT, 8-bit + CLUT, 16-bit, 24-bit.
 ## Preview tab
 
 Headers, hex, text, filename lists, GTHTML strings, and structured car-part tables (`SPEC`, `COLOR`, `EQUIP`, `TIRE`, …).
+
+---
+### [Go Back](../README.md)

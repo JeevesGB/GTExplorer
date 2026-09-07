@@ -1,5 +1,5 @@
 # GAMEMENU.DAT
-
+#### [Go Back](../../index.md)
 ```
     000.tim
     001.tim
@@ -16,3 +16,6 @@
     012.tim
     013.tim
     014.tim
+```
+---
+#### [Go Back](../../index.md)

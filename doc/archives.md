@@ -14,3 +14,6 @@
 | `SOUND.DAT` | Instrument (`.ins`) and engine (`.es`) banks |
 | `GAMEFONT.DAT` | Raw GT-ZIP font data |
 | `MENU_IMG.ARC` / `MUSIC.DAT` | Large GT-ARC assets |
+
+---
+### [Go Back](../README.md)

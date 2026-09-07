@@ -1,4 +1,6 @@
 # SOUNDS.DAT
+#### [Go Back](../../index.md)
+
 ```
     000.ins
     001.ins
@@ -4574,3 +4576,7 @@
         sample_006.wav
         sample_007.adpcm
         sample_007.wav
+```
+
+---
+#### [Go Back](../../index.md)
