@@ -1,6 +1,6 @@
 # CAR.DAT
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 The full car garage — every drivable car in the game, stored as a `.car` 3D model plus a matching `.tex` texture. Most cars also have a `_night` variant with different, headlight-lit textures for night races. `manifest.txt` is GTExplorer's own generated index, not a game asset.
 
@@ -699,4 +699,4 @@ The full car garage — every drivable car in the game, stored as a `.car` 3D mo
 </details>
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

@@ -1,6 +1,6 @@
 # PITMENU.DAT
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 `.tim` images for the pit-stop / garage menu screens.
 
@@ -17,4 +17,4 @@
 - `000.tim` → `023.tim` (24 files)
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

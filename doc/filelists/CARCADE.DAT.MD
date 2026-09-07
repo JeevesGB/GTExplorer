@@ -1,6 +1,6 @@
 # CARCADE.DAT
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 Cars available in Arcade mode, stored the same way as CAR.DAT (`.car` model + `.tex` texture) but addressed by numeric index rather than name, since Arcade mode only needs a fixed, small roster.
 
@@ -21,4 +21,4 @@ Cars available in Arcade mode, stored the same way as CAR.DAT (`.car` model + `.
 </details>
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

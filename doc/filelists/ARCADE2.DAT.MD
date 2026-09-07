@@ -1,6 +1,6 @@
 # ARCADE2.DAT
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 A small supplementary Arcade-mode archive: a few extra `.tim` images plus one `.car`/`.tex` model pair.
 
@@ -21,4 +21,4 @@ A small supplementary Arcade-mode archive: a few extra `.tim` images plus one `.
 Other files: `002.car`, `003.tex`, `006.car`, `007.tex`
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

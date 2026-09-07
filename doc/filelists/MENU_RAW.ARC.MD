@@ -1,6 +1,6 @@
 # MENU_RAW.ARC
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 Companion archive to MENU_IMG.ARC holding the menu system's supporting data: the used-car listing (`.usedcar`), the menu HTML index (`htmls.idx`), a sound-effect index (`sounds.idx`), an unidentified index, and two `.arc` sub-archives.
 
@@ -23,4 +23,4 @@ Companion archive to MENU_IMG.ARC holding the menu system's supporting data: the
 - **`.usedcar`** (1): `004.usedcar`
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

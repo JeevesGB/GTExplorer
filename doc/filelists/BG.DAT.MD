@@ -1,6 +1,6 @@
 # BG.DAT
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 Track background environments (skyboxes). `.tpk` files are texture packs that skin the sky dome/backdrop, and `.sky` files describe how those textures are placed and animated. `018.bin` is an unclassified raw entry.
 
@@ -22,4 +22,4 @@ Track background environments (skyboxes). `.tpk` files are texture packs that sk
 Other files: `018.bin`
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

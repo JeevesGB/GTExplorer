@@ -1,6 +1,6 @@
 # GAMEMENU.DAT
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 `.tim` images for the main front-end menu screens (title, mode select, etc.).
 
@@ -17,4 +17,4 @@
 - `000.tim` → `014.tim` (15 files)
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

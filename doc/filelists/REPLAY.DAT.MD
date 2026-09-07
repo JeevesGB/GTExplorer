@@ -1,6 +1,6 @@
 # REPLAY.DAT
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 Almost empty — a single `REPLAY/` folder containing one file, `REPLAY.DAT`. This looks like a placeholder slot the game writes replay data into at runtime rather than a populated asset archive.
 
@@ -21,4 +21,4 @@ Almost empty — a single `REPLAY/` folder containing one file, `REPLAY.DAT`. Th
 </details>
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

@@ -1,6 +1,6 @@
 # COURSE.DAT
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 Every racetrack in the game. Each course has a `.dat` (layout/logic) and `.ps` (polygon/collision mesh) file at the top level, plus a matching `<track>_tims/` folder holding all the scenery, signage, and road-texture `.tim` images used to render that circuit.
 
@@ -3101,4 +3101,4 @@ Other files (186):
 </details>
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

@@ -1,6 +1,6 @@
 # ARCADE.DAT
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 Texture set for the Arcade mode UI — car-select icons, screen backgrounds, and similar front-end art, stored as sequentially numbered `.tim` images. The final entry (`067.seq`) is an animation/sequence script rather than an image.
 
@@ -22,4 +22,4 @@ Other files: `067.seq`
 </details>
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

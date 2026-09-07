@@ -1,6 +1,6 @@
 # SOUND.DAT
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 The game's audio bank. Top-level `.ins` (VAB instrument headers) and `.es` (engine/event sound definitions) files drive the sound engine, while 249 numbered `<n>_samples/` folders each hold one sound bank's raw waveform data as paired `.adpcm` (PlayStation ADPCM audio) and `.wav` files.
 
@@ -38,4 +38,4 @@ Each folder follows the same pattern. Example — contents of `000_samples/`:
 </details>
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)

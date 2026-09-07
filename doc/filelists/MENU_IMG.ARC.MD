@@ -1,6 +1,6 @@
 # MENU_IMG.ARC
 
-[← Back to index](../index.md)
+[← Back to index](index.md)
 
 The bulk image archive behind the in-game HTML-style menu system (License Center, car dealers, and similar screens): thousands of numbered `.arc` sub-archives — most likely one per menu page — plus a smaller shared pool of `.tim` images and one `.ins` instrument file.
 
@@ -25,4 +25,4 @@ Other files: `000.ins`
 </details>
 
 ---
-[← Back to index](../index.md)
+[← Back to index](index.md)
