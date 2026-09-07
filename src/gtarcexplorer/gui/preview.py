@@ -11,7 +11,10 @@ from ..utils.spec import is_spec_type, parse_spec_table, format_spec_preview
 from ..utils.namelist import parse_name_list
 from ..utils.messagetext import extract_message_strings
 from ..utils.replay import is_replay_save, parse_replay_save, format_replay_preview
-from ..utils.gthtml import is_gthtml, parse_gthtml, format_gthtml_preview
+from ..utils.gthtml import (
+    is_gthtml, parse_gthtml, format_gthtml_preview,
+    parse_gthtml_structured, format_gthtml_table,
+)
 from ..utils.gtenv import parse_gtenv, format_gtenv_preview
 
 CANVAS_VIEWER = 2
@@ -98,11 +101,18 @@ def show_preview(win, idx: int) -> None:
 
         elif f["type"] == "GT HTML" or is_gthtml(data):
             try:
-                parsed = parse_gthtml(data)
-                win.preview_text.append(format_gthtml_preview(parsed))
+                parsed = parse_gthtml_structured(data)
+                win.preview_text.append(format_gthtml_table(parsed))
+                win.show_gthtml_in_viewer(data, f["label"] + f["ext"])
+                win._switch_canvas(CANVAS_VIEWER)
             except Exception as e:
-                win.preview_text.append(f"GTHTML parse error: {e}")
-                hex_dump(win, data[:4096])
+                win.preview_text.append(f"GTHTML structured parse failed ({e}) — raw dump:\n")
+                try:
+                    raw_parsed = parse_gthtml(data)
+                    win.preview_text.append(format_gthtml_preview(raw_parsed))
+                except Exception as e2:
+                    win.preview_text.append(f"GTHTML parse error: {e2}")
+                    hex_dump(win, data[:4096])
 
         elif f["type"] == "GT-ENV System Config":
             try:
@@ -327,12 +337,20 @@ def show_preview(win, idx: int) -> None:
 
         elif f["type"] == "GT HTML" or is_gthtml(data):
             try:
-                parsed = parse_gthtml(data)
-                lines.append(format_gthtml_preview(parsed))
+                parsed = parse_gthtml_structured(data)
+                lines.append(format_gthtml_table(parsed))
+                _set_preview(win, lines)
+                win.show_gthtml_in_viewer(data, f["label"] + f["ext"])
+                win._switch_canvas(CANVAS_VIEWER)
             except Exception as e:
-                lines.append(f"GTHTML parse error: {e}")
-                lines.extend(hex_dump_lines(data[:4096]))
-            _set_preview(win, lines)
+                lines.append(f"GTHTML structured parse failed ({e}) — raw dump:\n")
+                try:
+                    raw_parsed = parse_gthtml(data)
+                    lines.append(format_gthtml_preview(raw_parsed))
+                except Exception as e2:
+                    lines.append(f"GTHTML parse error: {e2}")
+                    lines.extend(hex_dump_lines(data[:4096]))
+                _set_preview(win, lines)
 
         elif f["type"] == "GT-ENV System Config":
             try:

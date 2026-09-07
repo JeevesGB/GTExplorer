@@ -136,6 +136,25 @@ def show_in_viewer(win, data: bytes, label: str = "", *, keep_pack: bool = False
         _clear_viewer(win, f"{label} – TIM error: {e}")
 
 
+def show_gthtml_in_viewer(win, data: bytes, label: str = "") -> None:
+    """Render a GTHTML menu page as a GMCreator-style box map."""
+    win._viewer_mode = "gthtml"
+    if hasattr(win, "tim_list"):
+        win.tim_list.clear()
+    win._pack_tims = []
+
+    try:
+        from ..utils.gthtml import parse_gthtml_structured, render_gthtml_image
+        parsed = parse_gthtml_structured(data)
+        im = render_gthtml_image(parsed)
+        n_boxes = sum(1 for b in parsed["boxes"] if b["rect"])
+        info = f"{label}  •  {im.width}x{im.height}  •  {n_boxes} boxes  •  bg={parsed['background']}"
+        pix = _pil_to_qpixmap(im)
+        _set_image(win, pix, info)
+    except Exception as e:
+        _clear_viewer(win, f"{label} – GTHTML error: {e}")
+
+
 def tim_to_image(data: bytes):
     from ..utils.tim_image import decode_tim
     img, _info = decode_tim(data)
