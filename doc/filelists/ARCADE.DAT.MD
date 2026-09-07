@@ -1,74 +1,25 @@
 # ARCADE.DAT
-#### [Go Back](../../index.md)
-```
-    000.tim
-    001.tim
-    002.tim
-    003.tim
-    004.tim
-    005.tim
-    006.tim
-    007.tim
-    008.tim
-    009.tim
-    010.tim
-    011.tim
-    012.tim
-    013.tim
-    014.tim
-    015.tim
-    016.tim
-    017.tim
-    018.tim
-    019.tim
-    020.tim
-    021.tim
-    022.tim
-    023.tim
-    024.tim
-    025.tim
-    026.tim
-    027.tim
-    028.tim
-    029.tim
-    030.tim
-    031.tim
-    032.tim
-    033.tim
-    034.tim
-    035.tim
-    036.tim
-    037.tim
-    038.tim
-    039.tim
-    040.tim
-    041.tim
-    042.tim
-    043.tim
-    044.tim
-    045.tim
-    046.tim
-    047.tim
-    048.tim
-    049.tim
-    050.tim
-    051.tim
-    052.tim
-    053.tim
-    054.tim
-    055.tim
-    056.tim
-    057.tim
-    058.tim
-    059.tim
-    060.tim
-    061.tim
-    062.tim
-    063.tim
-    064.tim
-    065.tim
-    066.tim
-    067.seq    
-```
+
+[← Back to index](../index.md)
+
+Texture set for the Arcade mode UI — car-select icons, screen backgrounds, and similar front-end art, stored as sequentially numbered `.tim` images. The final entry (`067.seq`) is an animation/sequence script rather than an image.
+
+**68** files · **2** file types
+
+| Extension | Count | What it is |
+|---|---|---|
+| `.tim` | 67 | PlayStation TIM — a raw PS1 image/texture format. |
+| `.seq` | 1 | Animation or playback sequence script. |
+
+## Structure
+
+<details><summary><b>Files here (68)</b> — click to expand</summary>
+
+- `000.tim` → `066.tim` (67 files)
+
+Other files: `067.seq`
+
+</details>
+
 ---
-#### [Go Back](../../index.md)
+[← Back to index](../index.md)

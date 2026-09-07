@@ -1,26 +1,25 @@
 # BG.DAT
-#### [Go Back](../../index.md)
-```
-    000.tpk
-    001.sky
-    002.tpk
-    003.sky
-    004.tpk
-    005.sky
-    006.tpk
-    007.sky
-    008.tpk
-    009.sky
-    010.tpk
-    011.sky
-    012.tpk
-    013.sky
-    014.tpk
-    015.sky
-    016.tpk
-    017.sky
-    018.bin
-    019.sky
-```
+
+[← Back to index](../index.md)
+
+Track background environments (skyboxes). `.tpk` files are texture packs that skin the sky dome/backdrop, and `.sky` files describe how those textures are placed and animated. `018.bin` is an unclassified raw entry.
+
+**20** files · **3** file types
+
+| Extension | Count | What it is |
+|---|---|---|
+| `.sky` | 10 | Skybox placement/animation data. |
+| `.tpk` | 9 | Texture pack (grouped set of textures), used for skyboxes here. |
+| `.bin` | 1 | Unclassified/raw binary blob. |
+
+## Structure
+
+**Files here (20):**
+
+- `001.sky` → `019.sky` (10 files, every 2)
+- `000.tpk` → `016.tpk` (9 files, every 2)
+
+Other files: `018.bin`
+
 ---
-#### [Go Back](../../index.md)
+[← Back to index](../index.md)

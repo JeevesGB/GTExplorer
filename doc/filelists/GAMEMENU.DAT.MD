@@ -1,21 +1,20 @@
 # GAMEMENU.DAT
-#### [Go Back](../../index.md)
-```
-    000.tim
-    001.tim
-    002.tim
-    003.tim
-    004.tim
-    005.tim
-    006.tim
-    007.tim
-    008.tim
-    009.tim
-    010.tim
-    011.tim
-    012.tim
-    013.tim
-    014.tim
-```
+
+[← Back to index](../index.md)
+
+`.tim` images for the main front-end menu screens (title, mode select, etc.).
+
+**15** files · **1** file types
+
+| Extension | Count | What it is |
+|---|---|---|
+| `.tim` | 15 | PlayStation TIM — a raw PS1 image/texture format. |
+
+## Structure
+
+**Files here (15):**
+
+- `000.tim` → `014.tim` (15 files)
+
 ---
-#### [Go Back](../../index.md)
+[← Back to index](../index.md)

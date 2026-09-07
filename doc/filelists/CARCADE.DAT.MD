@@ -1,86 +1,24 @@
 # CARCADE.DAT
-#### [Go Back](../../index.md)
-```
-    000.tex
-    001.car
-    002.tex
-    003.car
-    004.tex
-    005.car
-    006.tex
-    007.car
-    008.tex
-    009.car
-    010.tex
-    011.car
-    012.tex
-    013.car
-    014.tex
-    015.car
-    016.tex
-    017.car
-    018.tex
-    019.car
-    020.tex
-    021.car
-    022.tex
-    023.car
-    024.tex
-    025.car
-    026.tex
-    027.car
-    028.tex
-    029.car
-    030.tex
-    031.car
-    032.tex
-    033.car
-    034.tex
-    035.car
-    036.tex
-    037.car
-    038.tex
-    039.car
-    040.tex
-    041.car
-    042.tex
-    043.car
-    044.tex
-    045.car
-    046.tex
-    047.car
-    048.tex
-    049.car
-    050.tex
-    051.car
-    052.tex
-    053.car
-    054.tex
-    055.car
-    056.tex
-    057.car
-    058.tex
-    059.car
-    060.tex
-    061.car
-    062.tex
-    063.car
-    064.tex
-    065.car
-    066.tex
-    067.car
-    068.tex
-    069.car
-    070.tex
-    071.car
-    072.tex
-    073.car
-    074.tex
-    075.car
-    076.tex
-    077.car
-    078.tex
-    079.car
-```
+
+[← Back to index](../index.md)
+
+Cars available in Arcade mode, stored the same way as CAR.DAT (`.car` model + `.tex` texture) but addressed by numeric index rather than name, since Arcade mode only needs a fixed, small roster.
+
+**80** files · **2** file types
+
+| Extension | Count | What it is |
+|---|---|---|
+| `.tex` | 40 | Texture map for a `.car` model. |
+| `.car` | 40 | 3D car model/mesh. |
+
+## Structure
+
+<details><summary><b>Files here (80)</b> — click to expand</summary>
+
+- `001.car` → `079.car` (40 files, every 2)
+- `000.tex` → `078.tex` (40 files, every 2)
+
+</details>
+
 ---
-#### [Go Back](../../index.md)
+[← Back to index](../index.md)
