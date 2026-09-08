@@ -1,16 +1,18 @@
 """Interactive GT-CTEX palette / paint editor for car models.
 
-Layout: three-panel inspector (materials | preview+swatches | colour tools).
+Layout: two-panel inspector (materials | preview+swatches). Non-modal so the viewer can orbit.
 Live OpenGL preview via on_preview; optional material highlight via on_highlight.
 """
 from __future__ import annotations
 
-from pathlib import Path
+import threading
+
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QImage, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
+    QApplication,
     QAbstractItemView,
     QCheckBox,
     QColorDialog,
@@ -25,6 +27,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -48,6 +51,8 @@ from ..utils.ctex import (
     shift_clut_hue,
     write_clut,
     write_palette_set,
+    merge_modified_palettes,
+    companion_tex_names,
 )
 
 
@@ -174,9 +179,9 @@ class PaletteEditorDialog(QDialog):
         self._refill_paint_combo(colour_index)
         self.paint_combo.currentIndexChanged.connect(self._on_paint_changed)
         row.addWidget(self.paint_combo, stretch=1)
-        self.btn_dup = QPushButton("Duplicate")
+        self.btn_dup = QPushButton("New paint job")
         self.btn_dup.setProperty("class", "secondary")
-        self.btn_dup.setToolTip("Copy this paint to a new slot, then edit the copy")
+        self.btn_dup.setToolTip("Create a new paint job by copying the current one")
         self.btn_dup.clicked.connect(self._duplicate_paint)
         row.addWidget(self.btn_dup)
         root.addLayout(row)
@@ -255,84 +260,10 @@ class PaletteEditorDialog(QDialog):
         center_l.addWidget(materials_scroll, stretch=1)
         splitter.addWidget(center)
 
-        # ---- Right: colour tools (no persistent target bar) ----
-        right = QWidget()
-        right_l = QVBoxLayout(right)
-        right_l.setContentsMargins(0, 0, 0, 0)
-        right_l.setSpacing(10)
-        right_l.addWidget(QLabel("Colour tools"))
-
-        right_l.addWidget(QLabel("Strength"))
-        srow = QHBoxLayout()
-        self.strength = QSlider(Qt.Orientation.Horizontal)
-        self.strength.setObjectName("strengthSlider")
-        self.strength.setRange(20, 100)
-        self.strength.setValue(85)
-        self.strength.setToolTip("How strongly to push colours toward the chosen target")
-        srow.addWidget(self.strength, stretch=1)
-        self.lbl_strength = QLabel("85%")
-        self.lbl_strength.setMinimumWidth(36)
-        self.strength.valueChanged.connect(lambda v: self.lbl_strength.setText(f"{v}%"))
-        srow.addWidget(self.lbl_strength)
-        right_l.addLayout(srow)
-
-        self.spin_hue = QDoubleSpinBox()
-        self.spin_hue.setRange(-180, 180)
-        self.spin_hue.setDecimals(0)
-        self.spin_sat = QDoubleSpinBox()
-        self.spin_sat.setRange(0.0, 2.0)
-        self.spin_sat.setSingleStep(0.05)
-        self.spin_sat.setValue(1.0)
-        self.spin_val = QDoubleSpinBox()
-        self.spin_val.setRange(0.0, 2.0)
-        self.spin_val.setSingleStep(0.05)
-        self.spin_val.setValue(1.0)
-        hsv_grid = QGridLayout()
-        hsv_grid.setSpacing(6)
-        hsv_grid.addWidget(QLabel("Hue"), 0, 0)
-        hsv_grid.addWidget(self.spin_hue, 0, 1)
-        hsv_grid.addWidget(QLabel("Sat"), 1, 0)
-        hsv_grid.addWidget(self.spin_sat, 1, 1)
-        hsv_grid.addWidget(QLabel("Bright"), 2, 0)
-        hsv_grid.addWidget(self.spin_val, 2, 1)
-        right_l.addLayout(hsv_grid)
-
-        b1 = QPushButton("Shift selected")
-        b1.setProperty("class", "secondary")
-        b1.setToolTip("Apply hue/sat/bright to every material selected on the left.")
-        b1.clicked.connect(self._apply_hsv_selected)
-        right_l.addWidget(b1)
-        b2 = QPushButton("Shift all")
-        b2.setProperty("class", "secondary")
-        b2.clicked.connect(self._apply_hsv_all)
-        right_l.addWidget(b2)
-
-        self.btn_recolor_this = QPushButton("Recolour selected…")
-        self.btn_recolor_this.setProperty("class", "secondary")
-        self.btn_recolor_this.setToolTip(
-            "Pick a colour, then nudge every selected material toward it."
-        )
-        self.btn_recolor_this.clicked.connect(self._recolor_selected_materials)
-        right_l.addWidget(self.btn_recolor_this)
-
-        self.btn_recolor_body = QPushButton("Recolour whole car…")
-        self.btn_recolor_body.setObjectName("primaryAction")
-        self.btn_recolor_body.setDefault(True)
-        self.btn_recolor_body.setMinimumHeight(40)
-        self.btn_recolor_body.setToolTip(
-            "Pick a colour, then nudge every body material toward it together "
-            "so shading stays consistent across the car."
-        )
-        self.btn_recolor_body.clicked.connect(self._recolor_whole_car)
-        right_l.addWidget(self.btn_recolor_body)
-
-        right_l.addStretch(1)
-        splitter.addWidget(right)
-
+        # Two-panel layout (materials + swatches). Colour tools panel removed.
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 0)
-        splitter.setSizes([190, 360, 220])
+        splitter.setSizes([200, 520])
         root.addWidget(splitter, stretch=1)
 
         # Footer
@@ -346,24 +277,28 @@ class PaletteEditorDialog(QDialog):
         btn_reset.setProperty("class", "secondary")
         btn_reset.clicked.connect(self._reset)
         foot.addWidget(btn_reset)
-        btn_export = QPushButton("Export .tex…")
-        btn_export.setProperty("class", "secondary")
-        btn_export.clicked.connect(self._export)
-        foot.addWidget(btn_export)
-        btn_export_pal = QPushButton("Export palettes…")
-        btn_export_pal.setProperty("class", "secondary")
-        btn_export_pal.setToolTip(
-            "Dump palette0.bmp … palette15.bmp for the current paint job "
-            "(GT2TextureEditor / GT2ModelTool style)."
+        self.btn_add_colour = QPushButton("Add colour…")
+        self.btn_add_colour.setProperty("class", "secondary")
+        self.btn_add_colour.setToolTip(
+            "Pick a new colour and place it in the first empty slot of each "
+            "selected material (or the body materials if none are selected)."
         )
-        btn_export_pal.clicked.connect(self._export_palettes)
-        foot.addWidget(btn_export_pal)
-        self.btn_writeback = QPushButton("Save to archive")
+        self.btn_add_colour.clicked.connect(self._add_colour_to_selected)
+        foot.addWidget(self.btn_add_colour)
+        self.chk_sync_night = QCheckBox("Sync _night")
+        self.chk_sync_night.setChecked(True)
+        self.chk_sync_night.setToolTip(
+            "When saving, copy only the palettes you changed onto the "
+            "matching _night (or day) companion texture in the archive."
+        )
+        foot.addWidget(self.chk_sync_night)
+        self.btn_writeback = QPushButton("Save to .DAT")
         self.btn_writeback.setEnabled(
             self._tex_entry_index is not None and self._archive is not None
         )
         self.btn_writeback.setToolTip(
-            "Update texture in the open archive (memory). Repack to write a .DAT."
+            "Update this texture in the open archive (memory), then use "
+            "Repack to write a .DAT file."
         )
         self.btn_writeback.clicked.connect(self._write_into_archive)
         foot.addWidget(self.btn_writeback)
@@ -379,7 +314,18 @@ class PaletteEditorDialog(QDialog):
 
         QShortcut(QKeySequence("Ctrl+A"), self.clut_list, self._select_all_visible)
 
-        self.resize(820, 560)
+        self.resize(760, 560)
+        # Independent non-modal window so the OpenGL viewer can orbit / zoom
+        self.setModal(False)
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        self.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowCloseButtonHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         self._rebuild_clut_list(select_body=True)
         self._emit_preview_now()
         self._update_highlight()
@@ -770,7 +716,7 @@ class PaletteEditorDialog(QDialog):
         if target is None:
             return
         paint = self.current_paint()
-        strength = self.strength.value() / 100.0
+        strength = 0.85
         for ci in targets:
             cols = read_clut(self._data, paint, ci)
             new_cols = recolor_clut_towards(cols, target, strength=strength)
@@ -790,7 +736,7 @@ class PaletteEditorDialog(QDialog):
         if not targets:
             return
         paint = self.current_paint()
-        hue, sat, val = self.spin_hue.value(), self.spin_sat.value(), self.spin_val.value()
+        hue, sat, val = 0.0, 1.0, 1.0
         for ci in targets:
             cols = read_clut(self._data, paint, ci)
             new_cols = shift_clut_hue(cols, hue_deg=hue, sat_scale=sat, val_scale=val)
@@ -800,7 +746,7 @@ class PaletteEditorDialog(QDialog):
 
     def _apply_hsv_all(self) -> None:
         paint = self.current_paint()
-        hue, sat, val = self.spin_hue.value(), self.spin_sat.value(), self.spin_val.value()
+        hue, sat, val = 0.0, 1.0, 1.0
         cluts = read_palette_set(self._data, paint)
         new_cluts = [
             shift_clut_hue(c, hue_deg=hue, sat_scale=sat, val_scale=val) for c in cluts
@@ -809,17 +755,60 @@ class PaletteEditorDialog(QDialog):
         self._rebuild_clut_list()
         self._schedule_preview()
 
+    def _add_colour_to_selected(self) -> None:
+        """Pick a colour and write it into the first empty (transparent) CLUT slot."""
+        targets = self._selected_cluts()
+        if not targets:
+            # Fall back to body-ranked materials for current paint
+            try:
+                targets = rank_body_cluts(
+                    self._data, self.current_paint(), usage=self._usage
+                )[:6]
+            except Exception:
+                targets = list(range(16))
+        if not targets:
+            QMessageBox.information(self, "Add colour", "No materials available.")
+            return
+        dlg = QColorDialog(self)
+        dlg.setWindowTitle("New colour")
+        dlg.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, False)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        col = _rgba(dlg.currentColor())
+        col = (col[0], col[1], col[2], 255)
+        paint = self.current_paint()
+        filled = 0
+        for ci in targets:
+            cols = list(read_clut(self._data, paint, ci))
+            # Prefer index > 0 so we don't overwrite the transparent key colour
+            slot = None
+            for i in range(1, len(cols)):
+                r, g, b, a = cols[i][:4]
+                if a < 8 or (r < 8 and g < 8 and b < 8 and a < 32):
+                    slot = i
+                    break
+            if slot is None:
+                # All slots used — replace last shade
+                slot = len(cols) - 1 if len(cols) > 1 else 0
+            cols[slot] = col
+            self._data = write_clut(self._data, cols, paint, ci)
+            filled += 1
+        self._rebuild_clut_list()
+        self._schedule_preview()
+        if hasattr(self, "status_label"):
+            pass
+        # brief feedback via body hint
+        self.lbl_body.setText(
+            f"Added colour to {filled} material(s) — click a swatch to fine-tune."
+        )
+
     def _duplicate_paint(self) -> None:
         try:
             src = self.current_paint()
             self._data = duplicate_palette_set(self._data, src)
-            base = (
-                self._colour_names[src]
-                if src < len(self._colour_names)
-                else f"Colour {src + 1}"
-            )
-            self._colour_names.append(f"{base} (custom)")
             new_idx = ctex_palette_count(self._data) - 1
+            # Sequential name: Colour 4 after Colour 3, not "Colour 3 (custom)"
+            self._colour_names.append(f"Colour {new_idx + 1}")
             self._refill_paint_combo(new_idx)
             self._rebuild_clut_list(select_body=True)
             self._schedule_preview()
@@ -873,58 +862,217 @@ class PaletteEditorDialog(QDialog):
         if self._archive is None or self._tex_entry_index is None:
             QMessageBox.information(
                 self,
-                "Write into archive",
-                "No companion CTEX entry is linked. Export .tex and replace the file manually.",
+                "Save to .DAT",
+                "No CTEX entry is linked in the open archive.",
             )
             return
         try:
+            from pathlib import Path as _Path
+            from ..utils.archive import GTArc
+
             data = bytes(self._data)
-            idx = self._tex_entry_index
+            idx = int(self._tex_entry_index)
             f = self._archive.files[idx]
             f["data"] = data
             f["decomp_size"] = len(data)
             f["_dirty"] = True
-            # Keep original comp_size (slot size) when known — do not set equal to decomp.
+            # Keep original comp_size (slot size) when known
 
-            # Prefer in-place patch of the open .DAT so other entries stay identical.
             path = getattr(self._archive, "path", None)
             kind = getattr(self._archive, "kind", None)
-            if path and kind == "gtarc" and Path(path).is_file():
-                try:
-                    from ..utils.archive import GTArc
-                    result = GTArc.patch_file_entry(path, idx, data)
-                    f["comp_size"] = result["slot_size"]
-                    QMessageBox.information(
-                        self,
-                        "Saved in place",
-                        f"Patched entry {idx} inside:\n{path}\n\n"
-                        f"Compressed {result['comp_size']} / slot {result['slot_size']} bytes.\n"
-                        f"File size unchanged ({result['file_size']}).\n\n"
-                        "Safe to put back on the disc (size matches).",
+            if not (path and kind == "gtarc" and _Path(path).is_file()):
+                QMessageBox.information(
+                    self,
+                    "Save to .DAT",
+                    f"Updated entry {idx} in memory.\n"
+                    "Original DAT path unavailable for in-place patch.",
+                )
+                self._emit_preview_now()
+                return
+
+            # Optional night sync first (marks companion dirty in memory)
+            sync_line = ""
+            if getattr(self, "chk_sync_night", None) is not None and self.chk_sync_night.isChecked():
+                sync_line = self._prepare_night_companion(data)
+
+            used_preserving = False
+            try:
+                result = GTArc.patch_file_entry(path, idx, data)
+                f["comp_size"] = result["slot_size"]
+                # Patch companion on disk if prepared
+                if sync_line and sync_line.startswith("READY:"):
+                    # format READY:idx
+                    cidx = int(sync_line.split(":", 1)[1])
+                    cent = self._archive.files[cidx]
+                    cres = GTArc.patch_file_entry(path, cidx, bytes(cent["data"]))
+                    cent["comp_size"] = cres["slot_size"]
+                    sync_line = (
+                        f"Also patched companion entry {cidx} "
+                        f"({cres['comp_size']}/{cres['slot_size']} bytes)."
                     )
-                    self._emit_preview_now()
-                    return
-                except ValueError as e:
-                    # Slot too small — fall through to memory-only + user must rebuild
+            except ValueError:
+                # Slot too small (e.g. new paint job grew the CTEX) —
+                # rebuild archive keeping every other entry byte-identical.
+                used_preserving = True
+                try:
+                    # Ensure primary + companion are dirty
+                    f["_dirty"] = True
+                    out = self._archive.save_preserving(
+                        path,
+                        compress_level=9,
+                        pad_to_size=len(self._archive.raw),
+                    )
+                    result = {
+                        "path": out,
+                        "index": idx,
+                        "comp_size": f.get("comp_size"),
+                        "slot_size": f.get("comp_size"),
+                        "file_size": _Path(out).stat().st_size,
+                    }
+                    if sync_line and sync_line.startswith("READY:"):
+                        sync_line = "Companion included in preserving rebuild."
+                except Exception as e2:
                     QMessageBox.warning(
                         self,
-                        "In-place save failed",
-                        f"{e}\n\nEntry updated in memory only. "
-                        "Use Save preserving / Repack carefully.",
+                        "Save failed",
+                        f"In-place slot too small, and preserving rebuild failed:\n{e2}",
                     )
-                except Exception as e:
-                    QMessageBox.warning(self, "In-place save failed", str(e))
+                    return
+            except Exception as e:
+                QMessageBox.warning(self, "In-place save failed", str(e))
+                return
 
+            self._original = data
+            try:
+                self._archive.raw = _Path(path).read_bytes()
+            except Exception:
+                pass
+
+            if used_preserving:
+                msg = (
+                    f"Slot was too small for in-place write (texture grew).\n"
+                    f"Rebuilt archive preserving all other entries:\n{path}\n\n"
+                    f"File size: {result['file_size']} bytes.\n"
+                    "Other cars unchanged; only edited textures recompressed."
+                )
+            else:
+                msg = (
+                    f"Patched entry {idx} inside:\n{path}\n\n"
+                    f"Compressed {result['comp_size']} / slot {result['slot_size']} bytes.\n"
+                    f"File size unchanged ({result['file_size']}).\n\n"
+                    "Safe to put back on the disc (size matches)."
+                )
+            if sync_line and not sync_line.startswith("READY:"):
+                msg += "\n\n" + sync_line
             QMessageBox.information(
                 self,
-                "Write into archive",
-                f"Updated entry {idx} in memory.\n"
-                "Original DAT path unavailable for in-place patch — "
-                "export the .tex or use a preserving save.",
+                "Saved in place" if not used_preserving else "Saved (preserving rebuild)",
+                msg,
             )
             self._emit_preview_now()
         except Exception as e:
-            QMessageBox.warning(self, "Write failed", str(e))
+            QMessageBox.warning(self, "Save failed", str(e))
+
+    def _prepare_night_companion(self, edited: bytes) -> str:
+        """Merge modified CLUTs into companion in memory; return READY:idx or status."""
+        ent = self._find_companion_entry()
+        if ent is None:
+            return "No _night / day companion texture found in the archive."
+        try:
+            idx = int(ent["index"])
+            if ent.get("data") is not None:
+                target = bytes(ent["data"])
+            else:
+                target = self._archive.get_data(idx)
+            merged, applied = merge_modified_palettes(
+                edited, bytes(self._original), target
+            )
+        except Exception as e:
+            return f"Companion merge failed: {e}"
+        if not applied:
+            return (
+                f"Companion {self._entry_label(ent) or idx}: "
+                "no palette changes to copy."
+            )
+        ent["data"] = merged
+        ent["decomp_size"] = len(merged)
+        ent["_dirty"] = True
+        return f"READY:{idx}"
+
+    def _entry_label(self, entry: dict) -> str:
+        for key in ("real_name", "label", "name", "path"):
+            v = entry.get(key)
+            if v:
+                return str(v)
+        return ""
+
+    def _find_companion_entry(self):
+        """Find day/night companion CTEX in the open archive by filename."""
+        if self._archive is None or self._tex_entry_index is None:
+            return None
+        try:
+            cur = self._archive.files[self._tex_entry_index]
+        except Exception:
+            return None
+        label = self._entry_label(cur) or (self._name or "")
+        if not label:
+            return None
+        candidates = list(companion_tex_names(label))
+        if self._name:
+            for n in companion_tex_names(self._name):
+                if n not in candidates:
+                    candidates.append(n)
+        by_name = {}
+        for ent in self._archive.files:
+            nm = self._entry_label(ent)
+            if not nm:
+                continue
+            base = nm.replace("\\", "/").split("/")[-1].lower()
+            by_name[base] = ent
+            if base.startswith("_"):
+                by_name[base[1:]] = ent
+            else:
+                by_name["_" + base] = ent
+        for cand in candidates:
+            key = cand.replace("\\", "/").split("/")[-1].lower()
+            ent = by_name.get(key)
+            if ent is not None and int(ent.get("index", -1)) != int(self._tex_entry_index):
+                return ent
+        return None
+
+    def _sync_night_companion(self, edited: bytes) -> str:
+        """Copy only modified CLUTs into the day/night companion texture."""
+        ent = self._find_companion_entry()
+        if ent is None:
+            return "No _night / day companion texture found in the archive."
+        try:
+            idx = int(ent["index"])
+            if ent.get("data") is not None:
+                target = bytes(ent["data"])
+            else:
+                target = self._archive.get_data(idx)
+        except Exception as e:
+            return f"Could not read companion: {e}"
+        try:
+            merged, applied = merge_modified_palettes(
+                edited, bytes(self._original), target
+            )
+        except Exception as e:
+            return f"Companion merge failed: {e}"
+        if not applied:
+            return (
+                f"Companion {self._entry_label(ent) or idx}: "
+                "no palette changes to copy."
+            )
+        ent["data"] = merged
+        ent["decomp_size"] = len(merged)
+        ent["comp_size"] = len(merged)
+        paints = sorted({pi for pi, _ci in applied})
+        return (
+            f"Synced {len(applied)} CLUT(s) on paint(s) "
+            f"{', '.join(str(p + 1) for p in paints)} → "
+            f"{self._entry_label(ent) or idx}"
+        )
 
     def _reset(self) -> None:
         self._data = bytearray(self._original)
@@ -1048,6 +1196,14 @@ def open_palette_editor(win) -> None:
 
     car_model = getattr(win, "_car_model", None)
     lod_index = int(getattr(win, "_car_lod_index", 0) or 0)
+    # Close any previous non-modal editor
+    prev = getattr(win, "_palette_dialog", None)
+    if prev is not None:
+        try:
+            prev.close()
+        except Exception:
+            pass
+
     dlg = PaletteEditorDialog(
         tex,
         parent=win,
@@ -1060,13 +1216,21 @@ def open_palette_editor(win) -> None:
         car_model=car_model,
         lod_index=lod_index,
     )
-    result = dlg.exec()
-    win._palette_highlight = None
-    if result == QDialog.DialogCode.Accepted:
-        on_preview(dlg.result_data())
-        if hasattr(win, "status_label"):
-            win.status_label.setText(
-                "Custom colours applied — Export .tex / palettes or Save to archive, then repack."
-            )
-    else:
-        on_preview(bytes(dlg._original))
+    win._palette_dialog = dlg
+
+    def _on_finished(result: int) -> None:
+        win._palette_highlight = None
+        win._palette_dialog = None
+        if result == int(QDialog.DialogCode.Accepted):
+            on_preview(dlg.result_data())
+            if hasattr(win, "status_label"):
+                win.status_label.setText(
+                    "Custom colours applied — use Save to .DAT, then Repack."
+                )
+        else:
+            on_preview(bytes(dlg._original))
+
+    dlg.finished.connect(_on_finished)
+    dlg.show()
+    dlg.raise_()
+    dlg.activateWindow()

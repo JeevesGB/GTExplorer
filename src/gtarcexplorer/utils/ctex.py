@@ -49,7 +49,6 @@ def _bgr555(c: int) -> RGBA:
 
 
 def rgba_to_bgr555(r: int, g: int, b: int, a: int = 255) -> int:
-    """Pack 8-bit RGBA into PS1 BGR555. Fully transparent / black → 0."""
     if a < 8 and r < 8 and g < 8 and b < 8:
         return 0
     r5 = max(0, min(31, (int(r) + 4) >> 3))
@@ -91,7 +90,6 @@ def write_clut(
     palette_index: int = 0,
     clut_index: int = 0,
 ) -> bytearray:
-    """Return a mutable copy of *data* with one CLUT replaced."""
     buf = bytearray(data)
     hdr = parse_ctex_header(buf)
     n = max(1, hdr["palette_count"])
@@ -130,9 +128,7 @@ def duplicate_palette_set(
     data: bytes,
     source_index: int = 0,
 ) -> bytearray:
-    """
-    Append a copy of *source_index* as a new paint job and bump palette_count.
-    """
+
     hdr = parse_ctex_header(data)
     n = max(1, hdr["palette_count"])
     source_index = max(0, min(source_index, n - 1))
@@ -164,7 +160,6 @@ def shift_clut_hue(
     val_scale: float = 1.0,
     skip_index0: bool = True,
 ) -> List[RGBA]:
-    """Simple HSV adjust; keeps index 0 transparent by default."""
     import colorsys
 
     out: List[RGBA] = []
@@ -217,7 +212,6 @@ def decode_ctex(data: bytes, palette_index: int = 0, clut_index: int = 0):
 
 
 def score_clut_as_body(colours: Sequence[RGBA]) -> float:
-    """Higher = more likely a body/paint CLUT (saturated mid-tones, not mono)."""
     import colorsys
     vals = []
     sats = []
@@ -244,7 +238,6 @@ def score_clut_as_body(colours: Sequence[RGBA]) -> float:
 
 
 def collect_palette_usage(model, lod_index: int = 0) -> dict:
-    """Map CLUT/palette_index → face count from a GTCarModel (LOD0 by default)."""
     usage = {i: 0 for i in range(16)}
     if model is None:
         return usage
@@ -265,12 +258,6 @@ def rank_body_cluts(
     top: int = 4,
     usage: dict | None = None,
 ) -> List[int]:
-    """
-    Return CLUT indices most likely used for body paint, best first.
-
-    When *usage* maps clut_index → face count from the car mesh, mesh usage
-    dominates (a saturated unused CLUT is not body paint on that car).
-    """
     import math
     scored = []
     usage = usage or {}
@@ -313,10 +300,6 @@ def recolor_clut_towards(
     skip_index0: bool = True,
     keep_value: bool = True,
 ) -> List[RGBA]:
-    """
-    Pull non-transparent colours toward *target_rgb*.
-    If keep_value, preserve relative brightness so shading survives.
-    """
     import colorsys
     strength = max(0.0, min(1.0, float(strength)))
     tr, tg, tb = [c / 255.0 for c in target_rgb[:3]]
@@ -403,3 +386,102 @@ def export_palettes_as_bmp(
         im.save(path, format="BMP")
         written.append(str(path))
     return written
+
+
+def iter_modified_cluts(
+    original: bytes,
+    edited: bytes,
+) -> List[Tuple[int, int]]:
+    n_old = ctex_palette_count(original) if len(original) >= PAL_OFF else 0
+    n_new = ctex_palette_count(edited) if len(edited) >= PAL_OFF else 0
+    changed: List[Tuple[int, int]] = []
+    for pi in range(max(n_old, n_new)):
+        for ci in range(16):
+            off = _clut_offset(pi, ci)
+            old = original[off: off + CLUT_SIZE] if off + CLUT_SIZE <= len(original) else b""
+            new = edited[off: off + CLUT_SIZE] if off + CLUT_SIZE <= len(edited) else b""
+            if old != new:
+                changed.append((pi, ci))
+    return changed
+
+
+def merge_modified_palettes(
+    source_edited: bytes,
+    source_original: bytes,
+    target: bytes,
+) -> tuple:
+    if not target.startswith(b"@(#)GT-CTEX"):
+        raise ValueError("Target is not GT-CTEX")
+    changed = iter_modified_cluts(source_original, source_edited)
+    if not changed:
+        return bytes(target), []
+
+    buf = bytearray(target)
+    n_tgt = ctex_palette_count(target)
+    n_src = ctex_palette_count(source_edited)
+    applied: List[Tuple[int, int]] = []
+
+    # Grow target paint count if source gained new paint jobs
+    if n_src > n_tgt:
+        need = PAL_OFF + n_src * PAL_STRIDE
+        if len(buf) < need:
+            buf.extend(b"\0" * (need - len(buf)))
+        # Copy full new paint sets from edited source for brand-new indices
+        for pi in range(n_tgt, n_src):
+            src_off = PAL_OFF + pi * PAL_STRIDE
+            dst_off = PAL_OFF + pi * PAL_STRIDE
+            chunk = source_edited[src_off: src_off + PAL_STRIDE]
+            if len(chunk) < PAL_STRIDE:
+                chunk = chunk + b"\0" * (PAL_STRIDE - len(chunk))
+            buf[dst_off: dst_off + PAL_STRIDE] = chunk
+        struct.pack_into("<H", buf, 0x0E, n_src)
+        n_tgt = n_src
+
+    for pi, ci in changed:
+        if pi >= n_tgt:
+            continue
+        off = _clut_offset(pi, ci)
+        src = source_edited[off: off + CLUT_SIZE]
+        if len(src) < CLUT_SIZE:
+            continue
+        if off + CLUT_SIZE > len(buf):
+            buf.extend(b"\0" * (off + CLUT_SIZE - len(buf)))
+        buf[off: off + CLUT_SIZE] = src
+        applied.append((pi, ci))
+
+    return bytes(buf), applied
+
+
+def companion_tex_names(name: str) -> List[str]:
+    base = name.replace("\\", "/").split("/")[-1]
+    lower = base.lower()
+    stem = base
+    ext = ""
+    if "." in base:
+        stem, ext = base.rsplit(".", 1)
+        ext = "." + ext
+    out: List[str] = []
+    if stem.lower().endswith("_night"):
+        day = stem[: -len("_night")] + ext
+        out.append(day)
+        # also without leading underscore variants
+        if day.startswith("_"):
+            out.append(day[1:])
+        else:
+            out.append("_" + day)
+    else:
+        night = stem + "_night" + ext
+        out.append(night)
+        if night.startswith("_"):
+            out.append(night[1:])
+        else:
+            out.append("_" + night)
+    # unique preserve order
+    seen = set()
+    uniq = []
+    for n in out:
+        k = n.lower()
+        if k not in seen:
+            seen.add(k)
+            uniq.append(n)
+    return uniq

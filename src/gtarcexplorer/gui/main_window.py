@@ -93,7 +93,7 @@ class GTArcExplorer(QMainWindow):
         self._load_car_names()
 
         self._viewer_image = None
-        self._viewer_scale = 0.5
+        self._viewer_scale = 1.0
         self._pack_tims = []
         self._model_verts = []
         self._ctex_data = None
@@ -1181,9 +1181,6 @@ class GTArcExplorer(QMainWindow):
 
     def show_slt_in_viewer(self, data, label=""):
         viewer.show_slt_in_viewer(self, data, label)
-
-    def show_gthtml_in_viewer(self, data, label=""):
-        viewer.show_gthtml_in_viewer(self, data, label)
 
     def ctex_shift_clut(self, delta):
         # When a multi-colour car is shown, Pal +/- steps paint colour

@@ -1,3 +1,6 @@
+"""
+Save Editor canvas — PS1 memory cards (DuckStation .mcd) and GT saves.
+"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,6 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTableView, QTextEdit,
     QLineEdit, QLabel, QPushButton, QAbstractItemView, QFrame, QHeaderView,
     QMessageBox, QFileDialog, QFormLayout, QGroupBox, QTabWidget,
+    QSpinBox, QComboBox, QScrollArea, QGridLayout,
 )
 
 from ..utils.memcard import (
@@ -19,6 +23,10 @@ from ..utils.memcard import (
 from ..utils.replay import (
     is_replay_save, parse_replay_save, set_entry_name, set_save_title,
     set_icon_frames, NAME_MAX,
+)
+from ..utils.gt1_save import (
+    is_gt1_game_data, parse_gt1_progress, apply_progress, Gt1Progress,
+    medal_name, LICENSE_TEST_LABELS, LICENSE_MEDAL_COUNT, MEDAL_NAMES,
 )
 
 
@@ -148,6 +156,7 @@ class ReplayEntryModel(QAbstractTableModel):
 
 
 class SaveEditorWidget(QWidget):
+    """Canvas: DuckStation .mcd memory cards + standalone SC / REPLAY saves."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -156,6 +165,9 @@ class SaveEditorWidget(QWidget):
         self._mode: str = ""  # "mcd" | "sc" | "replay"
         self._mc: Optional[MemCard] = None
         self._dirty = False
+        self._slot_payload: bytes = b""  # selected GT1 SC payload when editing progress
+        self._progress: Optional[Gt1Progress] = None
+        self._active_slot_index: int = -1
         self._slot_model = SlotTableModel(self)
         self._replay_model = ReplayEntryModel(self)
         self._build_ui()
@@ -167,7 +179,7 @@ class SaveEditorWidget(QWidget):
         root.setSpacing(6)
 
         bar = QHBoxLayout()
-        title = QLabel("Save File Display")
+        title = QLabel("Save Editor")
         f = QFont(); f.setPointSize(11); f.setBold(True)
         title.setFont(f)
         bar.addWidget(title)
@@ -220,6 +232,51 @@ class SaveEditorWidget(QWidget):
         form.addRow("Info", self.info_label)
         ll.addWidget(meta)
 
+        # Progress / Licenses (GT1 game data) — GT4SaveEditor-style panels
+        self.progress_box = QGroupBox("GT Mode progress")
+        pf = QFormLayout(self.progress_box)
+        self.credits_spin = QSpinBox()
+        self.credits_spin.setRange(0, 2_000_000_000)
+        self.credits_spin.setSingleStep(1000)
+        self.credits_spin.setGroupSeparatorShown(True)
+        self.credits_spin.valueChanged.connect(self._on_progress_edited)
+        pf.addRow("Credits", self.credits_spin)
+        self.days_spin = QSpinBox()
+        self.days_spin.setRange(0, 99999)
+        self.days_spin.valueChanged.connect(self._on_progress_edited)
+        pf.addRow("Days passed", self.days_spin)
+        self.garage_note = QLabel("")
+        self.garage_note.setWordWrap(True)
+        self.garage_note.setStyleSheet("color: #888;")
+        pf.addRow(self.garage_note)
+        btn_row = QHBoxLayout()
+        self.btn_max_credits = QPushButton("Max credits")
+        self.btn_max_credits.clicked.connect(lambda: self.credits_spin.setValue(999_999_999))
+        self.btn_all_gold = QPushButton("All license gold")
+        self.btn_all_gold.clicked.connect(self._all_license_gold)
+        btn_row.addWidget(self.btn_max_credits)
+        btn_row.addWidget(self.btn_all_gold)
+        pf.addRow(btn_row)
+        ll.addWidget(self.progress_box)
+
+        self.license_box = QGroupBox("License tests")
+        lic_lay = QVBoxLayout(self.license_box)
+        self.license_combos = []
+        grid = QGridLayout()
+        for i, label in enumerate(LICENSE_TEST_LABELS[:LICENSE_MEDAL_COUNT]):
+            grid.addWidget(QLabel(label), i, 0)
+            cb = QComboBox()
+            for val, name in MEDAL_NAMES.items():
+                cb.addItem(name, val)
+            cb.currentIndexChanged.connect(self._on_progress_edited)
+            self.license_combos.append(cb)
+            grid.addWidget(cb, i, 1)
+        lic_lay.addLayout(grid)
+        hint = QLabel("Medal values: none / bronze / silver / gold (best-effort test names)")
+        hint.setStyleSheet("color: #888;")
+        lic_lay.addWidget(hint)
+        ll.addWidget(self.license_box)
+
         self.table = QTableView()
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
@@ -252,6 +309,9 @@ class SaveEditorWidget(QWidget):
         root.addWidget(self.status)
         self._set_actions(False)
 
+        self.progress_box.setEnabled(False)
+        self.license_box.setEnabled(False)
+
     def _set_actions(self, on: bool):
         for b in (self.btn_backup, self.btn_save, self.btn_save_as, self.btn_reload, self.btn_export):
             b.setEnabled(on)
@@ -264,6 +324,8 @@ class SaveEditorWidget(QWidget):
         self._mode = ""
         self._mc = None
         self._dirty = False
+        if hasattr(self, "progress_box"):
+            self._clear_progress_ui()
         self.dirty_label.setText("")
         self.path_label.setText("")
         self.mode_label.setText("")
@@ -360,6 +422,8 @@ class SaveEditorWidget(QWidget):
             f"This is GT game data (garage/progress), not a replay list.\n"
             f"Header hex:\n{data[:0x60].hex(' ')}"
         )
+        if is_gt1_game_data(data):
+            self._load_progress_from_payload(data, -1)
         self._set_actions(True)
         self.btn_export.setEnabled(False)
         self.status.setText(f"SC save — {title_s}")
@@ -438,6 +502,14 @@ class SaveEditorWidget(QWidget):
                     lines.append(f"Replay parse: {ex}")
             else:
                 lines.append("Type: GT game data / other SC save (not REPLAY list)")
+            if is_gt1_game_data(payload):
+                self._load_progress_from_payload(payload, s.index)
+                lines.append("")
+                lines.append("GT Mode progress loaded — edit Credits / Days / Licenses above.")
+            else:
+                self._clear_progress_ui()
+        else:
+            self._clear_progress_ui()
         self.detail.setPlainText("\n".join(lines))
 
     def _on_replay_select(self, *_):
@@ -506,7 +578,96 @@ class SaveEditorWidget(QWidget):
 
     # ----- file ops -----
 
+
+    def _clear_progress_ui(self):
+        self._slot_payload = b""
+        self._progress = None
+        self._active_slot_index = -1
+        self.credits_spin.blockSignals(True)
+        self.days_spin.blockSignals(True)
+        self.credits_spin.setValue(0)
+        self.days_spin.setValue(0)
+        self.credits_spin.blockSignals(False)
+        self.days_spin.blockSignals(False)
+        for cb in self.license_combos:
+            cb.blockSignals(True)
+            cb.setCurrentIndex(0)
+            cb.blockSignals(False)
+        self.garage_note.setText("")
+        self.progress_box.setEnabled(False)
+        self.license_box.setEnabled(False)
+
+    def _load_progress_from_payload(self, payload: bytes, slot_index: int):
+        try:
+            prog = parse_gt1_progress(payload)
+        except Exception as e:
+            self.garage_note.setText(f"Progress parse failed: {e}")
+            return
+        self._slot_payload = payload
+        self._progress = prog
+        self._active_slot_index = slot_index
+        self.credits_spin.blockSignals(True)
+        self.days_spin.blockSignals(True)
+        self.credits_spin.setValue(min(prog.credits, self.credits_spin.maximum()))
+        self.days_spin.setValue(min(prog.days, self.days_spin.maximum()))
+        self.credits_spin.blockSignals(False)
+        self.days_spin.blockSignals(False)
+        for i, cb in enumerate(self.license_combos):
+            cb.blockSignals(True)
+            val = prog.license_medals[i] if i < len(prog.license_medals) else 0
+            idx = cb.findData(val)
+            cb.setCurrentIndex(idx if idx >= 0 else 0)
+            cb.blockSignals(False)
+        self.garage_note.setText(prog.garage_note)
+        self.progress_box.setEnabled(True)
+        self.license_box.setEnabled(True)
+
+    def _on_progress_edited(self, *_):
+        if not self._slot_payload or self._progress is None:
+            return
+        self._progress.credits = self.credits_spin.value()
+        self._progress.days = self.days_spin.value()
+        medals = []
+        for cb in self.license_combos:
+            medals.append(int(cb.currentData()))
+        self._progress.license_medals = medals
+        self._slot_payload = apply_progress(self._slot_payload, self._progress)
+        self._sync_payload_into_raw()
+        self._mark_dirty()
+
+    def _all_license_gold(self):
+        for cb in self.license_combos:
+            cb.blockSignals(True)
+            cb.setCurrentIndex(cb.findData(3))
+            cb.blockSignals(False)
+        self._on_progress_edited()
+
+    def _sync_payload_into_raw(self):
+        """Write edited SC payload back into the memory-card image or standalone raw."""
+        if not self._slot_payload:
+            return
+        if self._mode == "mcd" and self._mc and self._active_slot_index >= 0:
+            s = self._mc.slots[self._active_slot_index]
+            if not s.blocks:
+                return
+            data = bytearray(self._raw)
+            payload = self._slot_payload
+            # write consecutive blocks
+            offset = 0
+            for b in s.blocks:
+                boff = b * BLOCK_SIZE
+                chunk = payload[offset: offset + BLOCK_SIZE]
+                if len(chunk) < BLOCK_SIZE:
+                    chunk = chunk + bytes(BLOCK_SIZE - len(chunk))
+                data[boff: boff + BLOCK_SIZE] = chunk[:BLOCK_SIZE]
+                offset += BLOCK_SIZE
+            self._raw = bytes(data)
+            self._mc = parse_memcard(self._raw, str(self._path) if self._path else None)
+        elif self._mode == "sc":
+            self._raw = self._slot_payload
+
     def _open_file(self):
+
         path, _ = QFileDialog.getOpenFileName(
             self, "Open save / memory card", "",
             "Memory card / save (*.mcd *.MCD *.dat *.DAT *.mcr *.MCR);;All (*.*)",
