@@ -183,8 +183,18 @@ tools/
 
 ## Credits
 
-- [pez2k / gt2tools](https://github.com/pez2k/gt2tools) — prior research into GT1 files
-- [Lameguy64 / mkpsxiso](https://github.com/Lameguy64/mkpsxiso) — optional disc dump & rebuild
+- [pez2k / gt2tools](https://github.com/pez2k/gt2tools) — foundational prior research into GT1's archive and asset formats, without which much of GTExplorer's format support would not have been possible.
+
+- [Lameguy64 / mkpsxiso](https://github.com/Lameguy64/mkpsxiso) — provides the `dumpsxiso` / `mkpsxiso` tools GTExplorer wraps for optional disc dumping and rebuilding.
+
+- The Gran Turismo modding and PS1 reverse-engineering community — for ongoing research, testing, and format documentation that continues to inform this project. Many of GT1's file formats are still being actively researched; see [Contributing](CONTRIBUTING.md) if you'd like to help.
+
+
+---
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, coding guidelines, and a list of areas that need help (see [Known Limitations](#known-limitations) above for good starting points).
 
 ---
 
