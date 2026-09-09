@@ -1,6 +1,7 @@
-1tools/
-2old/
-3TESTING/
+# --- Project-specific ---
+tools/
+old/
+TESTING/
 build
 dist
 GTExplorer.spec
@@ -8,15 +9,15 @@ build.bat
 src++
 release
 dumpsxiso.exe
-mkpsxiso.exe 
+mkpsxiso.exe
 doc/GTPS_RESEARCH.md
-scripts 
+scripts
 suggested.txt
 menu_img_suggested.txt
 EXTRACTED
-ORIGINAL FILES 
-Modified Disks 
-Disk 
+ORIGINAL FILES
+Modified Disks
+Disk
 user_paths.json
 todo.txt
 src.zip
@@ -24,5 +25,48 @@ exe.bat
 debug_palette_editor.py
 old_gl_viewer.py
 CARINF-CSV
-GTExplorer 
+GTExplorer
 test.bat
+2old
+3TESTING
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging / build artifacts
+*.egg-info/
+.eggs/
+wheels/
+*.egg
+pip-wheel-metadata/
+
+# --- PyInstaller (build.bat / GTExplorer.spec use this) ---
+*.manifest
+
+# --- Testing / coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs ---
+*.log

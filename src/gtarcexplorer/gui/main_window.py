@@ -65,6 +65,7 @@ CANVAS_STRUCTURE = 1
 CANVAS_VIEWER = 2
 CANVAS_CAR_DB = 3
 CANVAS_SAVE_EDITOR = 4
+CANVAS_MENU = 5
 
 class GTArcExplorer(QMainWindow):
     progress_signal = pyqtSignal(int, int)
@@ -309,6 +310,7 @@ class GTArcExplorer(QMainWindow):
         self.act_car_database = QAction("Car Database…", self)
         self.act_car_database.setToolTip("Browse SPEC car data and joined upgrade parts from CARINF")
         self.act_save_editor = QAction("Save Editor…", self)
+        self.act_menu_editor = QAction("Menu Editor…", self)
         self.act_save_editor.setToolTip("Edit GT1 REPLAY.DAT / PS1 memory-card saves")
 
         menubar = self.menuBar()
@@ -353,13 +355,28 @@ class GTArcExplorer(QMainWindow):
         m_tools.addSeparator()
         m_tools.addAction(self.act_export_car_obj)
         m_tools.addAction(self.act_car_database)
+        m_tools.addAction(self.act_menu_editor)
         m_tools.addAction(self.act_save_editor)
+        # menu editor action wired below
 
         m_view = menubar.addMenu("&View")
         m_view.addAction(self.act_theme)
         self.act_log = QAction("Show log", self)
         self.act_log.setCheckable(True)
         m_view.addAction(self.act_log)
+        m_view.addSeparator()
+        self.act_view_preview = QAction("Preview", self)
+        self.act_view_structure = QAction("Extracted structure", self)
+        self.act_view_viewer = QAction("Asset viewer", self)
+        self.act_view_car_db = QAction("Car Database", self)
+        self.act_view_save = QAction("Save Editor", self)
+        self.act_view_menu = QAction("Menu Editor", self)
+        m_view.addAction(self.act_view_preview)
+        m_view.addAction(self.act_view_structure)
+        m_view.addAction(self.act_view_viewer)
+        m_view.addAction(self.act_view_car_db)
+        m_view.addAction(self.act_view_save)
+        m_view.addAction(self.act_view_menu)
 
         self.act_user_guide = QAction("User Guide", self)
         self.act_user_guide.setShortcut(QKeySequence("F1"))
@@ -420,6 +437,7 @@ class GTArcExplorer(QMainWindow):
             ("Asset viewer",        "viewer",    style.StandardPixmap.SP_DesktopIcon),
             ("Car Database",        "db",        style.StandardPixmap.SP_FileDialogListView),
             ("Save Editor",         "save",      style.StandardPixmap.SP_DialogSaveButton),
+            ("Menu Editor",         "menu",      style.StandardPixmap.SP_DirHomeIcon),
         ]
         for i, (tip, icon_name, fallback) in enumerate(rail_defs):
             btn = QToolButton()
@@ -723,6 +741,12 @@ class GTArcExplorer(QMainWindow):
         self.save_editor_page = SaveEditorWidget()
         self.canvas_stack.addWidget(self.save_editor_page)
 
+        # Menu Editor canvas page
+        from .menu_editor import MenuEditorWidget
+        self.menu_editor_page = MenuEditorWidget()
+        self.menu_editor_page.set_reload_callback(self._load_menu_editor)
+        self.canvas_stack.addWidget(self.menu_editor_page)
+
         left.setMinimumWidth(280)
         canvas_container.setMinimumWidth(280)
         self.main_splitter.setCollapsible(0, False)
@@ -764,6 +788,8 @@ class GTArcExplorer(QMainWindow):
             self._load_car_database()
         if idx == CANVAS_SAVE_EDITOR:
             self._load_save_editor()
+        if idx == CANVAS_MENU:
+            self._load_menu_editor()
 
     def _restore_geometry(self):
         geo = self.settings.value("geometry")
@@ -817,6 +843,13 @@ class GTArcExplorer(QMainWindow):
         self.act_batch_tim.triggered.connect(self.batch_convert_folder)
         self.act_export_car_obj.triggered.connect(self.export_car_obj)
         self.act_car_database.triggered.connect(self.open_car_database)
+        self.act_menu_editor.triggered.connect(self.open_menu_editor)
+        self.act_view_preview.triggered.connect(lambda: self._switch_canvas(CANVAS_PREVIEW))
+        self.act_view_structure.triggered.connect(lambda: self._switch_canvas(CANVAS_STRUCTURE))
+        self.act_view_viewer.triggered.connect(lambda: self._switch_canvas(CANVAS_VIEWER))
+        self.act_view_car_db.triggered.connect(self.open_car_database)
+        self.act_view_save.triggered.connect(self.open_save_editor)
+        self.act_view_menu.triggered.connect(self.open_menu_editor)
         self.act_save_editor.triggered.connect(self.open_save_editor)
         self.act_repack.triggered.connect(self.repack)
         self.act_folder.triggered.connect(self.open_extract_folder)
@@ -1236,6 +1269,49 @@ class GTArcExplorer(QMainWindow):
             )
         except Exception as e:
             QMessageBox.critical(self, "Export failed", str(e))
+
+
+    def open_menu_editor(self):
+        """Switch to the Menu Editor canvas."""
+        self._load_menu_editor()
+        self._switch_canvas(CANVAS_MENU)
+
+    def _load_menu_editor(self):
+        """Discover MENU_HTM + MENU_IMG bundle and populate the Menu Editor."""
+        if not getattr(self, "menu_editor_page", None):
+            return
+        from pathlib import Path
+        from ..utils.menu_bundle import discover_menu_bundle
+
+        path = None
+        if getattr(self, "arc", None) and getattr(self.arc, "path", None):
+            path = self.arc.path
+        elif getattr(self, "extract_dir", None):
+            path = self.extract_dir
+        # Prefer a MENU subfolder if present
+        try:
+            if path:
+                p = Path(path)
+                folder = p if p.is_dir() else p.parent
+                menu_sub = folder / "MENU"
+                if menu_sub.is_dir() and (menu_sub / "MENU_HTM.ARC").is_file():
+                    path = menu_sub
+        except Exception:
+            pass
+
+        try:
+            bundle = discover_menu_bundle(path or "", getattr(self, "arc", None))
+            if not bundle.pages:
+                self.menu_editor_page.clear()
+                self.set_status("Menu Editor: no GTHTML pages found (open MENU_HTM.ARC)")
+                return
+            self.menu_editor_page.load_bundle(bundle)
+            self.set_status(
+                f"Menu Editor: {len(bundle.pages)} pages — {bundle.source_label}"
+            )
+        except Exception as e:
+            self.menu_editor_page.clear()
+            self.set_status(f"Menu Editor error: {e}")
 
     def open_car_database(self):
         """Load SPEC + part tables into the Car Database canvas and switch to it."""
