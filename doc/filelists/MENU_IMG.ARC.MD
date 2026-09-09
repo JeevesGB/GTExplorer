@@ -1,28 +1,22 @@
-# MENU_IMG.ARC
+# MENU_IMG.ARC (disc root)
 
-[← Back to index](index.md)
+**Path:** `MENU_IMG.ARC` (disc root, not under `MENU/`)  
+**Size:** ~121 MB  
+**Format:** Outer GT-ARC uncompressed (`0x0001`) containing **6 nested** GT-ARCs
 
-The bulk image archive behind the in-game HTML-style menu system (License Center, car dealers, and similar screens): thousands of numbered `.arc` sub-archives — most likely one per menu page — plus a smaller shared pool of `.tim` images and one `.ins` instrument file.
+## Role
 
-**1148** files · **3** file types
-
-| Extension | Count | What it is |
-|---|---|---|
-| `.arc` | 970 | Generic sub-archive (container of further files). |
-| `.tim` | 177 | PlayStation TIM — a raw PS1 image/texture format. |
-| `.ins` | 1 | VAB instrument header (sound engine patch data). |
+Bulk **localized menu image** store for the full in-game menu system (dealers, licence centre, and related screens beyond the small GT Home shell).
 
 ## Structure
 
-<details><summary><b>Files here (1148)</b> — click to expand</summary>
+| Outer slot | Approx. size | Contents |
+|---|---|---|
+| 0–5 | ~19–21 MB each | Nested GT-ARC, `0x8001`, ~**1043** files each |
 
-- `178.arc` → `999.arc` (822 files)
-- `1000.arc` → `1147.arc` (148 files)
-- `001.tim` → `177.tim` (177 files)
+The six nested archives are treated as **language packs** (e.g. ENG / USA / FRA / GER / ITA / SPA). File counts and layouts are parallel across packs; pixel content differs by language where text is baked into art.
 
-Other files: `000.ins`
+## Related
 
-</details>
-
----
-[← Back to index](index.md)
+- Name tables and support data: `MENU_RAW.ARC`
+- Small GT-shell backgrounds only: `MENU/MENU_IMG.ARC`

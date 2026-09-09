@@ -1,26 +1,25 @@
 # MENU_RAW.ARC
 
-[← Back to index](index.md)
+**Path:** `MENU_RAW.ARC` (disc root)  
+**Files:** 6  
+**Format:** GT-ARC (`0x0001`)
 
-Companion archive to MENU_IMG.ARC holding the menu system's supporting data: the used-car listing (`.usedcar`), the menu HTML index (`htmls.idx`), a sound-effect index (`sounds.idx`), an unidentified index, and two `.arc` sub-archives.
+## Role
 
-**7** files · **4** file types
+Companion data for the **large** menu system (root `MENU_IMG.ARC`), not the small `MENU/` shell alone.
 
-| Extension | Count | What it is |
+## Entries (typical)
+
+| Index | Type | Notes |
 |---|---|---|
-| `.idx` | 3 | Index file pointing into another archive. |
-| `.arc` | 2 | Generic sub-archive (container of further files). |
-| `.usedcar` | 1 | Used-car dealership listing data. |
-| `.txt` | 1 | Plain-text index or manifest (GTExplorer metadata, not a game asset). |
+| 0 | Filename list | ~1043 `.htm`-style menu page names |
+| 1 | Filename list | ~1043 image / sound-style names |
+| 2 | Filename list | ~14 `.seq` sequence names |
+| 3 | Nested GT-ARC | Small support archive (~14 files) |
+| 4 | Used-car data | Dealership listing blob |
+| 5 | Nested GT-ARC | Large support archive (~1043 files) |
 
-## Structure
+## Related
 
-**Files here (7):**
-
-- **`.arc`** (2): `003.arc`, `005.arc`
-- **`.idx`** (3): `htmls.idx`, `sounds.idx`, `unknown0001.idx`
-- **`.txt`** (1): `manifest.txt`
-- **`.usedcar`** (1): `004.usedcar`
-
----
-[← Back to index](index.md)
+- Images: root `MENU_IMG.ARC` (six language packs)
+- GT Home shell only: `MENU/MENU_HTM.ARC` + `MENU/MENU_IMG.ARC`
