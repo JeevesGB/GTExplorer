@@ -44,13 +44,9 @@
 
 ## Work in Progress
 
-### Palette Editor
-![Palette Editor](https://github.com/user-attachments/assets/21bda318-2ecb-45bc-8eb3-be4b1577646d) In latest build
 
-
-### Database Editor
-![Database Editor](https://github.com/user-attachments/assets/3ef5510d-df22-4f35-9d70-f4e5aa0d0cbd)
-
+<img src="img/1.5/paledit.png" width="45%">
+<img src="img/1.5/db.png" width="45%">
 
 ---
 
