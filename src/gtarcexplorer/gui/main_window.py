@@ -66,6 +66,7 @@ CANVAS_VIEWER = 2
 CANVAS_CAR_DB = 3
 CANVAS_SAVE_EDITOR = 4
 CANVAS_MENU = 5
+CANVAS_GT2 = 6
 
 class GTArcExplorer(QMainWindow):
     progress_signal = pyqtSignal(int, int)
@@ -317,6 +318,8 @@ class GTArcExplorer(QMainWindow):
         self.act_car_database.setToolTip("Browse SPEC car data and joined upgrade parts from CARINF")
         self.act_save_editor = QAction("Save Editor…", self)
         self.act_menu_editor = QAction("Menu Editor…", self)
+        self.act_gt2_converter = QAction("GT2 → GT1 Converter…", self)
+        self.act_gt2_converter.setToolTip("Convert GT2 .cdo/.cno models to GT1 .car")
         self.act_save_editor.setToolTip("Edit GT1 REPLAY.DAT / PS1 memory-card saves")
 
         menubar = self.menuBar()
@@ -365,6 +368,7 @@ class GTArcExplorer(QMainWindow):
         m_tools.addAction(self.act_import_tex)
         m_tools.addAction(self.act_car_database)
         m_tools.addAction(self.act_menu_editor)
+        m_tools.addAction(self.act_gt2_converter)
         m_tools.addAction(self.act_save_editor)
         # menu editor action wired below
 
@@ -380,12 +384,14 @@ class GTArcExplorer(QMainWindow):
         self.act_view_car_db = QAction("Car Database", self)
         self.act_view_save = QAction("Save Editor", self)
         self.act_view_menu = QAction("Menu Editor", self)
+        self.act_view_gt2 = QAction("GT2 Converter", self)
         m_view.addAction(self.act_view_preview)
         m_view.addAction(self.act_view_structure)
         m_view.addAction(self.act_view_viewer)
         m_view.addAction(self.act_view_car_db)
         m_view.addAction(self.act_view_save)
         m_view.addAction(self.act_view_menu)
+        m_view.addAction(self.act_view_gt2)
 
         self.act_user_guide = QAction("User Guide", self)
         self.act_user_guide.setShortcut(QKeySequence("F1"))
@@ -447,6 +453,7 @@ class GTArcExplorer(QMainWindow):
             ("Car Database",        "db",        style.StandardPixmap.SP_FileDialogListView),
             ("Save Editor",         "save",      style.StandardPixmap.SP_DialogSaveButton),
             ("Menu Editor",         "menu",      style.StandardPixmap.SP_DirHomeIcon),
+            ("GT2 Converter",       "convert",   style.StandardPixmap.SP_ArrowForward),
         ]
         for i, (tip, icon_name, fallback) in enumerate(rail_defs):
             btn = QToolButton()
@@ -756,6 +763,10 @@ class GTArcExplorer(QMainWindow):
         self.menu_editor_page.set_reload_callback(self._load_menu_editor)
         self.canvas_stack.addWidget(self.menu_editor_page)
 
+        from .gt2_converter import GT2ConverterWidget
+        self.gt2_converter_page = GT2ConverterWidget()
+        self.canvas_stack.addWidget(self.gt2_converter_page)
+
         left.setMinimumWidth(280)
         canvas_container.setMinimumWidth(280)
         self.main_splitter.setCollapsible(0, False)
@@ -862,6 +873,8 @@ class GTArcExplorer(QMainWindow):
         self.act_view_car_db.triggered.connect(self.open_car_database)
         self.act_view_save.triggered.connect(self.open_save_editor)
         self.act_view_menu.triggered.connect(self.open_menu_editor)
+        self.act_gt2_converter.triggered.connect(self.open_gt2_converter)
+        self.act_view_gt2.triggered.connect(self.open_gt2_converter)
         self.act_save_editor.triggered.connect(self.open_save_editor)
         self.act_repack.triggered.connect(self.repack)
         self.act_folder.triggered.connect(self.open_extract_folder)
@@ -1483,6 +1496,9 @@ class GTArcExplorer(QMainWindow):
         except Exception as e:
             self.menu_editor_page.clear()
             self.set_status(f"Menu Editor error: {e}")
+
+    def open_gt2_converter(self):
+        self._switch_canvas(CANVAS_GT2)
 
     def open_car_database(self):
         """Load SPEC + part tables into the Car Database canvas and switch to it."""
