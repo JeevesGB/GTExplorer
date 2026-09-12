@@ -1,12 +1,8 @@
 from __future__ import annotations
-
 from pathlib import Path
-
 from PyQt6.QtWidgets import QMessageBox, QFileDialog
-
 from ..utils.filelist import load_bundled, parse_filelist, lookup, bundled_lists
 from ..utils.namelist import parse_name_list
-
 
 def apply_filelist(win) -> None:
     if not win.arc.files:
@@ -35,7 +31,6 @@ def apply_filelist(win) -> None:
             f["label"] = f.get("label") or f"{f['index']:03d}"
             f["real_name"] = None
 
-
 def apply_name_list(win, names: list[str], overwrite: bool = False) -> int:
     applied = 0
     for i, f in enumerate(win.arc.files):
@@ -55,10 +50,8 @@ def apply_name_list(win, names: list[str], overwrite: bool = False) -> int:
         applied += 1
     return applied
 
-
 def count_named(win) -> int:
     return sum(1 for f in win.arc.files if f.get("real_name"))
-
 
 def collect_name_candidates(win) -> list[tuple[str, list[str]]]:
     if not win.arc.files:
@@ -162,7 +155,6 @@ def collect_name_candidates(win) -> list[tuple[str, list[str]]]:
 
     return found
 
-
 def try_all_bundled_filelists(win) -> tuple[int, str]:
     n = len(win.arc.files)
     if n == 0:
@@ -232,7 +224,6 @@ def try_all_bundled_filelists(win) -> tuple[int, str]:
 
     return count_named(win), best_name
 
-
 def auto_scan_names(win) -> tuple[int, str]:
     if not win.arc.files:
         return 0, ""
@@ -270,7 +261,6 @@ def auto_scan_names(win) -> tuple[int, str]:
 
     return count_named(win), " + ".join(sources) if sources else ""
 
-
 def on_filelist_changed(win, _name=None):
     win._custom_filelist_path = None
     if win.arc.files:
@@ -281,7 +271,6 @@ def on_filelist_changed(win, _name=None):
             f"Names: {win.filelist_combo.currentText()}  •  "
             f"{named}/{len(win.arc.files)} named"
         )
-
 
 def load_custom_filelist(win):
     path, _ = QFileDialog.getOpenFileName(

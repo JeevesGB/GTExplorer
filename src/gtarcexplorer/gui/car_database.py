@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import csv
 from datetime import datetime
 from pathlib import Path
@@ -15,21 +14,13 @@ from PyQt6.QtWidgets import (
     QMessageBox, QFileDialog, QListWidget, QListWidgetItem, QDialog,
     QDialogButtonBox, QStatusBar, QToolButton, QStyle,
 )
-
 from ..utils.spec import (
     parse_spec_table, build_car_database, join_parts_to_cars,
     decode_spec_record, decode_part_record, patch_spec_record, rebuild_spec_table,
     build_car_name_map,
     PART_TABLE_TITLES, PART_PARAM_LABELS,
 )
-
-
-
-
-# ---------------------------------------------------------------------------
-# Undo commands
-# ---------------------------------------------------------------------------
-
+#
 class _EditCellCommand(QUndoCommand):
     def __init__(self, model, row: int, col: int, old_val, new_val, old_raw: bytes, new_raw: bytes, old_row: dict, new_row: dict):
         super().__init__(f"Edit cell ({row},{col})")
@@ -48,8 +39,7 @@ class _EditCellCommand(QUndoCommand):
 
     def undo(self):
         self.model.apply_row_state(self.row, self.old_row, self.old_raw, self.col)
-
-
+#
 class _AddRowCommand(QUndoCommand):
     def __init__(self, model, row_data: dict, raw: bytes, index: int):
         super().__init__("Add row")
@@ -63,11 +53,9 @@ class _AddRowCommand(QUndoCommand):
 
     def undo(self):
         self.model.remove_row_at(self.index)
-
-
+#
 class _RemoveRowsCommand(QUndoCommand):
     def __init__(self, model, entries: list):
-        """entries: list of (index, row_dict, raw) sorted ascending by index."""
         super().__init__(f"Remove {len(entries)} row(s)")
         self.model = model
         self.entries = entries
@@ -79,13 +67,8 @@ class _RemoveRowsCommand(QUndoCommand):
     def undo(self):
         for idx, row_data, raw in sorted(self.entries, key=lambda e: e[0]):
             self.model.insert_row_at(idx, row_data, raw)
-
-# ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
-
+#
 class SpecTableModel(QAbstractTableModel):
-    """Editable model for 424-byte Car Spec records."""
     HEADERS = ["Code", "Name", "PS", "Nm", "cc", "W", "H", "WB", "Track F/R"]
     KEYS = ["code", "display_name", "power_ps", "torque", "displacement_cc",
             "width_mm", "height_mm", "wheelbase_mm", "track"]
@@ -249,10 +232,8 @@ class SpecTableModel(QAbstractTableModel):
         else:
             for r, _, _ in sorted(entries, key=lambda e: e[0], reverse=True):
                 self.remove_row_at(r)
-
-
+#
 class GenericPartModel(QAbstractTableModel):
-    """Editable model for CARINF part tables (code + params + name)."""
     changed = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -453,20 +434,8 @@ class GenericPartModel(QAbstractTableModel):
         else:
             for r, _, _ in sorted(entries, key=lambda e: e[0], reverse=True):
                 self.remove_row_at(r)
-
-
-# ---------------------------------------------------------------------------
-# Editor widget
-# ---------------------------------------------------------------------------
-
+#
 class CarDatabaseWidget(QWidget):
-    """
-    Lightweight DB editor canvas:
-      left  = table list
-      center = editable grid
-      right  = record detail / notes
-    """
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._tables: Dict[str, dict] = {}          # tag -> parsed
@@ -483,8 +452,6 @@ class CarDatabaseWidget(QWidget):
         self._build_ui()
         self._wire()
         self._set_empty()
-
-    # ----- UI -----
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -624,14 +591,11 @@ class CarDatabaseWidget(QWidget):
             self.btn_redo.setToolTip("Nothing to redo")
 
     def _on_clean_changed(self, clean: bool):
-        # Stack clean does not always mean table clean (multi-table), keep dirty flags
         pass
 
     def _clear_undo(self):
         self._undo.clear()
         self._update_undo_buttons()
-
-    # ----- Public load API -----
 
     def load_tables(
         self,
@@ -639,11 +603,7 @@ class CarDatabaseWidget(QWidget):
         source_paths: Optional[Dict[str, Path]] = None,
         joined_cars: Optional[List[dict]] = None,
     ):
-        """
-        tables: { "SPEC": parsed, "BRAKE": parsed, ... }
-        source_paths: optional paths for backup/save defaults
-        joined_cars: optional pre-joined SPEC car list (with parts)
-        """
+
         self._tables = dict(tables or {})
         self._source_paths = dict(source_paths or {})
         self._dirty = {k: False for k in self._tables}
@@ -707,8 +667,6 @@ class CarDatabaseWidget(QWidget):
         self.meta_label.setText("")
         self.dirty_label.setText("")
         self.status.setText("No tables loaded")
-
-    # ----- Table selection -----
 
     def _on_table_selected(self, cur: Optional[QListWidgetItem], _prev):
         if not cur:
@@ -816,8 +774,6 @@ class CarDatabaseWidget(QWidget):
             "Double-click cells to edit. Save writes the table binary.",
         ])
 
-    # ----- Dirty / edit ops -----
-
     def _mark_dirty(self, tag: Optional[str]):
         if not tag:
             return
@@ -847,12 +803,10 @@ class CarDatabaseWidget(QWidget):
         return [self._proxy.mapToSource(i).row() for i in sm.selectedRows()]
 
     def _insert_anchor(self) -> Optional[int]:
-        """Source-model row index of the primary selection, or None."""
         rows = self._selected_src_rows()
         return rows[0] if rows else None
 
     def _add_row(self):
-        """Toolbar Add — insert below selection (or append)."""
         self._add_row_relative(below=True)
 
     def _add_row_relative(self, below: bool = True):
@@ -885,7 +839,6 @@ class CarDatabaseWidget(QWidget):
         self._select_source_row(new_row)
 
     def _select_source_row(self, src_row: int):
-        """Map source row to proxy and select it."""
         if src_row < 0:
             return
         src_index = self._proxy.sourceModel().index(src_row, 0)
@@ -985,8 +938,6 @@ class CarDatabaseWidget(QWidget):
         # Reload from stored parsed (original structs)
         self._show_table(tag)
 
-    # ----- Backup / save -----
-
     def _backup(self):
         start = ""
         if self._current_tag and self._current_tag in self._source_paths:
@@ -1077,10 +1028,7 @@ class CarDatabaseWidget(QWidget):
                 ok += 1
         self.status.setText(f"Saved {ok}/{len(modified)} table(s)")
 
-    # ----- CSV export / import -----
-
     def _csv_headers_and_rows(self):
-        """Return (headers, list[list]) for the current table model."""
         model = self._proxy.sourceModel()
         if model is None:
             return [], []
@@ -1257,9 +1205,6 @@ class CarDatabaseWidget(QWidget):
         self.status.setText(msg.replace("\n", " | "))
         QMessageBox.information(self, "Import CSV", msg)
 
-
-
-# Keep dialog wrapper for compatibility
 class CarDatabaseDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)

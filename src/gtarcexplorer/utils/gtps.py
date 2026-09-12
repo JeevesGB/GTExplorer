@@ -1,12 +1,9 @@
 from __future__ import annotations
-
 import math
 import struct
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
-
 import numpy as np
-
 try:
     from PyQt6.QtCore import QPointF, QRectF, Qt
     from PyQt6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPolygonF
@@ -15,7 +12,6 @@ except ImportError:
     from PyQt5.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPolygonF
 
 Vec3 = Tuple[float, float, float]
-
 
 def _dist(a: Vec3, b: Vec3) -> float:
     dx, dy, dz = a[0] - b[0], a[1] - b[1], a[2] - b[2]
@@ -29,7 +25,6 @@ class StripFace:
     b: Vec3
     c: Vec3
     colour_rgb: Tuple[int, int, int] = (0, 210, 255)
-    # Optional indices into model.vertices for fast batch projection
     ia: int = -1
     ib: int = -1
     ic: int = -1
@@ -41,7 +36,6 @@ class Camera:
     yaw_deg: float = 0.0
     pitch_deg: float = 85.0
 
-
 class GTPSModel:
 
     def __init__(self, raw: bytes):
@@ -49,7 +43,7 @@ class GTPSModel:
         self.vertices: List[Vec3] = []
         self._faces_cache: Optional[List[StripFace]] = None
         self._verts_np: Optional[np.ndarray] = None
-        self._face_idx: Optional[np.ndarray] = None  # (N, 3) int32
+        self._face_idx: Optional[np.ndarray] = None  
         self.camera = Camera()
         self._parse()
 
@@ -155,7 +149,6 @@ class GTPSModel:
             (xs[hi_idx], ys[hi_idx], zs[hi_idx]),
         )
 
-
 def parse_gtps_header(data: bytes) -> dict:
     model = GTPSModel(data)
     return {
@@ -166,11 +159,9 @@ def parse_gtps_header(data: bytes) -> dict:
         "header_size": 16,
     }
 
-
 def extract_vertices(data: bytes) -> List[Vec3]:
     model = GTPSModel(data)
     return model.vertices
-
 
 def _project_batch_gtps(
     pts: np.ndarray,
@@ -193,7 +184,6 @@ def _project_batch_gtps(
     out[:, 0] = screen_cx + rx * scale
     out[:, 1] = screen_cy - ry * scale
     return out
-
 
 def render_qimage_faces(
     model: "GTPSModel",

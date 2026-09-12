@@ -1,21 +1,16 @@
 from __future__ import annotations
-
 from pathlib import Path
-
 from PyQt6.QtWidgets import (
     QApplication, QMessageBox, QFileDialog, QDialog, QDialogButtonBox,
     QFormLayout, QComboBox, QCheckBox,
 )
-
 from ..utils.tim_image import decode_tim, encode_tim, convert_file_to_tim, read_tim_header
 from ..utils.tim_pack import build_tim_pack
-
 try:
     from PIL import Image
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
-
 
 def ask_tim_options(parent, default_bpp: int = 8, show_match_header: bool = False):
     dlg = QDialog(parent)
@@ -52,7 +47,6 @@ def ask_tim_options(parent, default_bpp: int = 8, show_match_header: bool = Fals
         chk_black.isChecked(),
         chk_match.isChecked() if show_match_header else False,
     )
-
 
 def offer_inject(win, new_data: bytes, suggested_name: str = "new.tim"):
     if not win.arc.files:
@@ -102,7 +96,6 @@ def offer_inject(win, new_data: bytes, suggested_name: str = "new.tim"):
     win.populate_tree()
     win.show_preview(idx)
 
-
 def convert_image_to_tim(win):
     if not HAS_PIL:
         QMessageBox.warning(win, "Pillow required", "Install Pillow to convert images.")
@@ -137,7 +130,6 @@ def convert_image_to_tim(win):
         offer_inject(win, new_data, Path(out).name)
     except Exception as e:
         QMessageBox.critical(win, "Convert failed", str(e))
-
 
 def reencode_selected_tim(win):
     if not HAS_PIL:
@@ -188,7 +180,6 @@ def reencode_selected_tim(win):
         offer_inject(win, new_data, Path(out).name)
     except Exception as e:
         QMessageBox.critical(win, "Re-encode failed", str(e))
-
 
 def replace_selected_with_image(win):
     if not HAS_PIL:
@@ -242,7 +233,6 @@ def replace_selected_with_image(win):
         )
     except Exception as e:
         QMessageBox.critical(win, "Replace failed", str(e))
-
 
 def batch_convert_folder(win):
     if not HAS_PIL:

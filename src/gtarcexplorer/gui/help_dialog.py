@@ -1,18 +1,14 @@
-"""User Guide and About dialogs."""
 from __future__ import annotations
-
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QTabWidget, QTextBrowser,
     QDialogButtonBox,
 )
-
 
 def _make_page(html: str) -> QTextBrowser:
     browser = QTextBrowser()
     browser.setOpenExternalLinks(True)
     browser.setHtml(html)
     return browser
-
 
 def show_user_guide(parent) -> None:
     dlg = QDialog(parent)
@@ -134,7 +130,6 @@ def show_user_guide(parent) -> None:
     buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(dlg.accept)
     layout.addWidget(buttons)
     dlg.exec()
-
 
 def show_about(parent) -> None:
     from PyQt6.QtWidgets import QMessageBox

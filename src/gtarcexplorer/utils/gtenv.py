@@ -2,10 +2,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 from typing import List, Tuple
-
 MAGIC = b"@(#)GTENV\0"
 _HEADER_LEN = 0x48 
-
 
 @dataclass
 class GTEnvFile:
@@ -15,7 +13,6 @@ class GTEnvFile:
     param_block_offset: int
     config: List[Tuple[str, str]]            
     config_offset: int
-
 
 def _parse_string_table(data: bytes, offset: int) -> Tuple[List[str], int]:
 
@@ -35,7 +32,6 @@ def _parse_string_table(data: bytes, offset: int) -> Tuple[List[str], int]:
             break
     return strings, offset
 
-
 def _find_config_block_start(data: bytes) -> int:
 
     def is_text_byte(b: int) -> bool:
@@ -47,7 +43,6 @@ def _find_config_block_start(data: bytes) -> int:
             start = i + 1
             break
     return start
-
 
 def parse_gtenv(data: bytes) -> GTEnvFile:
     if not data.startswith(MAGIC):
@@ -85,7 +80,6 @@ def parse_gtenv(data: bytes) -> GTEnvFile:
         config=config,
         config_offset=config_start,
     )
-
 
 def format_gtenv_preview(gtenv: GTEnvFile, data_len: int) -> str:
     lines: List[str] = []

@@ -1,17 +1,9 @@
-"""GT1 GTHTML menu page scripts (@(#)GTHTML).
-
-Binary hotspot layouts used by MENU/MENU_HTM.ARC — not web HTML.
-See GTHTML_Format_Documentation.md for the full field reference.
-"""
 from __future__ import annotations
-
 import struct
 from typing import Any, Dict, List, Optional, Tuple
 
-
 def is_gthtml(data: bytes) -> bool:
     return data.startswith(b"@(#)GTHTML")
-
 
 def _read_pstring(data: bytes, i: int) -> Tuple[Optional[str], int]:
     if i >= len(data):
@@ -24,15 +16,7 @@ def _read_pstring(data: bytes, i: int) -> Tuple[Optional[str], int]:
         return None, i
     return chunk.decode("ascii"), i + 1 + n
 
-
 def parse_gthtml(data: bytes) -> dict:
-    """
-    Structured parse of a GTHTML page.
-
-    Returns dict with:
-      background_tim, background_mode, hotspots[], widgets[],
-      strings (legacy), tokens (legacy approx stream), size
-    """
     if not is_gthtml(data):
         raise ValueError("Not a GTHTML file")
 
@@ -140,7 +124,6 @@ def parse_gthtml(data: bytes) -> dict:
 
     return result
 
-
 def format_gthtml_preview(parsed: dict) -> str:
     lines = [
         "GT HTML (GTHTML)",
@@ -167,23 +150,18 @@ def format_gthtml_preview(parsed: dict) -> str:
         lines.append(f"  {s}")
     return "\n".join(lines)
 
-
 def is_page_target(target: str) -> bool:
     t = (target or "").upper()
     return t.endswith(".HTM") or t.endswith(".HTML")
 
-
 def friendly_page_title(name: str) -> str:
-    """home.htm → Home; gtf-special1.htm → Gtf Special1."""
     base = name.replace("\\", "/").split("/")[-1]
     if "." in base:
         base = base.rsplit(".", 1)[0]
     base = base.replace("_", " ").replace("-", " ")
     return base.title() if base else name
 
-
 def format_gthtml_table(parsed: dict) -> str:
-    """Tabular summary of hotspots/widgets for older preview.py revisions."""
     lines = [
         "GT HTML (GTHTML)",
         f"Size       : {parsed.get('size', 0)} bytes",
@@ -218,6 +196,4 @@ def format_gthtml_table(parsed: dict) -> str:
                 lines.append(f"  {s}")
     return "\n".join(lines)
 
-
-# Back-compat aliases used by some local preview.py revisions
 parse_gthtml_structured = parse_gthtml

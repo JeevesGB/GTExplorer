@@ -142,7 +142,6 @@ def read_tim_header(data: bytes) -> dict:
     }
 
 def _rgb_to_ps1(r: int, g: int, b: int, stp: bool = False) -> int:
-    """8-bit RGB → 15-bit BGR + optional STP bit."""
     r5 = (r >> 3) & 0x1F
     g5 = (g >> 3) & 0x1F
     b5 = (b >> 3) & 0x1F

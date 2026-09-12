@@ -307,6 +307,12 @@ class GTArcExplorer(QMainWindow):
         self.act_batch_tim.setToolTip("Convert every image in a folder to TIM with the same settings")
         self.act_export_car_obj = QAction("Export car model to OBJ", self)
         self.act_export_car_obj.setToolTip("Convert selected GT-CAR (.car) to Wavefront OBJ + MTL")
+        self.act_import_car_obj = QAction("Import OBJ to .car", self)
+        self.act_export_tex = QAction("Export .tex texture…", self)
+        self.act_export_tex.setToolTip("Export GT-CTEX (.tex) to editable PNG/BMP + palettes")
+        self.act_import_tex = QAction("Import folder to .tex…", self)
+        self.act_import_tex.setToolTip("Build a GT1 .tex from an exported texture folder")
+        self.act_import_car_obj.setToolTip("Build a GT1 .car from an edited OBJ + JSON (GT1ModelTool)")
         self.act_car_database = QAction("Car Database…", self)
         self.act_car_database.setToolTip("Browse SPEC car data and joined upgrade parts from CARINF")
         self.act_save_editor = QAction("Save Editor…", self)
@@ -354,6 +360,9 @@ class GTArcExplorer(QMainWindow):
         m_tools.addAction(self.act_batch_tim)
         m_tools.addSeparator()
         m_tools.addAction(self.act_export_car_obj)
+        m_tools.addAction(self.act_import_car_obj)
+        m_tools.addAction(self.act_export_tex)
+        m_tools.addAction(self.act_import_tex)
         m_tools.addAction(self.act_car_database)
         m_tools.addAction(self.act_menu_editor)
         m_tools.addAction(self.act_save_editor)
@@ -842,6 +851,9 @@ class GTArcExplorer(QMainWindow):
         self.act_replace_tim.triggered.connect(self.replace_selected_with_image)
         self.act_batch_tim.triggered.connect(self.batch_convert_folder)
         self.act_export_car_obj.triggered.connect(self.export_car_obj)
+        self.act_import_car_obj.triggered.connect(self.import_car_obj)
+        self.act_export_tex.triggered.connect(self.export_tex)
+        self.act_import_tex.triggered.connect(self.import_tex)
         self.act_car_database.triggered.connect(self.open_car_database)
         self.act_menu_editor.triggered.connect(self.open_menu_editor)
         self.act_view_preview.triggered.connect(lambda: self._switch_canvas(CANVAS_PREVIEW))
@@ -909,6 +921,7 @@ class GTArcExplorer(QMainWindow):
         is_nested = False
         is_tim = False
         is_car = False
+        is_tex = False
         if has_sel:
             try:
                 f = self.arc.files[int(sel[0].text(0))]
@@ -924,6 +937,11 @@ class GTArcExplorer(QMainWindow):
                     f.get("type") == "GT-CAR Model"
                     or (f.get("ext") or "").lower() == ".car"
                 )
+                is_tex = (
+                    f.get("type") == "GT-CTEX"
+                    or f.get("type") == "GT-CTEX Texture"
+                    or (f.get("ext") or "").lower() == ".tex"
+                )
             except Exception:
                 pass
 
@@ -932,6 +950,11 @@ class GTArcExplorer(QMainWindow):
         self.act_convert_tim.setEnabled(HAS_PIL)
         self.act_batch_tim.setEnabled(HAS_PIL)
         self.act_export_car_obj.setEnabled(has_files and is_car)
+        if hasattr(self, 'act_export_tex'):
+            self.act_export_tex.setEnabled(has_files and is_tex)
+        if hasattr(self, 'act_import_tex'):
+            self.act_import_tex.setEnabled(True)
+        self.act_import_car_obj.setEnabled(True)
         self.act_open_nested.setEnabled(has_files and is_nested)
         self.act_extract.setEnabled(has_files)
         self.act_extract_sel.setEnabled(has_files and has_sel)
@@ -1261,14 +1284,162 @@ class GTArcExplorer(QMainWindow):
             return
 
         try:
-            model.export_obj(path)
+            # Look for companion .tex next to the save path or in the archive
+            tex_path = None
+            obj_p = Path(path)
+            stem = obj_p.stem
+            for cand in (
+                obj_p.with_suffix(".tex"),
+                obj_p.parent / f"{stem}.tex",
+            ):
+                if cand.exists():
+                    tex_path = cand
+                    break
+            if tex_path is None and hasattr(self, "arc") and self.arc:
+                # search archive for matching .tex by stem
+                try:
+                    for i, af in enumerate(self.arc.files):
+                        an = (af.get("real_name") or af.get("label") or "")
+                        if an.lower().endswith(".tex") and Path(an).stem.lower() == stem.lower():
+                            tdata = self.arc.get_data(i)
+                            tex_path = obj_p.parent / f"{stem}.tex"
+                            tex_path.write_bytes(tdata)
+                            break
+                except Exception:
+                    pass
+
+            written = model.export_obj(path, tex_path=tex_path)
             self.set_status(f"Exported {Path(path).name}")
+            msg = "Wrote:\n" + "\n".join(str(p) for p in written) + f"\n\n{model.summary()}"
+            if not any(str(p).endswith(".bmp") for p in written):
+                msg += (
+                    "\n\nNo palette BMPs written. Export the matching .tex "
+                    "(Tools → Export .tex) into this folder as palette00.bmp…"
+                    " so Blender can show textures."
+                )
+            QMessageBox.information(self, "Export complete", msg)
+        except Exception as e:
+            QMessageBox.critical(self, "Export failed", str(e))
+
+
+
+    def import_car_obj(self):
+        """Import an edited OBJ + JSON and write a GT1 .car file."""
+        start_dir = str(self.extract_dir) if self.extract_dir else self._last_dir("last_extract_dir")
+        json_path, _ = QFileDialog.getOpenFileName(
+            self, "Select model JSON", start_dir, "Model JSON (*.json)"
+        )
+        if not json_path:
+            return
+        try:
+            import json as _json
+            meta = _json.loads(Path(json_path).read_text(encoding="utf-8"))
+            obj_name = meta.get("ModelFilename") or Path(json_path).with_suffix(".obj").name
+            obj_path = Path(json_path).with_name(obj_name)
+            if not obj_path.exists():
+                # fall back: ask user
+                obj_path_str, _ = QFileDialog.getOpenFileName(
+                    self, "Select OBJ", str(Path(json_path).parent), "Wavefront OBJ (*.obj)"
+                )
+                if not obj_path_str:
+                    return
+                obj_path = Path(obj_path_str)
+        except Exception as e:
+            QMessageBox.critical(self, "JSON error", str(e))
+            return
+
+        try:
+            from ..utils.gtcar import GTCarModel
+            model = GTCarModel.from_obj(obj_path, json_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Import failed", f"Could not build model:\n{e}")
+            return
+
+        default_name = Path(json_path).with_suffix(".car").name
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Save .car", str(Path(json_path).with_suffix(".car")), "GT-CAR (*.car)"
+        )
+        if not out_path:
+            return
+        try:
+            data = model.write_car(out_path)
+            self.set_status(f"Wrote {Path(out_path).name} ({len(data)} bytes)")
+            QMessageBox.information(
+                self, "Import complete",
+                f"Wrote {out_path}\n({len(data)} bytes)\n\n{model.summary()}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Write failed", str(e))
+
+
+
+    def export_tex(self):
+        """Export selected GT-CTEX (.tex) to an editable folder."""
+        items = self.tree.selectedItems()
+        if not items:
+            QMessageBox.information(self, "Nothing selected", "Select a .tex texture first.")
+            return
+        idx = int(items[0].text(0))
+        f = self.arc.files[idx]
+        ext = (f.get("ext") or "").lower()
+        ftype = f.get("type") or ""
+        if ext != ".tex" and "CTEX" not in ftype and "TEX" not in ftype.upper():
+            # still try if user insists
+            pass
+
+        data = self.arc.get_data(idx)
+        try:
+            from ..utils.gttex import GTTex
+            tex = GTTex.from_bytes(data)
+        except Exception as e:
+            QMessageBox.critical(self, "Parse error", f"Could not parse .tex:\n{e}")
+            return
+
+        default_name = (f.get("real_name") or f.get("label") or "texture").rsplit(".", 1)[0]
+        start_dir = str(self.extract_dir) if self.extract_dir else self._last_dir("last_extract_dir")
+        out_dir = QFileDialog.getExistingDirectory(self, "Export texture folder", start_dir)
+        if not out_dir:
+            return
+        try:
+            folder = tex.export_editable(out_dir, basename=default_name)
+            self.set_status(f"Exported texture to {folder}")
             QMessageBox.information(
                 self, "Export complete",
-                f"Wrote:\n{path}\n{Path(path).with_suffix('.mtl')}\n\n{model.summary()}"
+                f"Exported to:\n{folder}\n\n{tex.summary()}\n\n"
+                "Edit the BMP/PNG sheet (keep 16 indices) and ColourXX/*.pal files, "
+                "then use Import folder to .tex."
             )
         except Exception as e:
             QMessageBox.critical(self, "Export failed", str(e))
+
+    def import_tex(self):
+        """Import an editable texture folder and write a .tex file."""
+        start_dir = str(self.extract_dir) if self.extract_dir else self._last_dir("last_extract_dir")
+        folder = QFileDialog.getExistingDirectory(self, "Select texture folder", start_dir)
+        if not folder:
+            return
+        try:
+            from ..utils.gttex import GTTex
+            tex = GTTex.from_editable(folder)
+        except Exception as e:
+            QMessageBox.critical(self, "Import failed", f"Could not load folder:\n{e}")
+            return
+
+        default = Path(folder).name + ".tex"
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Save .tex", str(Path(folder).parent / default), "GT-CTEX (*.tex)"
+        )
+        if not out_path:
+            return
+        try:
+            data = tex.write_tex(out_path)
+            self.set_status(f"Wrote {Path(out_path).name} ({len(data)} bytes)")
+            QMessageBox.information(
+                self, "Import complete",
+                f"Wrote {out_path}\n({len(data)} bytes)\n\n{tex.summary()}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Write failed", str(e))
 
 
     def open_menu_editor(self):

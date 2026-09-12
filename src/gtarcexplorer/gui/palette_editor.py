@@ -1,14 +1,6 @@
-"""Interactive GT-CTEX palette / paint editor for car models.
-
-Layout: two-panel inspector (materials | preview+swatches). Non-modal so the viewer can orbit.
-Live OpenGL preview via on_preview; optional material highlight via on_highlight.
-"""
 from __future__ import annotations
-
 import threading
-
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
-
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QImage, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
@@ -55,15 +47,12 @@ from ..utils.ctex import (
     companion_tex_names,
 )
 
-
 def _qcolor(c: RGBA) -> QColor:
     r, g, b, a = c[:4]
     return QColor(int(r), int(g), int(b), int(a if a is not None else 255))
 
-
 def _rgba(qc: QColor) -> RGBA:
     return (qc.red(), qc.green(), qc.blue(), qc.alpha())
-
 
 def _clut_strip_pixmap(colours: Sequence[RGBA], w: int = 128, h: int = 18) -> QPixmap:
     img = QImage(w, h, QImage.Format.Format_ARGB32)
@@ -79,7 +68,6 @@ def _clut_strip_pixmap(colours: Sequence[RGBA], w: int = 128, h: int = 18) -> QP
         for y in range(h):
             img.setPixelColor(x, y, col)
     return QPixmap.fromImage(img)
-
 
 class SwatchButton(QPushButton):
     colourChanged = pyqtSignal(int, int, object)  # material_ci, index, colour
@@ -123,7 +111,6 @@ class SwatchButton(QPushButton):
             col = (col[0], col[1], col[2], 255)
         self.set_colour(col)
         self.colourChanged.emit(self.material_ci, self.index, col)
-
 
 class PaletteEditorDialog(QDialog):
     def __init__(
@@ -341,7 +328,6 @@ class PaletteEditorDialog(QDialog):
         return cis[0] if cis else 0
 
     def _selected_cluts(self) -> List[int]:
-        """Materials with checkbox checked (preferred) or list selection as fallback."""
         checked = []
         for row in range(self.clut_list.count()):
             it = self.clut_list.item(row)
@@ -656,7 +642,6 @@ class PaletteEditorDialog(QDialog):
         self._schedule_preview()
 
     def _on_item_checked(self, item) -> None:
-        """Checkbox is the source of truth for which materials are being edited."""
         if item is None:
             return
         on = item.checkState() == Qt.CheckState.Checked
@@ -668,7 +653,6 @@ class PaletteEditorDialog(QDialog):
         self._update_highlight()
 
     def _on_selection_changed(self) -> None:
-        """Shift/Ctrl list selection pushes into checkboxes (multi-select friendly)."""
         if self.clut_list.signalsBlocked():
             return
         self.clut_list.blockSignals(True)
@@ -756,7 +740,6 @@ class PaletteEditorDialog(QDialog):
         self._schedule_preview()
 
     def _add_colour_to_selected(self) -> None:
-        """Pick a colour and write it into the first empty (transparent) CLUT slot."""
         targets = self._selected_cluts()
         if not targets:
             # Fall back to body-ranked materials for current paint
@@ -833,7 +816,6 @@ class PaletteEditorDialog(QDialog):
             QMessageBox.warning(self, "Export failed", str(e))
 
     def _export_palettes(self) -> None:
-        """Dump palette0.bmp … palette15.bmp (GT2TextureEditor / GT2ModelTool style)."""
         directory = QFileDialog.getExistingDirectory(
             self,
             "Export palettes (folder for palette0.bmp … palette15.bmp)",
@@ -974,7 +956,6 @@ class PaletteEditorDialog(QDialog):
             QMessageBox.warning(self, "Save failed", str(e))
 
     def _prepare_night_companion(self, edited: bytes) -> str:
-        """Merge modified CLUTs into companion in memory; return READY:idx or status."""
         ent = self._find_companion_entry()
         if ent is None:
             return "No _night / day companion texture found in the archive."
@@ -1007,7 +988,6 @@ class PaletteEditorDialog(QDialog):
         return ""
 
     def _find_companion_entry(self):
-        """Find day/night companion CTEX in the open archive by filename."""
         if self._archive is None or self._tex_entry_index is None:
             return None
         try:
@@ -1041,7 +1021,6 @@ class PaletteEditorDialog(QDialog):
         return None
 
     def _sync_night_companion(self, edited: bytes) -> str:
-        """Copy only modified CLUTs into the day/night companion texture."""
         ent = self._find_companion_entry()
         if ent is None:
             return "No _night / day companion texture found in the archive."
@@ -1105,7 +1084,6 @@ class PaletteEditorDialog(QDialog):
                 pass
         super().closeEvent(event)
 
-
 def _resolve_companion_index(win, tex_data: bytes) -> Optional[int]:
     arc = getattr(win, "arc", None)
     if not arc or not getattr(arc, "files", None) or not tex_data:
@@ -1129,7 +1107,6 @@ def _resolve_companion_index(win, tex_data: bytes) -> Optional[int]:
         if d == tex_data:
             return int(f["index"])
     return None
-
 
 def open_palette_editor(win) -> None:
     tex = getattr(win, "_car_tex_data", None)

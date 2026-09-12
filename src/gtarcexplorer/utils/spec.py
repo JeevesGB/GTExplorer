@@ -1,8 +1,6 @@
 from __future__ import annotations
-
 import struct
 from typing import List, Optional, Tuple
-
 SPEC_TYPES = {
     "Car Spec", "Car Color", "Equipment", "Tire", "Tire Compound", "Tire Size",
     "Brake", "Brake Controller", "Clutch", "Gearbox", "Suspension", "Stabilizer",
@@ -16,18 +14,6 @@ def is_spec_type(type_name: str) -> bool:
     return type_name in SPEC_TYPES
 
 def parse_spec_table(data: bytes) -> dict:
-    """
-    Layout (after @(#)XXXX magic, typically 12-byte header area):
-      0x0C: u16 (often 0x10)
-      0x0E: u16 struct_count
-      0x10: u32 zero?
-      0x14: u32 struct_size
-      then struct_count × struct_size bytes
-      optional string tables:
-        u32 table_count
-        table_count × u32 (skip)
-        for each table: u16 string_count; strings as (u8 len, bytes, 0)
-    """
     if len(data) < 0x18 or not data.startswith(b"@(#)"):
         raise ValueError("Not a GT1 spec/part table")
 
@@ -97,7 +83,6 @@ def parse_spec_table(data: bytes) -> dict:
 
 
 def rebuild_spec_table(parsed: dict, structs: Optional[List[bytes]] = None) -> bytes:
-    """Rebuild a SPEC/part table binary from parsed metadata + struct list."""
     structs = list(structs if structs is not None else parsed.get("structs") or [])
     struct_size = int(parsed.get("struct_size") or (len(structs[0]) if structs else 0))
     if struct_size <= 0:
@@ -131,13 +116,7 @@ def rebuild_spec_table(parsed: dict, structs: Optional[List[bytes]] = None) -> b
 
 
 def patch_spec_record(buf: bytes, **fields) -> bytes:
-    """
-    Patch known fields into a SPEC record (typically 424 bytes), leaving the rest intact.
 
-    Supported kwargs: code, flags, width_mm, height_mm, wheelbase_mm,
-    track_front_mm, track_rear_mm, displacement_cc, power_ps, power_rpm,
-    torque, torque_rpm, dim0, dim1
-    """
     data = bytearray(buf)
     # Do not pad past the real record size — retail SPEC is 424 bytes.
     if len(data) < 0x18:
@@ -328,12 +307,6 @@ def decode_spec_record(buf: bytes, string_tables: Optional[List[List[str]]] = No
 
 
 def build_car_name_map(spec_parsed: dict) -> dict:
-    """
-    Map SPEC record index → display label for the Database Car column.
-
-    Uses code + model/trim from SPEC string tables (0x188 / 0x18C).
-    Example: 5 → "tcegn — CELICA GT-FOUR"
-    """
     tables = spec_parsed.get("string_tables") or []
     structs = spec_parsed.get("structs") or []
     out = {}
@@ -347,16 +320,9 @@ def build_car_name_map(spec_parsed: dict) -> dict:
             out[i] = code
     return out
 
-
-# Preferred code-field offset per table tag (verified on retail CARINF extract).
-# Only tables that embed a real ASCII part code (e.g. tubtcegnbs) are listed.
-# Most tables have no code — only numeric params + string-table names.
 PART_CODE_OFFSETS = {
-    "TURBINE": 32,  # "tubtlevnbs", "tubtcegnbs", …
+    "TURBINE": 32,
 }
-
-# u16 field index of car_id (SPEC record index) — verified on retail CARINF.
-# Resolve stock part: first row where field[car_id] == SPEC index.
 PART_CAR_ID_FIELD = {
     "BRAKE": 6,
     "TIRE": 6,
@@ -366,9 +332,6 @@ PART_CAR_ID_FIELD = {
     "FLYWHEL": 6,
     "LWEIGHT": 4,
 }
-
-# u16 field index of upgrade tier where present.
-# Raw values: 0 = stock, 257 (0x101) = stage 2, 514 (0x202) = stage 3.
 PART_TIER_FIELD = {
     "CLUTCH": 4,
     "STABILZ": 3,
@@ -377,7 +340,6 @@ PART_TIER_FIELD = {
 }
 
 def tier_label(raw: int) -> str:
-    """Human label for 0 / 257 / 514 tier encoding."""
     if raw == 0:
         return "S1"
     if raw == 257:
@@ -388,7 +350,6 @@ def tier_label(raw: int) -> str:
         return f"S{raw + 1}"
     return str(raw)
 
-# Human-readable table titles for the DB editor list.
 PART_TABLE_TITLES = {
     "SPEC": "Car Spec",
     "BRAKE": "Brake",
@@ -420,9 +381,6 @@ PART_TABLE_TITLES = {
     "LWEIGHT": "Lightweight",
     "ADJUST": "Align Adjustment",
 }
-
-# How many leading u16 params to expose, and their column headers.
-# Tables whose leading region is a curve/map (not tuning scalars) use 0.
 PART_PARAM_LAYOUT = {
     "BRAKE":   (4, ["Front", "Rear", "RowId", "Flags"]),
     "BRKCTRL": (4, ["P0", "P1", "P2", "P3"]),
@@ -454,20 +412,9 @@ PART_PARAM_LAYOUT = {
     "COLOR":   (0, []),
     "TIRECMP": (0, []),
 }
-
-# Back-compat alias used by the UI
 PART_PARAM_LABELS = {k: v[1] for k, v in PART_PARAM_LAYOUT.items()}
 
-
 def _extract_part_code(buf: bytes, tag: str) -> tuple:
-    """
-    Return (code, offset, length).
-
-    Most CARINF part records have *no* ASCII part code — only numeric params
-    and a string-table name. Curve/map bytes often look printable but are not
-    codes (e.g. "njhggfeddd"). Only accept strings that start with a known
-    part prefix and match prefix + car-id form (e.g. tubtcegnbs).
-    """
     import re
     tag_u = (tag or "").upper()
     preferred = PART_CODE_OFFSETS.get(tag_u)
@@ -525,7 +472,6 @@ def _extract_part_code(buf: bytes, tag: str) -> tuple:
     _, off, code = candidates[0]
     return code, off, len(code)
 
-
 def decode_part_record(
     tag: str,
     buf: bytes,
@@ -533,10 +479,6 @@ def decode_part_record(
     index: int = 0,
     car_names: Optional[dict] = None,
 ) -> dict:
-    """Decode a CARINF part-table record with tag-aware code / param / car_id layout.
-
-    car_names: optional {spec_index: "tcegn — CELICA GT-FOUR"} from build_car_name_map.
-    """
     out: dict = {
         "tag": tag,
         "index": index,
@@ -616,14 +558,7 @@ def decode_part_record(
 
     return out
 
-
 def join_parts_to_cars(spec_parsed: dict, parts_by_tag: dict) -> list:
-    """
-    Join SPEC cars with part tables using the embedded car key.
-
-    parts_by_tag: { "BRAKE": parsed_brake_table, "GEAR": ..., ... }
-    Returns list of car dicts, each with a "parts" sub-dict.
-    """
     cars = build_car_database(spec_parsed)
     # Build lookup: car_key -> { tag -> [part_recs] }
     lookup = {}
@@ -640,8 +575,6 @@ def join_parts_to_cars(spec_parsed: dict, parts_by_tag: dict) -> list:
         key = car.get("code") or ""  # e.g. tcegn
         car["parts"] = lookup.get(key, {})
     return cars
-
-
 
 def format_spec_preview(parsed: dict, max_strings: int = 40, max_cars: int = 40) -> str:
     lines = [
@@ -759,10 +692,7 @@ def export_colour_names_as_text(parsed: dict) -> str:
         lines.append(f"{car_id:6d}  {cid:02X}    {name}")
     return "\n".join(lines) + "\n"
 
-
-
 def build_car_database(spec_parsed: dict) -> list:
-    """Return a list of decoded car dicts from a SPEC table (for UI / export)."""
     if spec_parsed.get("tag") != "SPEC":
         return []
     tables = spec_parsed.get("string_tables") or []
@@ -770,7 +700,6 @@ def build_car_database(spec_parsed: dict) -> list:
     for buf in spec_parsed.get("structs") or []:
         cars.append(decode_spec_record(buf, tables))
     return cars
-
 
 def format_car_database_summary(cars: list, max_cars: int = 50) -> str:
     lines = [
@@ -791,7 +720,6 @@ def format_car_database_summary(cars: list, max_cars: int = 50) -> str:
     return "\n".join(lines)
 
 def export_car_database(parsed: dict) -> str:
-    """Export a human-readable car list from a SPEC table."""
     if parsed.get("tag") != "SPEC" or parsed.get("struct_size") not in (424, 432, 456):
         return export_strings_as_text(parsed)
 
@@ -814,7 +742,6 @@ def export_car_database(parsed: dict) -> str:
             f"{rec['track_front_mm']:6d}  {rec['track_rear_mm']:6d}"
         )
     return "\n".join(lines) + "\n"
-
 
 def export_spec_strings(data: bytes, colour_mode: bool = True) -> str:
 

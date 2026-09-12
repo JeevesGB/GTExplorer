@@ -1,8 +1,5 @@
-"""Menu Editor canvas — browse GTHTML pages with TIM backgrounds."""
 from __future__ import annotations
-
 from typing import Optional
-
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QPen
 from PyQt6.QtWidgets import (
@@ -10,13 +7,10 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QFrame, QAbstractItemView, QSizePolicy, QGroupBox,
     QFormLayout,
 )
-
 from ..utils.menu_bundle import MenuBundle, MenuPage, page_tim_image
 from ..utils.gthtml import is_page_target
 
-
 class MenuEditorWidget(QWidget):
-    """Two-pane menu browser: page list + preview/inspector."""
 
     status_message = pyqtSignal(str)
 
@@ -296,7 +290,6 @@ class MenuEditorWidget(QWidget):
         super().resizeEvent(event)
         if self._current is not None:
             self._show_page(self._current)
-
 
 def _basename_key(name: str) -> str:
     base = name.replace("\\", "/").split("/")[-1]

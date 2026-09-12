@@ -1,6 +1,5 @@
 import struct
 from pathlib import Path
-
 from .gtzip import gtzip_decompress, gtzip_compress
 from .tim_pack import parse_tim_pack, build_tim_pack
 from .audio import expand_sample_bank
@@ -8,7 +7,6 @@ from .detect import detect_type
 from .filelist import lookup, safe_filename, archive_stem
 from .namelist import parse_name_list
 from .replay import is_replay_save
-
 
 def _gtzip_decompress_full(src: bytes) -> bytes:
     dst = bytearray()
@@ -39,22 +37,12 @@ def _gtzip_decompress_full(src: bytes) -> bytes:
             flags >>= 1
     return bytes(dst)
 
-
-
 def _gtarc_data_start(nfiles: int, preferred: int | None = None) -> int:
-    """
-    Byte offset where file payloads begin in a GT-ARC.
-
-    Small archives often use 0x800. CAR.DAT-scale archives need a larger
-    directory region: 0x10 + nfiles*12, rounded up to the next 0x800 boundary
-    (or the original first-entry offset when provided).
-    """
     table_end = 0x10 + int(nfiles) * 12
     if preferred is not None and preferred >= table_end:
         return int(preferred)
     # Round up to 0x800
     return ((table_end + 0x7FF) // 0x800) * 0x800
-
 
 class GTArc:
     def __init__(self):
@@ -147,7 +135,6 @@ class GTArc:
         })
 
     def try_embedded_names(self):
-        """If an entry is a filename list whose length matches nfiles, use it as name_map."""
         if self.kind != "gtarc" or not self.files:
             return False
         n = len(self.files)
@@ -272,9 +259,6 @@ class GTArc:
                 m.write(name + "\n")
         return out
 
-
-
-
     @staticmethod
     def patch_file_entry(
         arc_path: str,
@@ -282,13 +266,6 @@ class GTArc:
         uncompressed: bytes,
         compress_level: int = 6,
     ) -> dict:
-        """
-        Replace a single entry inside an existing GT-ARC file *in place*.
-
-        Keeps the original file size and all other entries byte-identical.
-        Requires the newly compressed payload to fit in the existing slot
-        (csz). Returns a result dict; raises on failure.
-        """
         path = Path(arc_path)
         raw = bytearray(path.read_bytes())
         if raw[:12] != b"@(#)GT-ARC" + b"\x00\x00":
@@ -332,21 +309,12 @@ class GTArc:
             "file_size": len(raw),
         }
 
-
     def save_preserving(
         self,
         out_path: str,
         compress_level: int = 6,
         pad_to_size: int | None = None,
     ) -> str:
-        """
-        Rebuild a GT-ARC writing *original compressed bytes* for every entry
-        whose in-memory data was not replaced, and recompressing only dirty
-        entries (those with f['_dirty'] or f['data'] set from an edit).
-
-        Pads the output to the original archive size when possible so the
-        file can replace the on-disc DAT.
-        """
         if self.kind != "gtarc" or not self.raw:
             raise ValueError("save_preserving requires an open GT-ARC with raw bytes")
 
@@ -436,12 +404,6 @@ class GTArc:
         compress_level: int = 6,
         progress_cb=None,
     ) -> str:
-        """
-        Rebuild a GT-ARC file from the in-memory file list.
-
-        Unmodified entries reuse their original compressed payload (fast).
-        Only entries with cached `data` are recompressed.
-        """
         if not self.files:
             raise ValueError("Archive has no files to pack")
 
@@ -539,15 +501,6 @@ class GTArc:
                          force_uncompressed: bool = False,
                          compress_level: int = 6,
                          progress_cb=None):
-        """
-        Pack a folder of extracted files back into a GT-ARC archive.
-
-        manifest.txt is optional. If present and valid, its order is used;
-        otherwise every packable file in the folder is packed (sorted).
-
-        For each *.tpk, if a matching <stem>_tims/ folder exists, the TPK is
-        rebuilt from the .tim files in that folder before packing.
-        """
         src = Path(src_dir)
         if not src.is_dir():
             raise FileNotFoundError(f"Not a directory: {src}")
@@ -570,7 +523,6 @@ class GTArc:
             return [p.name for p in files]
 
         def load_tims_for_pack(tims_dir: Path) -> list:
-            """Prefer tim_order.txt for original order; else sorted *.tim."""
             order_file = tims_dir / "tim_order.txt"
             if order_file.is_file():
                 names = [

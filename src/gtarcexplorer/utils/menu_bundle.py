@@ -1,14 +1,10 @@
-"""Discover and bind MENU_HTM + MENU_IMG + IDX companions for the Menu Editor."""
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
 from .archive import GTArc
 from .gthtml import is_gthtml, parse_gthtml
 from .tim_image import tim_to_image
-
 try:
     from .gthtml import friendly_page_title
 except ImportError:
@@ -18,7 +14,6 @@ except ImportError:
             base = base.rsplit(".", 1)[0]
         return base.replace("_", " ").replace("-", " ").title() or name
 
-
 @dataclass
 class MenuPage:
     name: str
@@ -27,7 +22,6 @@ class MenuPage:
     tim_index: Optional[int]
     tim_name: Optional[str]
     parsed: dict = field(default_factory=dict)
-
 
 @dataclass
 class MenuBundle:
@@ -40,13 +34,11 @@ class MenuBundle:
     pages: List[MenuPage] = field(default_factory=list)
     source_label: str = ""
 
-
 def _read_idx_lines(path: Path) -> List[str]:
     if not path.is_file():
         return []
     text = path.read_text(encoding="ascii", errors="replace")
     return [ln.strip() for ln in text.replace("\0", "\n").splitlines() if ln.strip()]
-
 
 def _load_arc(path: Path) -> Optional[GTArc]:
     if not path.is_file():
@@ -58,23 +50,13 @@ def _load_arc(path: Path) -> Optional[GTArc]:
     except Exception:
         return None
 
-
 def _basename_key(name: str) -> str:
     base = name.replace("\\", "/").split("/")[-1]
     if "." in base:
         base = base.rsplit(".", 1)[0]
     return base.lower().lstrip("_")
 
-
 def discover_menu_bundle(path: str | Path, arc: Optional[GTArc] = None) -> MenuBundle:
-    """
-    Locate MENU_HTM / MENU_IMG / IDX next to *path* (file or folder).
-
-    Accepts:
-      - path to MENU_HTM.ARC / MENU_IMG.ARC
-      - path to MENU/ folder
-      - currently open GTArc whose path is one of the above
-    """
     bundle = MenuBundle()
     p = Path(path) if path else None
 
@@ -157,7 +139,6 @@ def discover_menu_bundle(path: str | Path, arc: Optional[GTArc] = None) -> MenuB
     bundle.source_label = " + ".join(parts) if parts else (str(folder) if folder else "—")
     return bundle
 
-
 def _build_pages(bundle: MenuBundle) -> None:
     bundle.pages = []
     if not bundle.htm_arc:
@@ -218,9 +199,7 @@ def _build_pages(bundle: MenuBundle) -> None:
             )
         )
 
-
 def page_tim_image(bundle: MenuBundle, page: MenuPage):
-    """Return PIL Image or None for the page background."""
     if not bundle.img_arc or page.tim_index is None:
         return None
     try:

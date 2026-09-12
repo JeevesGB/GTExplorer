@@ -2,7 +2,6 @@
 from dataclasses import dataclass
 import numpy as np
 
-
 @dataclass
 class CameraState:
     yaw: float = 0.0        
@@ -10,7 +9,6 @@ class CameraState:
     distance: float = 5.0  
     pan_x: float = 0.0      
     pan_y: float = 0.0      
-
 
 class OrbitCamera:
 
@@ -21,8 +19,6 @@ class OrbitCamera:
         self.orbit_sensitivity = 0.5
         self.pan_sensitivity = 0.005
         self.zoom_sensitivity = 0.15
-
-
 
     def orbit(self, dx: float, dy: float) -> None:
         self.state.yaw = (self.state.yaw + dx * self.orbit_sensitivity) % 360.0
@@ -46,7 +42,6 @@ class OrbitCamera:
         self.state.pan_y = 0.0
 
     def get_rotation_matrix(self) -> np.ndarray:
-        """Construct 3x3 combined rotation matrix (Yaw * Pitch)."""
         rad_yaw = np.radians(self.state.yaw)
         rad_pitch = np.radians(self.state.pitch)
 

@@ -1,11 +1,9 @@
 from __future__ import annotations
-
 import os
 import sys
 import tempfile
 import threading
 from pathlib import Path
-
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
@@ -19,7 +17,6 @@ from PyQt6.QtWidgets import (
     QPushButton, QHBoxLayout,
     QFormLayout, QLineEdit,   
 )
-
 from ..utils.archive import GTArc
 from ..utils.replay import is_replay_save
 from ..utils.spec import is_spec_type, export_spec_strings
@@ -30,9 +27,7 @@ from . import names
 
 ARCHIVE_GLOBS = ("*.dat", "*.DAT", "*.arc", "*.ARC")
 
-
 def _win_alive(win) -> bool:
-    """Return False if the Qt window has been destroyed (worker still running)."""
     try:
         # PyQt6
         from PyQt6 import sip
@@ -59,7 +54,6 @@ def _win_alive(win) -> bool:
     except Exception:
         return False
 
-
 def _emit_progress(win, cur: int, total: int) -> bool:
     if not _win_alive(win):
         return False
@@ -69,7 +63,6 @@ def _emit_progress(win, cur: int, total: int) -> bool:
     except RuntimeError:
         return False
 
-
 def _emit_finished(win, ok: bool, payload) -> bool:
     if not _win_alive(win):
         return False
@@ -78,8 +71,6 @@ def _emit_finished(win, ok: bool, payload) -> bool:
         return True
     except RuntimeError:
         return False
-
-
 
 def last_dir(win, key: str = "last_open_dir") -> str:
     return win.settings.value(key, "", type=str) or ""
@@ -559,8 +550,6 @@ def repack(win) -> None:
     threading.Thread(target=worker, daemon=True).start()
 
 def would_write_into_disk_dir(win, out_path: str) -> bool:
-    """True if out_path is inside the configured Disk folder (protects the
-    pristine original disc image from being overwritten by a repack)."""
     up = getattr(win, "_user_paths", None)
     disk_dir = up.disk_dir if up else None
     if not disk_dir or not out_path:
@@ -877,17 +866,12 @@ def show_diff_dialog(win, rows, title: str) -> None:
     dlg.exec()
 
 def project_root() -> Path:
-    """Repo / app root (folder that contains tools/, src/, runtool.bat)."""
     return up_mod.app_root()
 
 def tools_dir() -> Path:
-    """Legacy fallback tools location (project_root/tools), used when the
-    user hasn't configured a tools folder in Setup / Workspace."""
     return project_root() / "tools"
 
 def effective_tools_dir(win) -> Path:
-    """The tools folder to use: the one configured in Setup / Workspace if
-    set, otherwise the legacy project_root/tools fallback."""
     up = getattr(win, "_user_paths", None)
     if up and up.tools_dir:
         return Path(up.tools_dir)
@@ -909,7 +893,7 @@ def _ask_setup_mode(win) -> str | None:
         "GTExplorer needs five working folders next to the app (or anywhere you choose):"
         "<ul style='margin-top:6px;margin-bottom:6px;'>"
         "<li><b>Disk</b> — original disc images (.bin / .cue)</li>"
-        "<li><b>ORIGINAL FILES</b> — dumped game archives (.DAT / .ARC)</li>"
+        "<li><b>ORIGINAL FILES</b> — dumped game archives (.DAT / .ARC) Making a copy is reccommended.</li>"
         "<li><b>EXTRACTED</b> — archive extracts for editing</li>"
         "<li><b>Modified Disks</b> — rebuilt disc images</li>"
         "<li><b>tools</b> — optional mkpsxiso / dumpsxiso</li>"
@@ -991,9 +975,7 @@ def clear_workspace_paths(win) -> None:
     )
 
 def set_workspace(win, first_run: bool = False) -> None:
-
     existing = up_mod.load_user_paths() or UserPaths()
-
     mode = "manual"
     if first_run or not existing.is_complete():
         mode = _ask_setup_mode(win)
@@ -1002,7 +984,6 @@ def set_workspace(win, first_run: bool = False) -> None:
                 "Setup skipped — run File → Setup / Workspace… to configure folders"
             )
             return
-
     if mode == "auto":
         new_paths = up_mod.default_auto_paths()
         new_paths.mkpsxiso_exe = existing.mkpsxiso_exe
@@ -1016,7 +997,6 @@ def set_workspace(win, first_run: bool = False) -> None:
         win.set_status("Setup saved — folders created automatically")
         return
 
-    # ---- Manual path picker ----
     dlg = QDialog(win)
     dlg.setWindowTitle("Welcome — Setup" if first_run else "Setup / Workspace")
     dlg.resize(680, 560)
@@ -1171,7 +1151,6 @@ def set_workspace(win, first_run: bool = False) -> None:
     win.set_status("Setup saved")
 
 def maybe_show_first_run_setup(win) -> None:
-    """Show setup wizard once on first launch (or if paths are incomplete)."""
     up = up_mod.load_user_paths()
     if up and up.is_complete():
         return
@@ -1238,24 +1217,16 @@ def on_input_file_clicked(win) -> None:
     open_file_path(win, Path(path), push_nav=False)
 
 def _resolve_tool_exe(win, which: str) -> Path | None:
-    """
-    which: 'mkpsxiso' or 'dumpsxiso'
-    Prefer the configured mkpsxiso_exe path, then the configured tools
-    folder, then the legacy project_root/tools fallback.
-    """
     up = getattr(win, "_user_paths", None)
     if which == "mkpsxiso" and up and up.mkpsxiso_exe:
         saved = Path(up.mkpsxiso_exe)
         if saved.is_file():
             return saved
-
     names = ["mkpsxiso.exe", "mkpsxiso"] if which == "mkpsxiso" else ["dumpsxiso.exe", "dumpsxiso"]
-
     search_dirs = []
     if up and up.tools_dir:
         search_dirs.append(Path(up.tools_dir))
     search_dirs.append(tools_dir())
-
     for td in search_dirs:
         for n in names:
             p = td / n
@@ -1267,7 +1238,6 @@ def _resolve_tool_exe(win, which: str) -> Path | None:
     return None
 
 def _run_tool_with_log(win, title: str, exe: Path, args: list, cwd: Path | None = None) -> None:
-    """Run external tool in a dialog with live-ish log (buffered read on finish)."""
     import subprocess
     from PyQt6.QtWidgets import (
         QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox, QLabel, QMessageBox,
@@ -1330,7 +1300,6 @@ def _run_tool_with_log(win, title: str, exe: Path, args: list, cwd: Path | None 
     dlg.exec()
 
 def dump_disc(win) -> None:
-    """GUI wrapper for dumpsxiso — extract disc image to files + XML."""
     from PyQt6.QtWidgets import (
         QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
         QHBoxLayout, QFileDialog, QDialogButtonBox, QLabel, QMessageBox,
@@ -1470,7 +1439,6 @@ def dump_disc(win) -> None:
         )
 
 def build_disc(win) -> None:
-    """GUI wrapper for mkpsxiso — rebuild .bin/.cue from project XML."""
     from PyQt6.QtWidgets import (
         QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
         QHBoxLayout, QFileDialog, QDialogButtonBox, QLabel, QMessageBox,
@@ -1605,7 +1573,6 @@ def build_disc(win) -> None:
         QMessageBox.information(win, "Build finished", msg)
 
 def open_tools_folder(win) -> None:
-    """Open the configured tools/ directory in the system file manager."""
     td = effective_tools_dir(win)
     td.mkdir(parents=True, exist_ok=True)
     if sys.platform == "win32":
@@ -1616,7 +1583,6 @@ def open_tools_folder(win) -> None:
         os.system(f'xdg-open "{td}"')
 
 def repack_selected_tpk(win) -> None:
-    """Rebuild selected TIM Pack entry from <stem>_tims folder on disk."""
     from PyQt6.QtWidgets import QFileDialog, QMessageBox
     from pathlib import Path
     from ..utils.tim_pack import parse_tim_pack, build_tim_pack

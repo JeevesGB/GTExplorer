@@ -1,6 +1,6 @@
 """Interactive 3D viewer helpers: presets, spin, LOD, modes, screenshot, keys."""
 from __future__ import annotations
-
+from PyQt6.QtGui import QImage, QPixmap
 from typing import Optional, Tuple
 
 # yaw, pitch

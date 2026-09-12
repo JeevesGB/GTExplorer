@@ -1,10 +1,7 @@
 from __future__ import annotations
-
 import struct
 from typing import List, Sequence, Tuple
-
 from PIL import Image
-
 # Layout (GT1):
 #   0x00  @(#)GT-CTEX\0
 #   0x0C  u16 unknown (often 2)
@@ -13,7 +10,6 @@ from PIL import Image
 #   0x60  256×256 4bpp image (32768 bytes)
 #   0x8060  palette_set_count × 512 bytes
 #           each set = 16 CLUTs × 16 colours × 2 bytes (BGR555)
-
 IMAGE_OFF = 0x60
 IMAGE_SIZE = 256 * 256 // 2  # 4bpp
 PAL_OFF = 0x8060
@@ -21,9 +17,7 @@ PAL_STRIDE = 512  # 16*16*2
 CLUT_SIZE = 32  # 16 × u16
 WIDTH = 256
 HEIGHT = 256
-
 RGBA = Tuple[int, int, int, int]
-
 
 def parse_ctex_header(data: bytes) -> dict:
     if len(data) < IMAGE_OFF + IMAGE_SIZE or not data.startswith(b"@(#)GT-CTEX"):
@@ -39,14 +33,12 @@ def parse_ctex_header(data: bytes) -> dict:
         "height": HEIGHT,
     }
 
-
 def _bgr555(c: int) -> RGBA:
     r = (c & 0x1F) << 3
     g = ((c >> 5) & 0x1F) << 3
     b = ((c >> 10) & 0x1F) << 3
     a = 0 if c == 0 else 255
     return (r, g, b, a)
-
 
 def rgba_to_bgr555(r: int, g: int, b: int, a: int = 255) -> int:
     if a < 8 and r < 8 and g < 8 and b < 8:
@@ -56,17 +48,14 @@ def rgba_to_bgr555(r: int, g: int, b: int, a: int = 255) -> int:
     b5 = max(0, min(31, (int(b) + 4) >> 3))
     return r5 | (g5 << 5) | (b5 << 10)
 
-
 def ctex_palette_count(data: bytes) -> int:
     try:
         return max(1, parse_ctex_header(data)["palette_count"])
     except Exception:
         return 1
 
-
 def _clut_offset(palette_index: int, clut_index: int) -> int:
     return PAL_OFF + palette_index * PAL_STRIDE + clut_index * CLUT_SIZE
-
 
 def read_clut(data: bytes, palette_index: int = 0, clut_index: int = 0) -> List[RGBA]:
     hdr = parse_ctex_header(data)
@@ -82,7 +71,6 @@ def read_clut(data: bytes, palette_index: int = 0, clut_index: int = 0) -> List[
         else:
             out.append((0, 0, 0, 0))
     return out
-
 
 def write_clut(
     data: bytearray | bytes,
@@ -108,10 +96,8 @@ def write_clut(
         struct.pack_into("<H", buf, off + i * 2, packed)
     return buf
 
-
 def read_palette_set(data: bytes, palette_index: int = 0) -> List[List[RGBA]]:
     return [read_clut(data, palette_index, c) for c in range(16)]
-
 
 def write_palette_set(
     data: bytearray | bytes,
@@ -122,7 +108,6 @@ def write_palette_set(
     for ci, colours in enumerate(cluts[:16]):
         buf = write_clut(buf, colours, palette_index, ci)
     return buf
-
 
 def duplicate_palette_set(
     data: bytes,
@@ -152,7 +137,6 @@ def duplicate_palette_set(
     struct.pack_into("<H", buf, 0x0E, n + 1)
     return buf
 
-
 def shift_clut_hue(
     colours: Sequence[RGBA],
     hue_deg: float = 0.0,
@@ -178,7 +162,6 @@ def shift_clut_hue(
         rr, gg, bb = colorsys.hsv_to_rgb(h, s, v)
         out.append((int(rr * 255), int(gg * 255), int(bb * 255), a))
     return out
-
 
 def decode_ctex(data: bytes, palette_index: int = 0, clut_index: int = 0):
     hdr = parse_ctex_header(data)
@@ -209,8 +192,6 @@ def decode_ctex(data: bytes, palette_index: int = 0, clut_index: int = 0):
     }
     return im, info
 
-
-
 def score_clut_as_body(colours: Sequence[RGBA]) -> float:
     import colorsys
     vals = []
@@ -236,7 +217,6 @@ def score_clut_as_body(colours: Sequence[RGBA]) -> float:
         return 0.08
     return mean_s * 0.65 + min(mean_v, 0.85) * 0.35 + min(len(sats), 8) * 0.02
 
-
 def collect_palette_usage(model, lod_index: int = 0) -> dict:
     usage = {i: 0 for i in range(16)}
     if model is None:
@@ -250,7 +230,6 @@ def collect_palette_usage(model, lod_index: int = 0) -> dict:
         pi = int(getattr(poly, "palette_index", 0) or 0) & 0x0F
         usage[pi] = usage.get(pi, 0) + 1
     return usage
-
 
 def rank_body_cluts(
     data: bytes,
@@ -292,7 +271,6 @@ def rank_body_cluts(
         out.append(ci)
     return out
 
-
 def recolor_clut_towards(
     colours: Sequence[RGBA],
     target_rgb: Tuple[int, int, int],
@@ -325,25 +303,13 @@ def recolor_clut_towards(
         out.append((int(rr * 255), int(gg * 255), int(bb * 255), a))
     return out
 
-
 def export_palettes_as_bmp(
     data: bytes,
     directory: str,
     palette_index: int = 0,
     prefix: str = "palette",
 ) -> List[str]:
-    """
-    Export the texture rendered under each of the 16 material CLUTs for one
-    paint job, matching GT2TextureEditor / GT2ModelTool dump layout:
-
-        directory/palette0.bmp … directory/palette15.bmp
-
-    Each BMP is an indexed 4bpp image (256×256) so external tools can edit
-    the shared pixel indices while swapping CLUTs.
-    Returns the list of written file paths.
-    """
     from pathlib import Path
-
     out_dir = Path(directory)
     out_dir.mkdir(parents=True, exist_ok=True)
     written: List[str] = []
@@ -387,7 +353,6 @@ def export_palettes_as_bmp(
         written.append(str(path))
     return written
 
-
 def iter_modified_cluts(
     original: bytes,
     edited: bytes,
@@ -403,7 +368,6 @@ def iter_modified_cluts(
             if old != new:
                 changed.append((pi, ci))
     return changed
-
 
 def merge_modified_palettes(
     source_edited: bytes,
@@ -450,7 +414,6 @@ def merge_modified_palettes(
         applied.append((pi, ci))
 
     return bytes(buf), applied
-
 
 def companion_tex_names(name: str) -> List[str]:
     base = name.replace("\\", "/").split("/")[-1]

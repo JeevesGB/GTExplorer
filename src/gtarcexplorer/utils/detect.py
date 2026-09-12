@@ -1,7 +1,6 @@
 import struct
 from .replay import detect_replay
 from .slt import is_slt_page, is_slt_index
-
 # (magic_bytes, type_name, extension)
 # Order matters: longer / more specific magics first where needed.
 _PREFIX_MAGICS = [

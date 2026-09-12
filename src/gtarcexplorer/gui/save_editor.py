@@ -1,12 +1,7 @@
-"""
-Save Editor canvas — PS1 memory cards (DuckStation .mcd) and GT saves.
-"""
 from __future__ import annotations
-
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
-
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
@@ -15,7 +10,6 @@ from PyQt6.QtWidgets import (
     QMessageBox, QFileDialog, QFormLayout, QGroupBox, QTabWidget,
     QSpinBox, QComboBox, QScrollArea, QGridLayout,
 )
-
 from ..utils.memcard import (
     is_memcard, parse_memcard, slot_payload, set_slot_filename,
     set_sc_title_in_card, usage_label, MemCard, BLOCK_SIZE,
@@ -28,7 +22,6 @@ from ..utils.gt1_save import (
     is_gt1_game_data, parse_gt1_progress, apply_progress, Gt1Progress,
     medal_name, LICENSE_TEST_LABELS, LICENSE_MEDAL_COUNT, MEDAL_NAMES,
 )
-
 
 class SlotTableModel(QAbstractTableModel):
     HEADERS = ["#", "Usage", "Filename", "Blocks", "Size", "Title"]
@@ -96,7 +89,6 @@ class SlotTableModel(QAbstractTableModel):
             return self._slots[row]
         return None
 
-
 class ReplayEntryModel(QAbstractTableModel):
     HEADERS = ["#", "Offset", "Name"]
 
@@ -154,9 +146,7 @@ class ReplayEntryModel(QAbstractTableModel):
     def names(self) -> List[str]:
         return list(self._names)
 
-
 class SaveEditorWidget(QWidget):
-    """Canvas: DuckStation .mcd memory cards + standalone SC / REPLAY saves."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -351,8 +341,6 @@ class SaveEditorWidget(QWidget):
         self._dirty = True
         self.dirty_label.setText("modified")
 
-    # ----- loaders -----
-
     def load_file(self, path: Path):
         data = Path(path).read_bytes()
         self.load_bytes(data, path)
@@ -457,8 +445,6 @@ class SaveEditorWidget(QWidget):
         self.status.setText(f"Replay — {len(save.entries)} entries")
         if save.entries:
             self.table.selectRow(0)
-
-    # ----- selection / edit -----
 
     def _on_slot_select(self, *_):
         rows = self.table.selectionModel().selectedRows()
@@ -576,9 +562,6 @@ class SaveEditorWidget(QWidget):
         self._raw = data
         self._mark_dirty()
 
-    # ----- file ops -----
-
-
     def _clear_progress_ui(self):
         self._slot_payload = b""
         self._progress = None
@@ -643,7 +626,6 @@ class SaveEditorWidget(QWidget):
         self._on_progress_edited()
 
     def _sync_payload_into_raw(self):
-        """Write edited SC payload back into the memory-card image or standalone raw."""
         if not self._slot_payload:
             return
         if self._mode == "mcd" and self._mc and self._active_slot_index >= 0:

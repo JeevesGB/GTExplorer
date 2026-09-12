@@ -1,13 +1,10 @@
 from __future__ import annotations
-
 import json
 import sys
 from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 from typing import Optional
-
 PATHS_FILENAME = "user_paths.json"
-
 FOLDER_SPECS = [
     ("disk_dir", "Disk",
      "Place your original Gran Turismo disc image (.bin / .cue) here."),
@@ -21,19 +18,15 @@ FOLDER_SPECS = [
     ("tools_dir", "tools",
      "Place mkpsxiso / dumpsxiso here (optional, only needed for disc dump/rebuild)."),
 ]
-
 FOLDER_FIELDS = [f for f, _, _ in FOLDER_SPECS]
-
 
 def app_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent.parent.parent
 
-
 def paths_file() -> Path:
     return app_root() / PATHS_FILENAME
-
 
 @dataclass
 class UserPaths:
@@ -57,7 +50,6 @@ class UserPaths:
         val = getattr(self, field, "") or ""
         return Path(val) if val else None
 
-
 def load_user_paths() -> Optional[UserPaths]:
     f = paths_file()
     if not f.is_file():
@@ -75,7 +67,6 @@ def load_user_paths() -> Optional[UserPaths]:
             elif isinstance(val, str):
                 setattr(up, key, val)
     return up
-
 
 def save_user_paths(up: UserPaths) -> None:
     f = paths_file()
@@ -104,7 +95,6 @@ def default_auto_paths(root: Optional[Path] = None) -> UserPaths:
     for field_name, folder_name, _desc in FOLDER_SPECS:
         setattr(up, field_name, str(root / folder_name))
     return up
-
 
 def create_missing_folders(up: UserPaths) -> list[str]:
     created: list[str] = []

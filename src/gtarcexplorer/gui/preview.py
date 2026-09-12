@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 import struct
-
 from ..utils.tim_pack import parse_tim_pack
 from ..utils.audio import parse_sample_bank
 from ..utils.gtps import parse_gtps_header
@@ -19,14 +17,12 @@ from ..utils.gtenv import parse_gtenv, format_gtenv_preview
 
 CANVAS_VIEWER = 2
 
-
 def hex_dump(win, chunk: bytes) -> None:
     for i in range(0, len(chunk), 16):
         line = chunk[i : i + 16]
         hx = " ".join(f"{b:02x}" for b in line)
         asc = "".join(chr(b) if 32 <= b < 127 else "." for b in line)
         win.preview_text.append(f"{i:04x}  {hx:<48}  {asc}")
-
 
 def show_preview(win, idx: int) -> None:
     try:
@@ -251,29 +247,23 @@ def hex_dump_lines(chunk: bytes) -> list[str]:
         lines.append(f"{i:04x}  {hx:<48}  {asc}")
     return lines
 
-
 def _set_preview(win, lines: list[str]) -> None:
-    """Set preview text in one shot and keep view at the top."""
     win.preview_text.setPlainText("\n".join(lines))
     win.preview_text.verticalScrollBar().setValue(0)
-
 
 def show_preview(win, idx: int) -> None:
     try:
         data = win.arc.get_data(idx)
         f = win.arc.files[idx]
-
         win.preview_info.setText(
             f"#{idx}  •  {f['type']}  •  {len(data):,} bytes  •  {f['ext']}"
         )
-
         lines: list[str] = [
             f"Type     : {f['type']}",
             f"Extension: {f['ext']}",
             f"Size     : {len(data):,} bytes",
             "",
         ]
-
         if is_replay_save(data) or f.get("type") == "GT Replay Save":
             try:
                 save = parse_replay_save(data)
@@ -283,7 +273,6 @@ def show_preview(win, idx: int) -> None:
                 lines.extend(hex_dump_lines(data[:4096]))
             _set_preview(win, lines)
             return
-
         if f["type"] == "TIM Pack":
             tims = parse_tim_pack(data)
             lines.append(f"TIM Pack – {len(tims)} textures")
@@ -293,7 +282,6 @@ def show_preview(win, idx: int) -> None:
             _set_preview(win, lines)
             win.show_pack_in_viewer(data)
             win._switch_canvas(CANVAS_VIEWER)
-
         elif f["type"] in ("Filename List", "Text / Messages"):
             names_list = parse_name_list(data)
             if names_list:

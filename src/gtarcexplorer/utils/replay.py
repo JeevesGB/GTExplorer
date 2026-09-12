@@ -2,7 +2,6 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
-
 ENTRY_SIZE = 0x34
 ENTRY_TABLE_OFF = 0x200
 NAME_OFF = 0x08
@@ -105,7 +104,6 @@ def detect_replay(data: bytes) -> Optional[Tuple[str, str]]:
     return None
 
 def set_entry_name(raw: bytes, entry_index: int, name: str) -> bytes:
-    """Return a copy of the save with entry name updated (max 24 ASCII bytes)."""
     data = bytearray(raw)
     off = ENTRY_TABLE_OFF + entry_index * ENTRY_SIZE
     if off + ENTRY_SIZE > len(data):
@@ -116,9 +114,7 @@ def set_entry_name(raw: bytes, entry_index: int, name: str) -> bytes:
         data[off + NAME_OFF + i] = name_bytes[i] if i < len(name_bytes) else 0
     return bytes(data)
 
-
 def set_save_title(raw: bytes, title: str) -> bytes:
-    """Update the Shift-JIS title at 0x04 (64 bytes)."""
     data = bytearray(raw)
     try:
         tb = title.encode("shift_jis", errors="replace")[:0x3F]
@@ -127,7 +123,6 @@ def set_save_title(raw: bytes, title: str) -> bytes:
     for i in range(0x40):
         data[0x04 + i] = tb[i] if i < len(tb) else 0
     return bytes(data)
-
 
 def set_icon_frames(raw: bytes, frames: int) -> bytes:
     data = bytearray(raw)

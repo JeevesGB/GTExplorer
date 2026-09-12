@@ -1,7 +1,6 @@
 from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
-
 if TYPE_CHECKING:
     from PyQt6.QtGui import QImage, QColor
 else:
@@ -13,9 +12,7 @@ else:
         except ImportError:
             QImage = None 
             QColor = None
-
 import numpy as np
-
 try:
     from .gtcar import (
         GTCarModel, LOD, UVPolygon, Polygon,
@@ -26,7 +23,6 @@ except ImportError:
         GTCarModel, LOD, UVPolygon, Polygon,
         convert_scale, UNITS_TO_METRES,
     )
-
 _tex_cache: Dict[int, dict] = {}  
 _lod_cache: Dict[int, dict] = {}  
 

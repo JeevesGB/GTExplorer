@@ -1,12 +1,7 @@
-"""TIM Pack (.tpk) pack / repack actions."""
 from __future__ import annotations
-
 from pathlib import Path
-
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
-
 from ..utils.tim_pack import parse_tim_pack, build_tim_pack
-
 
 def _load_tims_from_folder(folder: Path) -> list[tuple[str, bytes]]:
     order_file = folder / "tim_order.txt"
@@ -31,9 +26,7 @@ def _load_tims_from_folder(folder: Path) -> list[tuple[str, bytes]]:
         raise FileNotFoundError(f"No .tim files in {folder}")
     return [(p.name, p.read_bytes()) for p in files]
 
-
 def repack_selected_tpk(win) -> None:
-    """Rebuild selected TIM Pack from its *_tims folder."""
     items = win.tree.selectedItems()
     if not items:
         QMessageBox.information(win, "Repack TPK", "Select a TIM Pack entry in the tree.")
@@ -103,9 +96,7 @@ def repack_selected_tpk(win) -> None:
     if hasattr(win, "on_select"):
         win.on_select()
 
-
 def pack_folder_to_tpk(win) -> None:
-    """Pick a folder of .tim files and save a standalone .tpk."""
     start = str(getattr(win, "extract_dir", None) or win._last_dir())
     folder = QFileDialog.getExistingDirectory(
         win, "Folder containing .tim files (e.g. au_tims)", start
