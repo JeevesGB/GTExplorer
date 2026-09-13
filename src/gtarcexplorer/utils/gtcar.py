@@ -1,15 +1,20 @@
 from __future__ import annotations
+
 import io
 import json
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, List, Optional, Set, TextIO, Tuple
+
+
 UNITS_TO_METRES = 1.0 / 4096.0
+
 _MAX_LODS = 8
 _MAX_VERTS = 4096
 _MAX_NORMS = 4096
 _MAX_FACES = 8192
+
 
 def _remaining(f: BinaryIO) -> int:
     pos = f.tell()
@@ -17,6 +22,7 @@ def _remaining(f: BinaryIO) -> int:
     end = f.tell()
     f.seek(pos)
     return max(0, end - pos)
+
 
 def _read_exact(f: BinaryIO, n: int, what: str = "data") -> bytes:
     data = f.read(n)
@@ -26,6 +32,7 @@ def _read_exact(f: BinaryIO, n: int, what: str = "data") -> bytes:
             f"(at offset {f.tell() - len(data)})"
         )
     return data
+
 
 def _u16(f: BinaryIO) -> int:
     return struct.unpack("<H", _read_exact(f, 2, "u16"))[0]
@@ -74,6 +81,7 @@ def convert_scale(scale: int) -> float:
     return float(1 << amount)
 
 def _bgr_to_kd(face_colour: int) -> Tuple[float, float, float]:
+    """face_colour is stored BGR-style; return approximate Kd RGB 0-1."""
     if face_colour <= 0:
         return (0.3, 0.3, 0.3)
     b = (face_colour >> 16) & 0xFF
@@ -81,39 +89,83 @@ def _bgr_to_kd(face_colour: int) -> Tuple[float, float, float]:
     r = face_colour & 0xFF
     return (r / 255.0, g / 255.0, b / 255.0)
 
-def _pack_vertex_refs(v0: int, v1: int, v2: int, v3: int, is_quad: bool) -> bytes:
 
+
+
+
+
+# ---------------------------------------------------------------------------
+# Write-back: pack GT1 .car binary (reverse of read path)
+# ---------------------------------------------------------------------------
+
+def _pack_vertex_refs(v0: int, v1: int, v2: int, v3: int, is_quad: bool) -> bytes:
+    """
+    Pack four vertex indices into the 6-byte GT1 face vertex block.
+    Inverse of the bit-unpacking in Polygon.read_car.
+    Indices must be 0..511.
+    """
     v0 = max(0, min(511, v0))
     v1 = max(0, min(511, v1))
     v2 = max(0, min(511, v2))
     v3 = max(0, min(511, v3)) if is_quad else 0
 
+    # Layout (from GT2ModelTool / gtcar decode):
+    #   v0 = ((b1 & 1) * 256) + b0
+    #   v1 = ((b2 & 2) * 128) + ((b2 & 1) * 128) + (b1 >> 1)
+    #   v2 = ((b3 & 4) * 64) + ((b3 & 2) * 64) + ((b3 & 1) * 64) + (b2 >> 2)
+    #   v3 = ((b5 & 1) * 256) + b4
     b0 = v0 & 0xFF
     b1_bit0 = (v0 >> 8) & 1
     b1 = ((v1 & 0x7F) << 1) | b1_bit0
 
+    # v1 high bits into b2 low bits
+    # v1 = (b2 & 3) * 128 + (b1 >> 1)  →  b2 low 2 bits carry top of v1
     v1_hi = (v1 >> 7) & 3
     b2_low = v1_hi
+    # v2 low bits in b2 high
+    # v2 = (b3 & 7) * 64 + (b2 >> 2)
     b2 = ((v2 & 0x3F) << 2) | b2_low
 
     v2_hi = (v2 >> 6) & 7
-    b3 = v2_hi 
+    b3 = v2_hi  # only low 3 bits needed for v2_hi; rest often 0/8 from samples
 
     b4 = v3 & 0xFF
     b5 = (v3 >> 8) & 1
 
     return bytes([b0, b1, b2, b3, b4, b5])
 
+
 def _pack_normal_refs(n0: int, n1: int, n2: int, n3: int, render_order: int) -> bytes:
+    """
+    Pack four normal indices + render_order bit into 6-byte block.
+    Inverse of normal unpacking in Polygon.read_car.
+    """
     n0 = max(0, min(511, n0))
     n1 = max(0, min(511, n1))
     n2 = max(0, min(511, n2))
     n3 = max(0, min(511, n3))
 
+    # Decode was:
+    #   n0 = (b5 + nb1*256) >> 1  & 0x1FF   where b5 is last vertex byte
+    #   Actually normals use separate 6 bytes after verts.
+    # From gtcar:
+    #   n0 = (b5 + (nb1 * 256)) >> 1 & 0x1FF  — b5 is vertex byte; for packing we
+    #   approximate with independent 6-byte normal block matching C# comments.
+    #
+    # Practical packing matching common samples:
+    # We encode n0..n3 into nb1..nb6 similar to CDO-style shifted fields where possible.
+    # GT1 uses a denser pack; this best-effort pack aims for round-trip on simple models.
+
+    # Using a simplified invertible scheme derived from the shifts:
+    # n0 occupies bits across nb1 and prior; we set:
     nb1 = (n0 >> 1) & 0xFF
+    # carry of n0 low bit is awkward (shared with vertex b5); set nb2 with n1
+    nb2 = ((n1 & 0x1F) << 3) | ((n0 >> 9) & 0)  # top of n1 in high of nb2 after >>3
+    # better: n1 = (nb1 + nb2*256) >> 3 & 0x1FF
+    # So nb1 contributes to both n0 and n1 — coupled. Use iterative fit:
 
-    nb2 = ((n1 & 0x1F) << 3) | ((n0 >> 9) & 0) 
-
+    # Coupled pack (approximate but works for indices < 256 which is typical):
+    # Prefer low 8 bits of each normal in sequential layout used by many cars.
     nb1 = n0 & 0xFF
     nb2 = ((n1 & 0xFF) >> 0)
     if render_order == 0b10001:
@@ -124,10 +176,16 @@ def _pack_normal_refs(n0: int, n1: int, n2: int, n3: int, render_order: int) -> 
     nb6 = 0
     return bytes([nb1, nb2, nb3, nb4, nb5, nb6])
 
+
 def _face_type_byte(is_quad: bool, textured: bool) -> int:
+    # From GT2ModelTool comments (CAR values):
+    # 21 unt tri, 29 unt quad, 25 tex tri, 2D tex quad
+    # read path sometimes subtracts 1 for 33/41
     if textured:
         return 0x2D if is_quad else 0x25
     return 0x29 if is_quad else 0x21
+
+
 
 @dataclass
 class Vertex:
@@ -141,12 +199,14 @@ class Vertex:
         self.z = -self.z 
 
     def write_car(self, f: BinaryIO) -> None:
+        # GT1 stores Z negated relative to our in-memory value
         z = -self.z
         f.write(struct.pack("<hhhh", self.x, self.y, z, self.w))
 
     def to_obj(self, scale: float) -> str:
         s = scale * UNITS_TO_METRES
         return f"v {self.x * s:.8f} {self.y * s:.8f} {self.z * s:.8f}"
+
 
 @dataclass
 class Normal:
@@ -176,12 +236,15 @@ class Normal:
     def to_obj(self) -> str:
         return f"vn {self.x:.8f} {self.y:.8f} {self.z:.8f}"
 
+
 @dataclass
 class UVCoordinate:
     x: int = 0
     y: int = 0
 
     def read_car(self, f: BinaryIO) -> None:
+        # Store RAW bytes — GTExplorer's renderer (gtcar_render) samples the
+        # 256x224 sheet with these pixel coords. Do NOT subtract 32 here.
         self.x = _u8(f)
         self.y = _u8(f)
 
@@ -189,12 +252,14 @@ class UVCoordinate:
         f.write(bytes([self.x & 0xFF, self.y & 0xFF]))
 
     def _obj_y(self) -> int:
+        """Y for OBJ export. GT2ModelTool subtracts 32 when Y>=32 (flag bits)."""
         y = self.y
         if y >= 32:
             y -= 32
         return y
 
     def to_obj(self) -> str:
+        # Match GT2ModelTool OBJ export: U/255, V = 1 - (Y'/223)
         y = self._obj_y()
         return f"vt {self.x / 255.0:.8f} {1.0 - (y / 223.0):.8f}"
 
@@ -204,6 +269,7 @@ class UVCoordinate:
         uv.x = max(0, min(255, int(round(u * 255.0))))
         uv.y = max(0, min(223, int(round((1.0 - v) * 223.0))))
         return uv
+
 
 @dataclass
 class WheelPosition:
@@ -217,9 +283,11 @@ class WheelPosition:
         self.menu_x = self.x
 
     def write_car(self, f: BinaryIO) -> None:
+        # GT1 files store MenuX as 0; race X is used at runtime
         f.write(struct.pack("<hhhh", self.x, self.y, self.z, 0))
 
     def to_obj_group(self, wheel_number: int, first_vert: int) -> Tuple[List[str], int]:
+        """Emit a tiny quad at the wheel centre for visualisation."""
         lines: List[str] = []
         sx = self.x * UNITS_TO_METRES
         sy = self.y * UNITS_TO_METRES
@@ -234,6 +302,7 @@ class WheelPosition:
         a, b, c, d = first_vert, first_vert + 1, first_vert + 2, first_vert + 3
         lines.append(f"f {a} {b} {c} {d}")
         return lines, first_vert + 4
+
 
 @dataclass
 class Polygon:
@@ -328,7 +397,10 @@ class Polygon:
             parts.append(idx(self.v3, self.n3))
         return "f " + " ".join(parts)
 
+
+
     def write_car(self, f, vertices: List[Vertex], normals: List[Normal], is_quad: bool) -> None:
+        """Pack this untextured face into 16 bytes (GT1 CAR layout)."""
         def vidx(v: Optional[Vertex]) -> int:
             if v is None:
                 return 0
@@ -352,6 +424,7 @@ class Polygon:
         f.write(_pack_normal_refs(n0, n1, n2, n3, self.render_order))
         # 3 texture flags + face type
         f.write(bytes([0x00, 0x00, 0x00, _face_type_byte(is_quad, textured=False)]))
+
 
 @dataclass
 class UVPolygon(Polygon):
@@ -412,6 +485,7 @@ class UVPolygon(Polygon):
         return "f " + " ".join(parts)
 
     def write_car(self, f: BinaryIO, vertices: List[Vertex], normals: List[Normal], is_quad: bool) -> None:
+        """Pack textured face: 16-byte base + UV/palette block (28 bytes total)."""
         def vidx(v: Optional[Vertex]) -> int:
             if v is None:
                 return 0
@@ -440,13 +514,15 @@ class UVPolygon(Polygon):
         f.write(bytes([self.uv0.x & 0xFF, self.uv0.y & 0xFF]))
         # palette packing inverse of: palette_index = (raw_pal >> 4) + (raw_pal & 0x3F)
         # approximate: store index in low bits
-        pal = max(0, min(63, self.palette_index))
-        raw_pal = pal  # simplified
-        f.write(struct.pack("<H", raw_pal))
+        pal = max(0, min(63, int(self.palette_index)))
+        # GT2ModelTool WriteToCDO encoding (same read formula on CAR)
+        raw_pal = ((pal & 0x0C) << 4) + (pal & 0x03)
+        f.write(struct.pack("<H", raw_pal & 0xFFFF))
         f.write(bytes([self.uv1.x & 0xFF, self.uv1.y & 0xFF]))
         f.write(bytes([0x00, 0x00]))  # unk
         f.write(bytes([self.uv2.x & 0xFF, self.uv2.y & 0xFF]))
         f.write(bytes([self.uv3.x & 0xFF, self.uv3.y & 0xFF]))
+
 
 @dataclass
 class LOD:
@@ -512,7 +588,9 @@ class LOD:
             p.read_car(f, True, self.vertices, self.normals)
             self.uv_quads.append(p)
 
+
     def write_car(self, f: BinaryIO) -> None:
+        """Write one LOD block (header + geometry)."""
         f.write(struct.pack("<HHHH", len(self.vertices), len(self.normals),
                             len(self.triangles), len(self.quads)))
         f.write(struct.pack("<HH", 0, 0))  # skipped
@@ -589,6 +667,8 @@ class LOD:
             first_vt + len(uvs),
         )
 
+
+
 @dataclass
 class ShadowVertex:
     x: int = 0
@@ -609,6 +689,7 @@ class ShadowVertex:
         s = scale * UNITS_TO_METRES
         return f"v {self.x * s:.8f} 0 {self.z * s:.8f}"
 
+
 @dataclass
 class ShadowPolygon:
     v0: Optional[ShadowVertex] = None
@@ -622,6 +703,7 @@ class ShadowPolygon:
             return str(vertices.index(v) + first_v)
         return f"f {idx(self.v0)} {idx(self.v1)} {idx(self.v2)} {idx(self.v3)}"
 
+
 @dataclass
 class Shadow:
     scale: int = 16
@@ -633,6 +715,7 @@ class Shadow:
     high_z: int = 0
 
     def read_car(self, f: BinaryIO) -> None:
+        """GT1 CAR shadow: header + (quadCount*4) vertices; faces are implicit order."""
         if _remaining(f) < 32:
             return
         unknown = _u16(f)  # always 0
@@ -708,7 +791,10 @@ class Shadow:
             out.write(q.to_obj_face(self.vertices, first_v) + "\n")
         return first_v + len(self.vertices)
 
+
+
 def _merge_overlapping_lod(lod: "LOD") -> None:
+    """Merge vertices that share exact coordinates; remap face references."""
     if not lod.vertices:
         return
     key_to_canon: dict[tuple, Vertex] = {}
@@ -727,6 +813,7 @@ def _merge_overlapping_lod(lod: "LOD") -> None:
     for p in list(lod.triangles) + list(lod.quads) + list(lod.uv_triangles) + list(lod.uv_quads):
         p.v0, p.v1, p.v2, p.v3 = mapv(p.v0), mapv(p.v1), mapv(p.v2), mapv(p.v3)
     lod.vertices = new_verts
+
 
 @dataclass
 class GTCarModel:
@@ -843,12 +930,22 @@ class GTCarModel:
             )
         return "\n".join(lines)
 
+
     def write_car(self, path: Path | str | None = None) -> bytes:
+        """
+        Serialise this model to GT1 .car binary.
+
+        If path is given, also writes the file. Returns the raw bytes.
+        Layout matches ReadFromCAR / from_bytes (magic, wheels, menu dims, LODs, gaps).
+        """
         buf = io.BytesIO()
 
+        # Magic + pad to 0x10
         buf.write(b"@(#)GT-CAR")
         buf.write(bytes(0x10 - buf.tell()))
 
+        # Wheels are stored in file order opposite of in-memory reordering:
+        # in-memory = [file2, file3, file0, file1]  →  file order = [mem2, mem3, mem0, mem1]
         if len(self.wheels) != 4:
             raise ValueError(f"Expected 4 wheel positions, got {len(self.wheels)}")
         file_wheels = [self.wheels[2], self.wheels[3], self.wheels[0], self.wheels[1]]
@@ -887,15 +984,27 @@ class GTCarModel:
         json_path: Path | str | None = None,
         scale_hint: int = 16,
     ) -> "GTCarModel":
+        """
+        Build a GTCarModel from an OBJ (+ optional JSON metadata from export_obj).
+
+        Limitations (v1):
+        - Expects groups named lod0, lod1, ... (as written by export_obj)
+        - Wheel groups wheelpos0..3 restore approximate positions
+        - Materials named paletteXX_* become UV faces; untextured_* become untextured
+        - Face bit-packing is best-effort; always test in-game / in the viewer
+        """
         obj_path = Path(obj_path)
         if json_path is None:
             cand = obj_path.with_suffix(".json")
             json_path = cand if cand.exists() else None
         else:
             json_path = Path(json_path)
+
         meta = {}
         if json_path and Path(json_path).exists():
             meta = json.loads(Path(json_path).read_text(encoding="utf-8"))
+
+        # Material name → settings (GT2ModelTool-style Materials list)
         mat_map: dict[str, dict] = {}
         for m in meta.get("Materials") or []:
             if isinstance(m, dict) and m.get("Name"):
@@ -905,6 +1014,7 @@ class GTCarModel:
         normals_all: List[Normal] = []
         uvs_all: List[UVCoordinate] = []
 
+        # Per-group accumulation
         groups: dict[str, dict] = {}
         current = "default"
         groups[current] = {"faces": [], "usemtl": "untextured"}
@@ -1124,6 +1234,7 @@ class GTCarModel:
 
         return model
 
+
     def export_obj(
         self,
         obj_path: Path | str,
@@ -1132,6 +1243,13 @@ class GTCarModel:
         write_json: bool = True,
         tex_path: Path | str | None = None,
     ) -> list[Path]:
+        """
+        Export to OBJ + MTL (+ optional JSON metadata).
+
+        Returns list of paths written (obj, mtl, and json if requested).
+        Material naming stays compatible with the existing exporter and with
+        GT2ModelTool conventions (paletteXX_..., untextured_order..., etc.).
+        """
         obj_path = Path(obj_path)
         if mtl_path is None:
             mtl_path = obj_path.with_suffix(".mtl")
@@ -1284,6 +1402,10 @@ class GTCarModel:
 
         return written
 
+
+
+
+
 if __name__ == "__main__":
     import sys
 
@@ -1297,6 +1419,7 @@ if __name__ == "__main__":
 
     out = Path(sys.argv[2]) if len(sys.argv) > 2 else src.with_suffix(".obj")
     if out.suffix.lower() == ".car":
+        # round-trip test path: car -> already loaded; just rewrite
         data = model.write_car(out)
         print(f"Wrote {out} ({len(data)} bytes)")
     else:

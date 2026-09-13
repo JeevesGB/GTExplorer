@@ -1,30 +1,27 @@
 """
-GT2 → GT1 model converter canvas widget for GTExplorer.
+GT2 → GT1 model + texture converter canvas widget for GTExplorer.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 try:
-    from PyQt6.QtCore import Qt, pyqtSignal
+    from PyQt6.QtCore import pyqtSignal
     from PyQt6.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
         QFileDialog, QTextEdit, QGroupBox, QFormLayout, QCheckBox, QMessageBox,
-        QProgressBar, QFrame,
+        QProgressBar,
     )
 except ImportError:
-    from PyQt5.QtCore import Qt, pyqtSignal
+    from PyQt5.QtCore import pyqtSignal
     from PyQt5.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
         QFileDialog, QTextEdit, QGroupBox, QFormLayout, QCheckBox, QMessageBox,
-        QProgressBar, QFrame,
+        QProgressBar,
     )
 
 
 class GT2ConverterWidget(QWidget):
-    """Import GT2 .cdo/.cno and write a GT1 .car (optional OBJ side-export)."""
-
     converted = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -36,8 +33,7 @@ class GT2ConverterWidget(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        title = QLabel("GT2 → GT1 Model Converter")
-        title.setObjectName("pageTitle")
+        title = QLabel("GT2 → GT1 Converter")
         font = title.font()
         font.setPointSize(font.pointSize() + 2)
         font.setBold(True)
@@ -45,49 +41,66 @@ class GT2ConverterWidget(QWidget):
         root.addWidget(title)
 
         blurb = QLabel(
-            "Convert Gran Turismo 2 car bodies (.cdo / .cno, optionally gzip) "
-            "into GT1 .car files for use in GTExplorer / CAR.DAT slots.\n"
-            "Textures (.cdp → .tex) are not converted here yet — map materials in Blender if needed."
+            "Convert Gran Turismo 2 car bodies and textures into GT1 formats.\n"
+            "Model: .cdo / .cno → .car    Texture: .cdp / .cnp → .tex"
         )
         blurb.setWordWrap(True)
-        blurb.setObjectName("mutedLabel")
         root.addWidget(blurb)
 
-        box = QGroupBox("Input / Output")
+        box = QGroupBox("Model")
         form = QFormLayout(box)
 
         self.ed_cdo = QLineEdit()
-        self.ed_cdo.setPlaceholderText("GT2 .cdo or .cno (or .gz)")
+        self.ed_cdo.setPlaceholderText("GT2 .cdo / .cno (optional .gz)")
         btn_cdo = QPushButton("Browse…")
         btn_cdo.clicked.connect(self._browse_cdo)
-        row1 = QHBoxLayout()
-        row1.addWidget(self.ed_cdo, stretch=1)
-        row1.addWidget(btn_cdo)
-        form.addRow("GT2 model", row1)
+        row = QHBoxLayout()
+        row.addWidget(self.ed_cdo, stretch=1)
+        row.addWidget(btn_cdo)
+        form.addRow("GT2 model", row)
 
-        self.ed_out = QLineEdit()
-        self.ed_out.setPlaceholderText("Output GT1 .car path")
-        btn_out = QPushButton("Browse…")
-        btn_out.clicked.connect(self._browse_out)
-        row2 = QHBoxLayout()
-        row2.addWidget(self.ed_out, stretch=1)
-        row2.addWidget(btn_out)
-        form.addRow("GT1 .car", row2)
+        self.ed_car = QLineEdit()
+        self.ed_car.setPlaceholderText("Output GT1 .car")
+        btn_car = QPushButton("Browse…")
+        btn_car.clicked.connect(self._browse_car)
+        row = QHBoxLayout()
+        row.addWidget(self.ed_car, stretch=1)
+        row.addWidget(btn_car)
+        form.addRow("GT1 .car", row)
 
-        self.chk_obj = QCheckBox("Also export OBJ + JSON (for Blender)")
+        self.chk_obj = QCheckBox("Also export OBJ + JSON")
         self.chk_obj.setChecked(True)
         form.addRow("", self.chk_obj)
-
-        self.chk_replace_hint = QCheckBox(
-            "Remember: easiest in-game test is replacing an existing CAR.DAT body slot"
-        )
-        self.chk_replace_hint.setEnabled(False)
-        form.addRow("", self.chk_replace_hint)
-
         root.addWidget(box)
 
+        tbox = QGroupBox("Texture")
+        tform = QFormLayout(tbox)
+
+        self.ed_cdp = QLineEdit()
+        self.ed_cdp.setPlaceholderText("GT2 .cdp / .cnp (optional .gz)")
+        btn_cdp = QPushButton("Browse…")
+        btn_cdp.clicked.connect(self._browse_cdp)
+        row = QHBoxLayout()
+        row.addWidget(self.ed_cdp, stretch=1)
+        row.addWidget(btn_cdp)
+        tform.addRow("GT2 texture", row)
+
+        self.ed_tex = QLineEdit()
+        self.ed_tex.setPlaceholderText("Output GT1 .tex")
+        btn_tex = QPushButton("Browse…")
+        btn_tex.clicked.connect(self._browse_tex)
+        row = QHBoxLayout()
+        row.addWidget(self.ed_tex, stretch=1)
+        row.addWidget(btn_tex)
+        tform.addRow("GT1 .tex", row)
+
+        self.chk_tex_edit = QCheckBox("Also export editable texture folder")
+        self.chk_tex_edit.setChecked(False)
+        tform.addRow("", self.chk_tex_edit)
+        root.addWidget(tbox)
+
         actions = QHBoxLayout()
-        self.btn_convert = QPushButton("Convert to GT1 .car")
+        self.btn_convert = QPushButton("Convert")
         self.btn_convert.setDefault(True)
         self.btn_convert.clicked.connect(self._run_convert)
         self.btn_clear = QPushButton("Clear log")
@@ -104,102 +117,150 @@ class GT2ConverterWidget(QWidget):
 
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMinimumHeight(180)
+        self.log.setMinimumHeight(160)
         root.addWidget(self.log, stretch=1)
 
-        tip = QLabel(
-            "Pipeline: GT2 .cdo → parse LODs/wheels → GTCarModel → write_car(). "
-            "Heavy GT2 meshes may need LOD simplification in Blender before in-game use."
-        )
-        tip.setWordWrap(True)
-        tip.setObjectName("mutedLabel")
-        root.addWidget(tip)
+    def _append(self, msg: str) -> None:
+        self.log.append(msg)
+
+    def _stem(self, path: Path) -> str:
+        name = path.name
+        for suf in (".cdo.gz", ".cno.gz", ".cdp.gz", ".cnp.gz",
+                    ".cdo", ".cno", ".cdp", ".cnp", ".gz"):
+            if name.lower().endswith(suf):
+                return name[: -len(suf)]
+        return path.stem
 
     def _browse_cdo(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select GT2 car model",
-            "",
-            "GT2 model (*.cdo *.cno *.cdo.gz *.cno.gz);;All files (*)",
+            self, "GT2 model", "",
+            "GT2 model (*.cdo *.cno *.cdo.gz *.cno.gz);;All (*)",
         )
         if not path:
             return
         self.ed_cdo.setText(path)
         p = Path(path)
-        name = p.name
-        for suf in (".cdo.gz", ".cno.gz", ".cdo", ".cno", ".gz"):
-            if name.lower().endswith(suf):
-                name = name[: -len(suf)]
+        stem = self._stem(p)
+        if not self.ed_car.text().strip():
+            self.ed_car.setText(str(p.with_name(stem + "_gt1.car")))
+        # auto-suggest sibling texture
+        for ext in (".cdp", ".cnp", ".cdp.gz", ".cnp.gz"):
+            sib = p.with_name(stem + ext)
+            if sib.is_file() and not self.ed_cdp.text().strip():
+                self.ed_cdp.setText(str(sib))
+                if not self.ed_tex.text().strip():
+                    self.ed_tex.setText(str(p.with_name(stem + "_gt1.tex")))
                 break
-        out = p.with_name(name + "_gt1.car")
-        if not self.ed_out.text().strip():
-            self.ed_out.setText(str(out))
 
-    def _browse_out(self) -> None:
+    def _browse_car(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save GT1 .car",
-            self.ed_out.text() or "converted.car",
-            "GT1 car (*.car);;All files (*)",
+            self, "GT1 .car", self.ed_car.text() or "out.car",
+            "GT1 car (*.car);;All (*)",
         )
         if path:
             if not path.lower().endswith(".car"):
                 path += ".car"
-            self.ed_out.setText(path)
+            self.ed_car.setText(path)
 
-    def _append(self, msg: str) -> None:
-        self.log.append(msg)
+    def _browse_cdp(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "GT2 texture", "",
+            "GT2 texture (*.cdp *.cnp *.cdp.gz *.cnp.gz);;All (*)",
+        )
+        if not path:
+            return
+        self.ed_cdp.setText(path)
+        p = Path(path)
+        stem = self._stem(p)
+        if not self.ed_tex.text().strip():
+            self.ed_tex.setText(str(p.with_name(stem + "_gt1.tex")))
+
+    def _browse_tex(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "GT1 .tex", self.ed_tex.text() or "out.tex",
+            "GT1 texture (*.tex);;All (*)",
+        )
+        if path:
+            if not path.lower().endswith(".tex"):
+                path += ".tex"
+            self.ed_tex.setText(path)
 
     def _run_convert(self) -> None:
         cdo = self.ed_cdo.text().strip()
-        out = self.ed_out.text().strip()
-        if not cdo:
-            QMessageBox.warning(self, "Missing input", "Choose a GT2 .cdo / .cno file.")
-            return
-        if not out:
-            QMessageBox.warning(self, "Missing output", "Choose an output .car path.")
-            return
-        cdo_path = Path(cdo)
-        out_path = Path(out)
-        if not cdo_path.is_file():
-            QMessageBox.warning(self, "Not found", f"File not found:\n{cdo_path}")
+        car = self.ed_car.text().strip()
+        cdp = self.ed_cdp.text().strip()
+        tex_out = self.ed_tex.text().strip()
+
+        if not cdo and not cdp:
+            QMessageBox.warning(self, "Nothing to convert", "Choose a .cdo/.cno and/or .cdp/.cnp.")
             return
 
         self.btn_convert.setEnabled(False)
         self.progress.setVisible(True)
-        self._append(f"Reading {cdo_path.name}…")
+        results = []
+
         try:
-            try:
-                from ..utils.gt2_cdo import read_cdo, convert_cdo_to_car
-            except ImportError:
-                from gtarcexplorer.utils.gt2_cdo import read_cdo, convert_cdo_to_car
-
-            model = read_cdo(cdo_path)
-            self._append(model.summary() if hasattr(model, "summary") else f"LODs={len(model.lods)}")
-            model.write_car(out_path)
-            self._append(f"Wrote {out_path} ({out_path.stat().st_size} bytes)")
-
-            if self.chk_obj.isChecked():
+            if cdo:
+                if not car:
+                    raise ValueError("Set output .car path for the model.")
+                cdo_path, car_path = Path(cdo), Path(car)
+                if not cdo_path.is_file():
+                    raise FileNotFoundError(str(cdo_path))
+                self._append(f"Model: reading {cdo_path.name}…")
                 try:
-                    obj_path = out_path.with_suffix(".obj")
-                    if hasattr(model, "to_obj"):
-                        model.to_obj(obj_path)
-                        self._append(f"Wrote {obj_path}")
-                    elif hasattr(model, "export_obj"):
-                        model.export_obj(obj_path)
-                        self._append(f"Wrote {obj_path}")
-                    else:
-                        self._append("OBJ export not available on this model object")
-                except Exception as ex:
-                    self._append(f"OBJ export skipped: {ex}")
+                    from .gt2_cdo import read_cdo
+                except ImportError:
+                    from gtarcexplorer.utils.gt2_cdo import read_cdo
+                model = read_cdo(cdo_path)
+                if hasattr(model, "summary"):
+                    self._append(model.summary())
+                model.write_car(car_path)
+                self._append(f"Wrote {car_path} ({car_path.stat().st_size} bytes)")
+                results.append(str(car_path))
+
+                if self.chk_obj.isChecked():
+                    try:
+                        obj_path = car_path.with_suffix(".obj")
+                        if hasattr(model, "to_obj"):
+                            model.to_obj(obj_path)
+                            self._append(f"Wrote {obj_path}")
+                        elif hasattr(model, "export_obj"):
+                            model.export_obj(obj_path)
+                            self._append(f"Wrote {obj_path}")
+                    except Exception as ex:
+                        self._append(f"OBJ export skipped: {ex}")
+
+            if cdp:
+                if not tex_out:
+                    raise ValueError("Set output .tex path for the texture.")
+                cdp_path, tex_path = Path(cdp), Path(tex_out)
+                if not cdp_path.is_file():
+                    raise FileNotFoundError(str(cdp_path))
+                self._append(f"Texture: reading {cdp_path.name}…")
+                try:
+                    from .gt2_cdp import read_cdp, convert_cdp_to_tex
+                except ImportError:
+                    from gtarcexplorer.utils.gt2_cdp import read_cdp, convert_cdp_to_tex
+                tex = read_cdp(cdp_path)
+                if hasattr(tex, "summary"):
+                    self._append(tex.summary())
+                tex.write_tex(tex_path)
+                self._append(f"Wrote {tex_path} ({tex_path.stat().st_size} bytes)")
+                results.append(str(tex_path))
+
+                if self.chk_tex_edit.isChecked():
+                    try:
+                        folder = tex.export_editable(tex_path.with_suffix(""), basename=tex_path.stem)
+                        self._append(f"Editable folder: {folder}")
+                    except Exception as ex:
+                        self._append(f"Editable export skipped: {ex}")
 
             self._append("Done.")
-            self.converted.emit(str(out_path))
+            if results:
+                self.converted.emit(results[0])
             QMessageBox.information(
-                self,
-                "Convert complete",
-                f"GT1 car written:\n{out_path}\n\n"
-                "Open it in the Asset viewer or inject into a CAR.DAT slot to test.",
+                self, "Convert complete",
+                "Wrote:\n" + "\n".join(results),
             )
         except Exception as e:
             self._append(f"ERROR: {e}")
@@ -210,5 +271,7 @@ class GT2ConverterWidget(QWidget):
 
     def clear(self) -> None:
         self.ed_cdo.clear()
-        self.ed_out.clear()
+        self.ed_car.clear()
+        self.ed_cdp.clear()
+        self.ed_tex.clear()
         self.log.clear()
