@@ -2121,35 +2121,64 @@ def _patch_entry(win, idx: int, data: bytes, label: str = "") -> str:
     return f"{label or f'entry {idx}'}: {result['comp_size']}/{result['slot_size']} bytes"
 
 
-def _find_night_car_index(win, day_idx: int):
-    """Best-effort night model index for a day car entry."""
-    files = win.arc.files
-    day = files[day_idx]
-    name = (day.get("real_name") or day.get("label") or "").lower()
+def _entry_stem(f) -> str:
+    name = (f.get("real_name") or f.get("label") or "").lower()
     stem = name.rsplit(".", 1)[0]
+    # strip leading underscore used in some filelists (_vgrfn)
+    return stem
+
+
+def _find_night_car_index(win, day_idx: int):
+    """Find the night model for a day car by matching name stem + '_night'."""
+    files = win.arc.files
+    if day_idx < 0 or day_idx >= len(files):
+        return None
+    day = files[day_idx]
+    stem = _entry_stem(day)
+    if not stem or stem.endswith("_night"):
+        return None
+
+    candidates = (
+        stem + "_night",
+        stem + "night",
+        stem.lstrip("_") + "_night",
+        "_" + stem.lstrip("_") + "_night",
+    )
     for f in files:
         if f.get("type") != "GT-CAR Model" and (f.get("ext") or "").lower() != ".car":
             continue
-        n = (f.get("real_name") or f.get("label") or "").lower()
-        s = n.rsplit(".", 1)[0]
-        if s in (stem + "_night", stem + "night", stem + "_n") or n.endswith("_night.car"):
+        s = _entry_stem(f)
+        if s in candidates:
             return int(f["index"])
-    # common layout: second half mirrors first half
-    n = len(files)
-    half = n // 2
-    cand = day_idx + half if day_idx + half < n else day_idx - half
-    if 0 <= cand < n and cand != day_idx:
-        f = files[cand]
-        if f.get("type") == "GT-CAR Model" or (f.get("ext") or "").lower() == ".car":
-            return cand
+
+    # Fallback: same index offset as other day→night pairs in this archive
+    # (night block often starts around mid-file; match by shared base name only)
     return None
 
 
-def replace_from_car_viewer(win, mode: str = "all") -> None:
-    """Replace model / texture / night from the car viewer toolbar.
+def _find_night_tex_index(win, night_car_idx: int, day_tex_idx: int | None = None):
+    """Texture paired with a night car (usually index-1, or stem_night.tex)."""
+    if night_car_idx is None:
+        return None
+    files = win.arc.files
+    night = files[night_car_idx]
+    stem = _entry_stem(night)
+    for f in files:
+        if f.get("type") not in ("GT-CTEX Texture", "GT-CTEX") and (f.get("ext") or "").lower() != ".tex":
+            continue
+        s = _entry_stem(f)
+        if s == stem or s == stem.replace("_night", "") + "_night":
+            return int(f["index"])
+    if night_car_idx > 0:
+        prev = files[night_car_idx - 1]
+        if prev.get("type") in ("GT-CTEX Texture", "GT-CTEX") or (prev.get("ext") or "").lower() == ".tex":
+            return night_car_idx - 1
+    return None
 
-    mode: 'model' | 'tex' | 'night' | 'all'
-    """
+
+
+def replace_from_car_viewer(win, mode: str = "all") -> None:
+    """One-shot replace: pick the day .car; matching .tex / _night files are auto-detected."""
     from pathlib import Path as P
 
     day_idx = getattr(win, "_car_entry_index", None)
@@ -2161,7 +2190,7 @@ def replace_from_car_viewer(win, mode: str = "all") -> None:
             except ValueError:
                 day_idx = None
     if day_idx is None:
-        QMessageBox.information(win, "No car", "Open a GT-CAR entry in the viewer first.")
+        QMessageBox.information(win, "No car", "Select a GT-CAR entry so it appears in the viewer first.")
         return
 
     tex_idx = getattr(win, "_car_tex_entry_index", None)
@@ -2173,111 +2202,78 @@ def replace_from_car_viewer(win, mode: str = "all") -> None:
             tex_idx = None
 
     night_idx = _find_night_car_index(win, day_idx)
-    night_tex_idx = None
-    if night_idx is not None:
-        try:
-            from . import viewer as viewer_mod
-            _, night_tex_idx = viewer_mod._find_companion_tex_entry(win, win.arc.files[night_idx])
-        except Exception:
-            pass
+    night_tex_idx = _find_night_tex_index(win, night_idx, tex_idx) if night_idx is not None else None
 
-    start_dir = win._last_dir()
+    car_path, _ = QFileDialog.getOpenFileName(
+        win,
+        "Select converted day model (.car)",
+        win._last_dir(),
+        "GT-CAR (*.car);;All (*.*)",
+    )
+    if not car_path:
+        return
+    win._set_last_dir(car_path)
+    car_p = P(car_path)
+    stem = car_p.stem.replace("_night", "").replace("_gt1", "")
+    folder = car_p.parent
+
+    def find_file(*names):
+        for n in names:
+            p = folder / n
+            if p.is_file():
+                return p
+        return None
+
+    tex_p = find_file(stem + ".tex", stem + "_gt1.tex")
+    night_car_p = find_file(stem + "_night.car", stem + "_night_gt1.car")
+    night_tex_p = find_file(stem + "_night.tex", stem + "_night_gt1.tex")
+
+    # Confirm what will be written
+    plan = [f"Day model  → entry {day_idx}: {car_p.name}"]
+    if tex_p and tex_idx is not None:
+        plan.append(f"Day tex    → entry {tex_idx}: {tex_p.name}")
+    elif tex_idx is not None:
+        plan.append(f"Day tex    → entry {tex_idx}: (no matching .tex found — skipped)")
+    if night_car_p and night_idx is not None:
+        plan.append(f"Night model→ entry {night_idx}: {night_car_p.name}")
+    elif night_car_p and night_idx is None:
+        plan.append(f"Night model: {night_car_p.name} (no matching night slot in DAT — skipped)")
+    if night_tex_p and night_tex_idx is not None:
+        plan.append(f"Night tex  → entry {night_tex_idx}: {night_tex_p.name}")
+
+    if QMessageBox.question(
+        win, "Replace in DAT",
+        "Write these into the open archive?\n\n" + "\n".join(plan),
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.Yes,
+    ) != QMessageBox.StandardButton.Yes:
+        return
+
     lines = []
-    paths_info = []
-
-    def pick(title, filt, suggested=""):
-        p, _ = QFileDialog.getOpenFileName(win, title, suggested or start_dir, filt)
-        if p:
-            win._set_last_dir(p)
-        return p
-
     try:
-        if mode in ("model", "all"):
-            car_path = pick(f"Day model (.car) → entry {day_idx}", "GT-CAR (*.car);;All (*.*)")
-            if not car_path and mode == "model":
-                return
-            if car_path:
-                lines.append(_patch_entry(win, day_idx, P(car_path).read_bytes(), f"Day model [{day_idx}]"))
-                paths_info.append(car_path)
-                # keep viewer in sync
-                win._car_data = P(car_path).read_bytes()
-                if mode == "all":
-                    stem = P(car_path).stem.replace("_night", "")
-                    parent = str(P(car_path).parent)
-                    # auto-find siblings
-                    auto_tex = P(parent) / (stem + ".tex")
-                    auto_ncar = P(parent) / (stem + "_night.car")
-                    auto_ntex = P(parent) / (stem + "_night.tex")
-                    if tex_idx is not None:
-                        tex_path = str(auto_tex) if auto_tex.is_file() else pick(
-                            f"Day texture (.tex) → entry {tex_idx}", "GT-CTEX (*.tex);;All (*.*)", parent
-                        )
-                        if tex_path:
-                            lines.append(_patch_entry(win, tex_idx, P(tex_path).read_bytes(), f"Day tex [{tex_idx}]"))
-                            win._car_tex_data = P(tex_path).read_bytes()
-                    if night_idx is not None:
-                        ncar = str(auto_ncar) if auto_ncar.is_file() else pick(
-                            f"Night model (.car) → entry {night_idx}", "GT-CAR (*.car);;All (*.*)", parent
-                        )
-                        if ncar:
-                            lines.append(_patch_entry(win, night_idx, P(ncar).read_bytes(), f"Night model [{night_idx}]"))
-                        if night_tex_idx is not None:
-                            ntex = str(auto_ntex) if auto_ntex.is_file() else pick(
-                                f"Night texture (.tex) → entry {night_tex_idx}", "GT-CTEX (*.tex);;All (*.*)", parent
-                            )
-                            if ntex:
-                                lines.append(_patch_entry(win, night_tex_idx, P(ntex).read_bytes(), f"Night tex [{night_tex_idx}]"))
+        lines.append(_patch_entry(win, day_idx, car_p.read_bytes(), f"Day model [{day_idx}]"))
+        win._car_data = car_p.read_bytes()
+        if tex_p is not None and tex_idx is not None:
+            lines.append(_patch_entry(win, tex_idx, tex_p.read_bytes(), f"Day tex [{tex_idx}]"))
+            win._car_tex_data = tex_p.read_bytes()
+        if night_car_p is not None and night_idx is not None:
+            lines.append(_patch_entry(win, night_idx, night_car_p.read_bytes(), f"Night model [{night_idx}]"))
+        if night_tex_p is not None and night_tex_idx is not None:
+            lines.append(_patch_entry(win, night_tex_idx, night_tex_p.read_bytes(), f"Night tex [{night_tex_idx}]"))
 
-        elif mode == "tex":
-            if tex_idx is None:
-                QMessageBox.information(win, "No texture slot", "Could not find a companion .tex entry.")
-                return
-            tex_path = pick(f"Day texture (.tex) → entry {tex_idx}", "GT-CTEX (*.tex);;All (*.*)")
-            if not tex_path:
-                return
-            lines.append(_patch_entry(win, tex_idx, P(tex_path).read_bytes(), f"Day tex [{tex_idx}]"))
-            win._car_tex_data = P(tex_path).read_bytes()
-
-        elif mode == "night":
-            if night_idx is None:
-                QMessageBox.information(
-                    win, "No night slot",
-                    "Could not detect a night model entry. Select it in the tree and use Replace entry.",
-                )
-                return
-            ncar = pick(f"Night model (.car) → entry {night_idx}", "GT-CAR (*.car);;All (*.*)")
-            if not ncar:
-                return
-            lines.append(_patch_entry(win, night_idx, P(ncar).read_bytes(), f"Night model [{night_idx}]"))
-            if night_tex_idx is not None:
-                stem = P(ncar).stem.replace("_night", "")
-                auto = P(ncar).with_name(stem + "_night.tex")
-                ntex = str(auto) if auto.is_file() else pick(
-                    f"Night texture (.tex) → entry {night_tex_idx}", "GT-CTEX (*.tex);;All (*.*)"
-                )
-                if ntex:
-                    lines.append(_patch_entry(win, night_tex_idx, P(ntex).read_bytes(), f"Night tex [{night_tex_idx}]"))
-
-        if not lines:
-            return
-
-        # Refresh viewer
         try:
             from . import viewer as viewer_mod
-            from ..utils.gtcar import GTCarModel
-            data = getattr(win, "_car_data", None) or win.arc.get_data(day_idx)
+            data = win._car_data
             tex = getattr(win, "_car_tex_data", None)
-            if tex is None and tex_idx is not None:
-                tex = win.arc.get_data(tex_idx)
-            viewer_mod.show_car_in_viewer(win, data, getattr(win, "_car_label", "") or f"entry {day_idx}", tex_data=tex)
-            win._car_entry_index = day_idx
-            if tex_idx is not None:
-                win._car_tex_entry_index = tex_idx
+            viewer_mod.show_car_in_viewer(
+                win, data, getattr(win, "_car_label", "") or f"entry {day_idx}",
+                tex_data=tex, entry_index=day_idx,
+            )
         except Exception:
             pass
 
         win.set_status("; ".join(lines))
-        QMessageBox.information(win, "Replaced in DAT", "\n".join(lines))
+        QMessageBox.information(win, "Done", "\n".join(lines))
     except Exception as e:
         QMessageBox.critical(win, "Replace failed", str(e))
 

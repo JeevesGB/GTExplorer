@@ -123,83 +123,57 @@ def _nidx_id(normals, n) -> int:
     except ValueError:
         return 0
 
-def _pack_vertex_refs(v0: int, v1: int, v2: int, v3: int, is_quad: bool) -> bytes:
-    """
-    Pack four vertex indices into the 6-byte GT1 face vertex block.
-    Inverse of the bit-unpacking in Polygon.read_car.
-    Indices must be 0..511.
-    """
-    v0 = max(0, min(511, v0))
-    v1 = max(0, min(511, v1))
-    v2 = max(0, min(511, v2))
-    v3 = max(0, min(511, v3)) if is_quad else 0
+def _pack_face_header(
+    v0: int, v1: int, v2: int, v3: int, is_quad: bool,
+    n0: int, n1: int, n2: int, n3: int, render_order: int = 0,
+) -> bytes:
+    """12-byte face header: 6 vertex bytes + 6 normal bytes (share b5)."""
+    v0 = max(0, min(511, int(v0)))
+    v1 = max(0, min(511, int(v1)))
+    v2 = max(0, min(511, int(v2)))
+    v3 = max(0, min(511, int(v3))) if is_quad else 0
+    n0 = max(0, min(511, int(n0)))
+    n1 = max(0, min(511, int(n1)))
+    n2 = max(0, min(511, int(n2)))
+    n3 = max(0, min(511, int(n3)))
 
-    # Layout (from GT2ModelTool / gtcar decode):
-    #   v0 = ((b1 & 1) * 256) + b0
-    #   v1 = ((b2 & 2) * 128) + ((b2 & 1) * 128) + (b1 >> 1)
-    #   v2 = ((b3 & 4) * 64) + ((b3 & 2) * 64) + ((b3 & 1) * 64) + (b2 >> 2)
-    #   v3 = ((b5 & 1) * 256) + b4
     b0 = v0 & 0xFF
-    b1_bit0 = (v0 >> 8) & 1
-    b1 = ((v1 & 0x7F) << 1) | b1_bit0
-
-    # v1 high bits into b2 low bits
-    # v1 = (b2 & 3) * 128 + (b1 >> 1)  →  b2 low 2 bits carry top of v1
-    v1_hi = (v1 >> 7) & 3
-    b2_low = v1_hi
-    # v2 low bits in b2 high
-    # v2 = (b3 & 7) * 64 + (b2 >> 2)
-    b2 = ((v2 & 0x3F) << 2) | b2_low
-
-    v2_hi = (v2 >> 6) & 7
-    b3 = v2_hi  # only low 3 bits needed for v2_hi; rest often 0/8 from samples
-
+    b1 = ((v1 & 0x7F) << 1) | ((v0 >> 8) & 1)
+    b2 = ((v2 & 0x3F) << 2) | ((v1 >> 7) & 3)
+    b3 = (v2 >> 6) & 7
     b4 = v3 & 0xFF
     b5 = (v3 >> 8) & 1
 
-    return bytes([b0, b1, b2, b3, b4, b5])
+    # n0 = (b5 + nb1*256) >> 1 & 0x1FF
+    val0 = (n0 << 1) | (b5 & 1)
+    nb1 = (val0 >> 8) & 0xFF
+
+    # n1 = (nb1 + nb2*256) >> 3 & 0x1FF
+    # n1 ≈ (nb1 >> 3) + (nb2 << 5)
+    base = nb1 >> 3
+    diff = max(0, n1 - base)
+    nb2 = (diff >> 5) & 0x7F
+    if render_order == 0b10001:
+        nb2 |= 0x80
+
+    # n2 = (nb3 + nb4*256) & 0x1FF
+    nb3 = n2 & 0xFF
+    nb4_n2 = (n2 >> 8) & 1
+
+    # n3 = (nb4 + nb5*256) >> 2 & 0x1FF
+    val3 = (n3 & 0x1FF) << 2
+    nb4 = nb4_n2 | (val3 & 0xFE)
+    nb5 = (val3 >> 8) & 0xFF
+    nb6 = 0
+    return bytes([b0, b1, b2, b3, b4, b5, nb1, nb2, nb3, nb4, nb5, nb6])
+
+
+def _pack_vertex_refs(v0: int, v1: int, v2: int, v3: int, is_quad: bool) -> bytes:
+    return _pack_face_header(v0, v1, v2, v3, is_quad, 0, 0, 0, 0, 0)[:6]
 
 
 def _pack_normal_refs(n0: int, n1: int, n2: int, n3: int, render_order: int) -> bytes:
-    """
-    Pack four normal indices + render_order bit into 6-byte block.
-    Inverse of normal unpacking in Polygon.read_car.
-    """
-    n0 = max(0, min(511, n0))
-    n1 = max(0, min(511, n1))
-    n2 = max(0, min(511, n2))
-    n3 = max(0, min(511, n3))
-
-    # Decode was:
-    #   n0 = (b5 + nb1*256) >> 1  & 0x1FF   where b5 is last vertex byte
-    #   Actually normals use separate 6 bytes after verts.
-    # From gtcar:
-    #   n0 = (b5 + (nb1 * 256)) >> 1 & 0x1FF  — b5 is vertex byte; for packing we
-    #   approximate with independent 6-byte normal block matching C# comments.
-    #
-    # Practical packing matching common samples:
-    # We encode n0..n3 into nb1..nb6 similar to CDO-style shifted fields where possible.
-    # GT1 uses a denser pack; this best-effort pack aims for round-trip on simple models.
-
-    # Using a simplified invertible scheme derived from the shifts:
-    # n0 occupies bits across nb1 and prior; we set:
-    nb1 = (n0 >> 1) & 0xFF
-    # carry of n0 low bit is awkward (shared with vertex b5); set nb2 with n1
-    nb2 = ((n1 & 0x1F) << 3) | ((n0 >> 9) & 0)  # top of n1 in high of nb2 after >>3
-    # better: n1 = (nb1 + nb2*256) >> 3 & 0x1FF
-    # So nb1 contributes to both n0 and n1 — coupled. Use iterative fit:
-
-    # Coupled pack (approximate but works for indices < 256 which is typical):
-    # Prefer low 8 bits of each normal in sequential layout used by many cars.
-    nb1 = n0 & 0xFF
-    nb2 = ((n1 & 0xFF) >> 0)
-    if render_order == 0b10001:
-        nb2 |= 0x80
-    nb3 = n2 & 0xFF
-    nb4 = n3 & 0xFF
-    nb5 = ((n0 >> 8) & 1) | (((n1 >> 8) & 1) << 1) | (((n2 >> 8) & 1) << 2) | (((n3 >> 8) & 1) << 3)
-    nb6 = 0
-    return bytes([nb1, nb2, nb3, nb4, nb5, nb6])
+    return _pack_face_header(0, 0, 0, 0, False, n0, n1, n2, n3, render_order)[6:]
 
 
 def _face_type_byte(is_quad: bool, textured: bool) -> int:
@@ -308,7 +282,8 @@ class WheelPosition:
         self.menu_x = self.x
 
     def write_car(self, f: BinaryIO) -> None:
-        # GT1 files store MenuX as 0; race X is used at runtime
+        # MenuX is 0 in GT1; race X is used at runtime. Wheel Z is NOT flipped
+        # (unlike body verts) — matches GT2ModelTool WheelPosition.ReadFromCAR.
         f.write(struct.pack("<hhhh", self.x, self.y, self.z, 0))
 
     def to_obj_group(self, wheel_number: int, first_vert: int) -> Tuple[List[str], int]:
@@ -427,11 +402,7 @@ class Polygon:
     def write_car(self, f, vertices: List[Vertex], normals: List[Normal], is_quad: bool) -> None:
         """Pack this untextured face into 16 bytes (GT1 CAR layout)."""
         v0, v1, v2, v3 = _vidx_id(vertices, self.v0), _vidx_id(vertices, self.v1), _vidx_id(vertices, self.v2), _vidx_id(vertices, self.v3)
-        n0, n1, n2, n3 = _nidx_id(normals, self.n0), _nidx_id(normals, self.n1), _nidx_id(normals, self.n2), _nidx_id(normals, self.n3)
-
-        f.write(_pack_vertex_refs(v0, v1, v2, v3, is_quad))
-        f.write(_pack_normal_refs(n0, n1, n2, n3, self.render_order))
-        # 3 texture flags + face type
+        f.write(_pack_face_header(v0, v1, v2, v3, is_quad, 0, 0, 0, 0, self.render_order))
         f.write(bytes([0x00, 0x00, 0x00, _face_type_byte(is_quad, textured=False)]))
 
 
@@ -496,10 +467,8 @@ class UVPolygon(Polygon):
     def write_car(self, f: BinaryIO, vertices: List[Vertex], normals: List[Normal], is_quad: bool) -> None:
         """Pack textured face: 16-byte base + UV/palette block (28 bytes total)."""
         v0, v1, v2, v3 = _vidx_id(vertices, self.v0), _vidx_id(vertices, self.v1), _vidx_id(vertices, self.v2), _vidx_id(vertices, self.v3)
-        n0, n1, n2, n3 = _nidx_id(normals, self.n0), _nidx_id(normals, self.n1), _nidx_id(normals, self.n2), _nidx_id(normals, self.n3)
-
-        f.write(_pack_vertex_refs(v0, v1, v2, v3, is_quad))
-        f.write(_pack_normal_refs(n0, n1, n2, n3, self.render_order))
+        # Normal indices forced to 0 — full bit-pack is lossy and OOB indices crash race
+        f.write(_pack_face_header(v0, v1, v2, v3, is_quad, 0, 0, 0, 0, self.render_order))
         f.write(bytes([0xFF, 0xFF, 0xFF, _face_type_byte(is_quad, textured=True)]))
 
         # UV + palette block (12 bytes after the 16 = 28 total)
@@ -584,24 +553,44 @@ class LOD:
 
     def write_car(self, f: BinaryIO) -> None:
         """Write one LOD block (header + geometry)."""
-        f.write(struct.pack("<HHHH", len(self.vertices), len(self.normals),
-                            len(self.triangles), len(self.quads)))
-        f.write(struct.pack("<HH", 0, 0))  # skipped
-        f.write(struct.pack("<HH", len(self.uv_triangles), len(self.uv_quads)))
-        f.write(bytes(20))  # padding
-        f.write(struct.pack("<HH", self.scale, 0))
+        # GT1 race engine expects textured faces; promote untextured → UV (palette 0)
+        uv_tris = list(self.uv_triangles)
+        uv_quads = list(self.uv_quads)
+        for p in self.triangles:
+            up = UVPolygon(
+                v0=p.v0, v1=p.v1, v2=p.v2, v3=None,
+                n0=p.n0, n1=p.n1, n2=p.n2, n3=None,
+                render_order=p.render_order, render_flags=0b1000,
+                face_type=0x25, face_colour=p.face_colour,
+                palette_index=0,
+            )
+            uv_tris.append(up)
+        for p in self.quads:
+            up = UVPolygon(
+                v0=p.v0, v1=p.v1, v2=p.v2, v3=p.v3,
+                n0=p.n0, n1=p.n1, n2=p.n2, n3=p.n3,
+                render_order=p.render_order, render_flags=0b1000,
+                face_type=0x2D, face_colour=p.face_colour,
+                palette_index=0,
+            )
+            uv_quads.append(up)
+
+        f.write(struct.pack("<HHHH", len(self.vertices), len(self.normals), 0, 0))
+        f.write(struct.pack("<HH", 0, 0))
+        f.write(struct.pack("<HH", len(uv_tris), len(uv_quads)))
+        f.write(bytes(20))
+        scale = self.scale if self.scale else 18
+        if scale < 16:
+            scale = 16
+        f.write(struct.pack("<HH", scale, 0))
 
         for v in self.vertices:
             v.write_car(f)
         for n in self.normals:
             n.write_car(f)
-        for p in self.triangles:
+        for p in uv_tris:
             p.write_car(f, self.vertices, self.normals, False)
-        for p in self.quads:
-            p.write_car(f, self.vertices, self.normals, True)
-        for p in self.uv_triangles:
-            p.write_car(f, self.vertices, self.normals, False)
-        for p in self.uv_quads:
+        for p in uv_quads:
             p.write_car(f, self.vertices, self.normals, True)
 
     def all_uvs(self) -> List[UVCoordinate]:
@@ -750,7 +739,9 @@ class Shadow:
 
     def write_car(self, f: BinaryIO) -> None:
         quad_count = len(self.quads) if self.quads else (len(self.vertices) // 4)
-        # Ensure vertex count matches 4 * quads
+        # Stock GT1 cars use 4 shadow quads; larger counts crash in race
+        if quad_count > 4:
+            quad_count = 4
         verts = list(self.vertices)
         if len(verts) < quad_count * 4:
             verts.extend([ShadowVertex() for _ in range(quad_count * 4 - len(verts))])
@@ -942,9 +933,8 @@ class GTCarModel:
         """
         buf = io.BytesIO()
 
-        # Magic + pad to 0x10
-        buf.write(b"@(#)GT-CAR")
-        buf.write(bytes(0x10 - buf.tell()))
+        # Magic + stock padding — retail cars use this exact 16-byte header
+        buf.write(b'@(#)GT-CAR\x00m\x00\x00\x08\x00')
 
         # Wheels are stored in file order opposite of in-memory reordering:
         # in-memory = [file2, file3, file0, file1]  →  file order = [mem2, mem3, mem0, mem1]

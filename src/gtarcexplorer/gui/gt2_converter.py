@@ -1,5 +1,11 @@
+"""
+GT2 → GT1 model + texture converter canvas widget for GTExplorer.
+Supports day (.cdo/.cdp) and night (.cno/.cnp) in one pass.
+"""
 from __future__ import annotations
+
 from pathlib import Path
+
 try:
     from PyQt6.QtCore import pyqtSignal
     from PyQt6.QtWidgets import (
@@ -21,6 +27,7 @@ def _swap_ext(path: Path, new_ext: str) -> Path:
 
 
 def _night_model_path(day_model: Path) -> Path | None:
+    """frtwn.cdo → frtwn.cno (or already .cno → None)."""
     suf = day_model.suffix.lower()
     if suf == ".cdo":
         p = day_model.with_suffix(".cno")
@@ -50,10 +57,8 @@ def _default_car_out(model_in: Path) -> Path:
             break
     else:
         stem = model_in.stem
-    tag = "_night" if model_in.suffix.lower() in (".cno",) or stem.lower().endswith("_n") else "_gt1"
-    if model_in.suffix.lower() == ".cno":
-        tag = "_night"
-    return model_in.with_name(stem + tag + ".car")
+    is_night = model_in.suffix.lower() in (".cno", ".cno.gz")
+    return model_in.with_name(stem + ("_night.car" if is_night else ".car"))
 
 
 def _default_tex_out(tex_in: Path) -> Path:
@@ -64,8 +69,8 @@ def _default_tex_out(tex_in: Path) -> Path:
             break
     else:
         stem = tex_in.stem
-    tag = "_night" if tex_in.suffix.lower() == ".cnp" else "_gt1"
-    return tex_in.with_name(stem + tag + ".tex")
+    is_night = tex_in.suffix.lower() in (".cnp", ".cnp.gz")
+    return tex_in.with_name(stem + ("_night.tex" if is_night else ".tex"))
 
 
 class GT2ConverterWidget(QWidget):

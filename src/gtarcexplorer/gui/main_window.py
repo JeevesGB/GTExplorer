@@ -685,14 +685,13 @@ class GTArcExplorer(QMainWindow):
         self.chk_hide_wheels.setToolTip("Hide wheel meshes")
         self.btn_pal_minus = _tool_btn("Pal−", tip="Previous palette / CLUT")
         self.btn_pal_plus = _tool_btn("Pal+", tip="Next palette / CLUT")
-        self.btn_replace_model = _tool_btn("Model", tip="Replace day .car in the open DAT")
-        self.btn_replace_tex = _tool_btn("Tex", tip="Replace day .tex in the open DAT")
-        self.btn_replace_night = _tool_btn("Night", tip="Replace night .car (+ .tex if found)")
-        self.btn_replace_all = _tool_btn("Replace…", tip="Replace day model + tex + night variants in the DAT")
+        self.btn_replace_car = _tool_btn(
+            "Replace in DAT…",
+            tip="Replace this car’s day/night model + textures in the open CAR.DAT",
+        )
         for w in (self.car_colour_label, self.car_colour_combo, self.btn_edit_colours,
                   self.chk_hide_wheels, self.btn_pal_minus, self.btn_pal_plus,
-                  self.btn_replace_model, self.btn_replace_tex,
-                  self.btn_replace_night, self.btn_replace_all):
+                  self.btn_replace_car):
             car_l.addWidget(w)
         self.car_colour_label.setVisible(False)
         self.car_colour_combo.setVisible(False)
@@ -913,10 +912,7 @@ class GTArcExplorer(QMainWindow):
         self.btn_pal_minus.clicked.connect(lambda: self.ctex_shift_clut(-1))
         self.car_colour_combo.currentIndexChanged.connect(self._on_car_colour_changed)
         self.btn_edit_colours.clicked.connect(self._open_palette_editor)
-        self.btn_replace_model.clicked.connect(lambda: self.replace_from_car_viewer("model"))
-        self.btn_replace_tex.clicked.connect(lambda: self.replace_from_car_viewer("tex"))
-        self.btn_replace_night.clicked.connect(lambda: self.replace_from_car_viewer("night"))
-        self.btn_replace_all.clicked.connect(lambda: self.replace_from_car_viewer("all"))
+        self.btn_replace_car.clicked.connect(lambda: self.replace_from_car_viewer("all"))
         self.chk_hide_wheels.toggled.connect(self._on_hide_wheels_toggled)
 
         # Viewer interaction tools

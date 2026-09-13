@@ -270,16 +270,32 @@ def _read_shadow_cdo(f: BinaryIO, data_len: int) -> Shadow:
 
 
 def _make_shadow_from_bounds(lo_x, hi_x, lo_z, hi_z, scale=16) -> Shadow:
-    corners = [
-        ShadowVertex(x=lo_x, z=lo_z),
-        ShadowVertex(x=hi_x, z=lo_z),
-        ShadowVertex(x=hi_x, z=hi_z),
-        ShadowVertex(x=lo_x, z=hi_z),
+    # Stock cars use 4 shadow quads. Build a simple 2x2 grid over the footprint.
+    mx = (lo_x + hi_x) // 2
+    mz = (lo_z + hi_z) // 2
+    # 3x3 grid of points → 4 quads
+    pts = [
+        ShadowVertex(x=lo_x, z=lo_z), ShadowVertex(x=mx, z=lo_z), ShadowVertex(x=hi_x, z=lo_z),
+        ShadowVertex(x=lo_x, z=mz),   ShadowVertex(x=mx, z=mz),   ShadowVertex(x=hi_x, z=mz),
+        ShadowVertex(x=lo_x, z=hi_z), ShadowVertex(x=mx, z=hi_z), ShadowVertex(x=hi_x, z=hi_z),
     ]
+    # Sequential verts per quad (CAR layout)
+    quads_idx = [(0,1,4,3), (1,2,5,4), (3,4,7,6), (4,5,8,7)]
+    verts: list = []
+    quads: list = []
+    for a,b,c,d in quads_idx:
+        seq = [
+            ShadowVertex(x=pts[a].x, z=pts[a].z),
+            ShadowVertex(x=pts[b].x, z=pts[b].z),
+            ShadowVertex(x=pts[c].x, z=pts[c].z),
+            ShadowVertex(x=pts[d].x, z=pts[d].z),
+        ]
+        verts.extend(seq)
+        quads.append(ShadowPolygon(v0=seq[0], v1=seq[1], v2=seq[2], v3=seq[3]))
     sh = Shadow()
-    sh.scale = scale
-    sh.vertices = list(corners)
-    sh.quads = [ShadowPolygon(v0=corners[0], v1=corners[1], v2=corners[2], v3=corners[3])]
+    sh.scale = scale if scale else 16
+    sh.vertices = verts
+    sh.quads = quads
     sh.low_x, sh.high_x = lo_x, hi_x
     sh.low_z, sh.high_z = lo_z, hi_z
     return sh
@@ -346,9 +362,7 @@ def read_cdo(path: Path | str) -> GTCarModel:
     if not lods:
         raise ValueError("No LODs parsed from CDO")
 
-    if len(wheels) == 4:
-        wheels = [wheels[2], wheels[3], wheels[0], wheels[1]]
-
+    # Keep CDO wheel order (FL,FR,RL,RR). write_car reorders for GT1 file layout.
     model = GTCarModel()
     model.wheels = wheels
     model.menu_front_radius = menu_fr
@@ -362,6 +376,50 @@ def read_cdo(path: Path | str) -> GTCarModel:
         model.shadow = _make_shadow(lods[0]) if lods else Shadow()
     if not model.shadow.vertices and lods:
         model.shadow = _make_shadow(lods[0])
+    # GT1 race engine expects ~4 shadow quads (stock cars); denser shadows crash
+    model.shadow = _make_shadow(lods[0]) if lods else model.shadow
+    # GT1 LOD1 must be lighter than LOD0 — CDO often duplicates LOD0 into LOD1
+    if len(lods) >= 3:
+        f0 = len(lods[0].uv_quads) + len(lods[0].uv_triangles) + len(lods[0].triangles) + len(lods[0].quads)
+        f1 = len(lods[1].uv_quads) + len(lods[1].uv_triangles) + len(lods[1].triangles) + len(lods[1].quads)
+        if f1 >= f0 * 0.8 and (len(lods[2].vertices) > 0):
+            import copy as _copy
+            lods[1] = _copy.deepcopy(lods[2])
+            model.lods = lods
+    # GT1 uses -Z forward (see Vertex.ReadFromCAR). CDO is +Z forward.
+    # Flip body, normals and wheels into GT1 memory convention so wheels match the mesh.
+    for lod in model.lods:
+        for v in lod.vertices:
+            v.z = -v.z
+        for n in lod.normals:
+            n.z = -n.z
+    for w in model.wheels:
+        w.z = -w.z
+    # CDO wheel order is often rear-first relative to GT1's FL,FR,RL,RR after Z flip.
+    # After Z flip, pair with negative Z should be front (GT1 convention).
+    if len(model.wheels) == 4:
+        fronts = [w for w in model.wheels if w.z < 0]
+        rears = [w for w in model.wheels if w.z >= 0]
+        if len(fronts) == 2 and len(rears) == 2:
+            # Sort each pair by X (left negative, right positive)
+            fronts.sort(key=lambda w: w.x)
+            rears.sort(key=lambda w: w.x)
+            model.wheels = [fronts[0], fronts[1], rears[0], rears[1]]
+    if model.shadow:
+        for v in model.shadow.vertices:
+            v.z = -v.z
+        # swap low/high z
+        lo, hi = model.shadow.low_z, model.shadow.high_z
+        model.shadow.low_z, model.shadow.high_z = -hi, -lo
+    # Menu tyre width is often half of radius in GT2 data; GT1 menu expects width ~ radius range
+    if model.menu_front_width < model.menu_front_radius:
+        model.menu_front_width = max(400, int(model.menu_front_radius * 0.9))
+    if model.menu_rear_width < model.menu_rear_radius:
+        model.menu_rear_width = max(400, int(model.menu_rear_radius * 0.9))
+    # Prefer scale 18 like most retail cars (scale 16 can odd-case the race renderer)
+    for lod in model.lods:
+        if lod.scale < 17:
+            lod.scale = 18
     model.raw_size = len(data)
     return model
 
