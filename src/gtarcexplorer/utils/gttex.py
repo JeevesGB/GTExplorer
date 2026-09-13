@@ -1,27 +1,62 @@
+"""
+gttex.py – GT1 car texture (.tex / GT-CTEX) editor for GTExplorer.
+
+Port of pez2k GT2TextureEditor (TEX path only).
+
+.tex layout (TEXFileLayout):
+  Header:           @(#)GT-CTEX\\0\\2  (13 bytes written, file may pad)
+  ColourCount @0x0E
+  Colour IDs  @0x10  (one byte per colour)
+  Flags       @0x20  (illumination + paint masks, once)
+  Bitmap fill @0x60  (0x1000 bytes of 0xFF)
+  Bitmap data @0x1060  256x224 4bpp (2 pixels/byte)
+  Palettes    @0x8060  0x200 bytes per car colour (16 CLUTs x 16 x BGR555)
+
+Editable export:
+  <name>/
+    <name>.bmp or sheet.png          – indexed sheet
+    palette00.png … palette15.png    – sheet remapped with each CLUT (colour 0)
+    ColourXX/
+      ColourPalette00.pal …          – JASC palettes
+      IlluminationMask00.pal …
+      PaintMask00.pal …
+      Alpha.txt                      – optional alpha bit list
+"""
+
 from __future__ import annotations
+
 import io
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, List, Optional, Sequence, Tuple
+
+# Optional Pillow
 try:
     from PIL import Image
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
+
+# ---------------------------------------------------------------------------
+# TEX layout constants (GT1)
+# ---------------------------------------------------------------------------
+
 TEX_HEADER = bytes([0x40, 0x28, 0x23, 0x29, 0x47, 0x54, 0x2D, 0x43, 0x54, 0x45, 0x58, 0x00, 0x02])
 # "@(#)GT-CTEX\0\x02"  — first bytes are 0x40='@' with the rest matching @(#)GT-CTEX
+
 COLOUR_COUNT_INDEX = 0x0E
 PALETTE_START = 0x8060
 PALETTE_SIZE = 0x200  # 16 CLUTs * 16 colours * 2 bytes
 BITMAP_START = 0x60
-BITMAP_FILL_SIZE = 0x1000
 FLAGS_START = 0x20
+
 BITMAP_W = 256
-BITMAP_H = 224
+BITMAP_H = 256
 NUM_CLUTS = 16
 COLOURS_PER_CLUT = 16
 MAX_CAR_COLOURS = 16
+
 ALPHA_BIT = 0x8000
 
 
@@ -44,6 +79,10 @@ def rgb_to_bgr555(r: int, g: int, b: int) -> int:
     return ((b // 8) << 10) | ((g // 8) << 5) | (r // 8)
 
 
+# ---------------------------------------------------------------------------
+# Palette / masks
+# ---------------------------------------------------------------------------
+
 @dataclass
 class Palette:
     colours: List[int] = field(default_factory=lambda: [0xFFFF] * COLOURS_PER_CLUT)
@@ -53,6 +92,7 @@ class Palette:
         return all(c == 0xFFFF for c in self.colours)
 
     def load_from_stream(self, f: BinaryIO) -> List[int]:
+        """Return list of colour indices that had the alpha bit set."""
         alpha_idxs: List[int] = []
         self.colours = []
         for i in range(COLOURS_PER_CLUT):
@@ -103,6 +143,7 @@ class Palette:
 
 @dataclass
 class BitMask16:
+    """IlluminationMask / PaintMask: 16 bools packed into a ushort."""
     flags: List[bool] = field(default_factory=lambda: [False] * 16)
 
     def load_from_stream(self, f: BinaryIO) -> None:
@@ -229,6 +270,8 @@ class CarColour:
 
 @dataclass
 class GTTex:
+    """GT1 GT-CTEX (.tex) car texture."""
+
     colours: List[CarColour] = field(default_factory=list)
     # bitmapData[x][y] = index 0..15
     pixels: List[List[int]] = field(default_factory=list)
@@ -238,9 +281,12 @@ class GTTex:
         if not self.pixels:
             self.pixels = [[0] * BITMAP_H for _ in range(BITMAP_W)]
 
+    # ----- load -----
+
     @classmethod
     def from_bytes(cls, data: bytes) -> "GTTex":
-        if len(data) < 0x1060 + (BITMAP_W * BITMAP_H // 2):
+        need = BITMAP_START + (BITMAP_W * BITMAP_H // 2)
+        if len(data) < need:
             raise ValueError(f"TEX too small ({len(data)} bytes)")
         # Accept magic variants
         if b"GT-CTEX" not in data[:16] and not data.startswith(TEX_HEADER[:8]):
@@ -266,12 +312,12 @@ class GTTex:
                 cc.paint = tex.colours[0].paint
             tex.colours.append(cc)
 
-        # bitmap
-        off = BITMAP_START + BITMAP_FILL_SIZE
+        # bitmap at 0x60, 256x256
+        off = BITMAP_START
         tex.pixels = [[0] * BITMAP_H for _ in range(BITMAP_W)]
         for y in range(BITMAP_H):
             for x in range(0, BITMAP_W, 2):
-                pair = data[off]
+                pair = data[off] if off < len(data) else 0
                 off += 1
                 tex.pixels[x][y] = pair & 0xF
                 tex.pixels[x + 1][y] = (pair >> 4) & 0xF
@@ -281,7 +327,17 @@ class GTTex:
     def from_file(cls, path: Path | str) -> "GTTex":
         return cls.from_bytes(Path(path).read_bytes())
 
+    # ----- export editable -----
+
     def export_editable(self, out_dir: Path | str, basename: str | None = None) -> Path:
+        """
+        Write editable folder:
+          out_dir/basename/
+            basename.bmp (or .png)
+            palette00.png … (remapped previews using colour 0)
+            ColourXX/…
+        Returns the folder path.
+        """
         if not HAS_PIL:
             raise RuntimeError("Pillow is required for texture export")
 
@@ -336,6 +392,8 @@ class GTTex:
             for x in range(BITMAP_W):
                 px[x, y] = self.pixels[x][y] & 0xF
         img.save(path, format="BMP")
+
+    # ----- import editable -----
 
     @classmethod
     def from_editable(cls, folder: Path | str) -> "GTTex":
@@ -394,7 +452,10 @@ class GTTex:
                     tex.colours[i].paint = tex.colours[0].paint
         return tex
 
+    # ----- write .tex -----
+
     def write_tex(self, path: Path | str | None = None) -> bytes:
+        """Build GT1 .tex bytes; optionally write to path."""
         # Size: palettes end at 0x8060 + colour_count * 0x200
         n = max(1, len(self.colours))
         size = PALETTE_START + n * PALETTE_SIZE
@@ -420,23 +481,18 @@ class GTTex:
             flag_bytes = fflags.getvalue()
             buf[FLAGS_START : FLAGS_START + len(flag_bytes)] = flag_bytes
 
-        # bitmap fill 0xFF
-        for i in range(BITMAP_FILL_SIZE):
-            buf[BITMAP_START + i] = 0xFF
-
-        # bitmap data
-        off = BITMAP_START + BITMAP_FILL_SIZE
+        # bitmap data at 0x60, 256x256 (pad missing rows with 0)
+        off = BITMAP_START
+        h = len(self.pixels[0]) if self.pixels else BITMAP_H
         for y in range(BITMAP_H):
             for x in range(0, BITMAP_W, 2):
-                lo = self.pixels[x][y] & 0xF
-                hi = self.pixels[x + 1][y] & 0xF
+                if y < h and x < len(self.pixels):
+                    lo = self.pixels[x][y] & 0xF if y < len(self.pixels[x]) else 0
+                    hi = self.pixels[x + 1][y] & 0xF if (x + 1 < len(self.pixels) and y < len(self.pixels[x + 1])) else 0
+                else:
+                    lo = hi = 0
                 buf[off] = (hi << 4) | lo
                 off += 1
-
-        # pad up to palette start if needed
-        if off < PALETTE_START:
-            # leave zeros
-            pass
 
         # palettes
         for i, cc in enumerate(self.colours):
@@ -463,6 +519,7 @@ class GTTex:
             used = sum(1 for p in cc.palettes if not p.is_empty)
             lines.append(f"    [{i}] id=0x{cc.colour_id:02X}  non-empty CLUTs={used}")
         return "\n".join(lines)
+
 
 if __name__ == "__main__":
     import sys

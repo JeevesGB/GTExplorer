@@ -70,6 +70,7 @@ CANVAS_GT2 = 6
 
 class GTArcExplorer(QMainWindow):
     progress_signal = pyqtSignal(int, int)
+    log_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(bool, object)
 
     def __init__(self):
@@ -112,6 +113,8 @@ class GTArcExplorer(QMainWindow):
         self._view_wheel_markers = False
         self._hide_wheels = False
         self._car_data = None
+        self._car_entry_index = None
+        self._car_tex_entry_index = None
         self._car_tex_data = None
         self._car_label = ""
         self._viewer_mode = None
@@ -309,6 +312,14 @@ class GTArcExplorer(QMainWindow):
         self.act_export_car_obj = QAction("Export car model to OBJ", self)
         self.act_export_car_obj.setToolTip("Convert selected GT-CAR (.car) to Wavefront OBJ + MTL")
         self.act_import_car_obj = QAction("Import OBJ to .car", self)
+        self.act_replace_car_entry = QAction("Replace selected entry in DAT…", self)
+        self.act_replace_car_entry.setToolTip(
+            "Patch a .car / .tex into the selected CAR.DAT slot (in-place, like palette save)"
+        )
+        self.act_replace_car_pair = QAction("Replace car + texture pair…", self)
+        self.act_replace_car_pair.setToolTip(
+            "Replace a GT-CAR entry and its neighbouring .tex in the open DAT"
+        )
         self.act_export_tex = QAction("Export .tex texture…", self)
         self.act_export_tex.setToolTip("Export GT-CTEX (.tex) to editable PNG/BMP + palettes")
         self.act_import_tex = QAction("Import folder to .tex…", self)
@@ -364,6 +375,8 @@ class GTArcExplorer(QMainWindow):
         m_tools.addSeparator()
         m_tools.addAction(self.act_export_car_obj)
         m_tools.addAction(self.act_import_car_obj)
+        m_tools.addAction(self.act_replace_car_entry)
+        m_tools.addAction(self.act_replace_car_pair)
         m_tools.addAction(self.act_export_tex)
         m_tools.addAction(self.act_import_tex)
         m_tools.addAction(self.act_car_database)
@@ -672,8 +685,14 @@ class GTArcExplorer(QMainWindow):
         self.chk_hide_wheels.setToolTip("Hide wheel meshes")
         self.btn_pal_minus = _tool_btn("Pal−", tip="Previous palette / CLUT")
         self.btn_pal_plus = _tool_btn("Pal+", tip="Next palette / CLUT")
+        self.btn_replace_model = _tool_btn("Model", tip="Replace day .car in the open DAT")
+        self.btn_replace_tex = _tool_btn("Tex", tip="Replace day .tex in the open DAT")
+        self.btn_replace_night = _tool_btn("Night", tip="Replace night .car (+ .tex if found)")
+        self.btn_replace_all = _tool_btn("Replace…", tip="Replace day model + tex + night variants in the DAT")
         for w in (self.car_colour_label, self.car_colour_combo, self.btn_edit_colours,
-                  self.chk_hide_wheels, self.btn_pal_minus, self.btn_pal_plus):
+                  self.chk_hide_wheels, self.btn_pal_minus, self.btn_pal_plus,
+                  self.btn_replace_model, self.btn_replace_tex,
+                  self.btn_replace_night, self.btn_replace_all):
             car_l.addWidget(w)
         self.car_colour_label.setVisible(False)
         self.car_colour_combo.setVisible(False)
@@ -863,6 +882,8 @@ class GTArcExplorer(QMainWindow):
         self.act_batch_tim.triggered.connect(self.batch_convert_folder)
         self.act_export_car_obj.triggered.connect(self.export_car_obj)
         self.act_import_car_obj.triggered.connect(self.import_car_obj)
+        self.act_replace_car_entry.triggered.connect(self.replace_selected_entry)
+        self.act_replace_car_pair.triggered.connect(self.replace_car_and_texture_pair)
         self.act_export_tex.triggered.connect(self.export_tex)
         self.act_import_tex.triggered.connect(self.import_tex)
         self.act_car_database.triggered.connect(self.open_car_database)
@@ -892,6 +913,10 @@ class GTArcExplorer(QMainWindow):
         self.btn_pal_minus.clicked.connect(lambda: self.ctex_shift_clut(-1))
         self.car_colour_combo.currentIndexChanged.connect(self._on_car_colour_changed)
         self.btn_edit_colours.clicked.connect(self._open_palette_editor)
+        self.btn_replace_model.clicked.connect(lambda: self.replace_from_car_viewer("model"))
+        self.btn_replace_tex.clicked.connect(lambda: self.replace_from_car_viewer("tex"))
+        self.btn_replace_night.clicked.connect(lambda: self.replace_from_car_viewer("night"))
+        self.btn_replace_all.clicked.connect(lambda: self.replace_from_car_viewer("all"))
         self.chk_hide_wheels.toggled.connect(self._on_hide_wheels_toggled)
 
         # Viewer interaction tools
@@ -963,6 +988,17 @@ class GTArcExplorer(QMainWindow):
         self.act_convert_tim.setEnabled(HAS_PIL)
         self.act_batch_tim.setEnabled(HAS_PIL)
         self.act_export_car_obj.setEnabled(has_files and is_car)
+        is_tex = False
+        if has_files:
+            try:
+                _f = self.arc.files[int(self.tree.selectedItems()[0].text(0))]
+                is_tex = _f.get("type") in ("GT-CTEX Texture", "GT-CTEX") or (
+                    _f.get("ext") or ""
+                ).lower() == ".tex"
+            except Exception:
+                is_tex = False
+        self.act_replace_car_entry.setEnabled(has_files and (is_car or is_tex))
+        self.act_replace_car_pair.setEnabled(has_files and is_car)
         if hasattr(self, 'act_export_tex'):
             self.act_export_tex.setEnabled(has_files and is_tex)
         if hasattr(self, 'act_import_tex'):
@@ -1086,6 +1122,8 @@ class GTArcExplorer(QMainWindow):
         act_reencode = menu.addAction("Re-encode as TIM…")
         act_replace = menu.addAction("Replace with image…")
         act_export_car = menu.addAction("Export to OBJ")
+        act_replace_entry = menu.addAction("Replace entry in DAT…")
+        act_replace_pair = menu.addAction("Replace car + texture…")
 
         try:
             f = self.arc.files[int(items[0].text(0))]
@@ -1104,6 +1142,12 @@ class GTArcExplorer(QMainWindow):
             act_reencode.setEnabled(is_tim and HAS_PIL)
             act_replace.setEnabled(is_tim and HAS_PIL)
             act_export_car.setEnabled(is_car)
+            is_tex = (
+                f.get("type") in ("GT-CTEX Texture", "GT-CTEX")
+                or (f.get("ext") or "").lower() == ".tex"
+            )
+            act_replace_entry.setEnabled(is_car or is_tex)
+            act_replace_pair.setEnabled(is_car)
         except Exception:
             act_nested.setEnabled(False)
             act_reencode.setEnabled(False)
@@ -1139,6 +1183,10 @@ class GTArcExplorer(QMainWindow):
             self.replace_selected_with_image()
         elif chosen is act_export_car:
             self.export_car_obj()
+        elif chosen is act_replace_entry:
+            self.replace_selected_entry()
+        elif chosen is act_replace_pair:
+            self.replace_car_and_texture_pair()
 
     def set_workspace(self):
         actions.set_workspace(self)
@@ -1187,6 +1235,15 @@ class GTArcExplorer(QMainWindow):
 
     def replace_selected_with_image(self):
         tim_tools.replace_selected_with_image(self)
+
+    def replace_selected_entry(self):
+        actions.replace_selected_entry(self)
+
+    def replace_from_car_viewer(self, mode: str = "all"):
+        actions.replace_from_car_viewer(self, mode)
+
+    def replace_car_and_texture_pair(self):
+        actions.replace_car_and_texture_pair(self)
 
     def batch_convert_folder(self):
         tim_tools.batch_convert_folder(self)
@@ -1715,9 +1772,12 @@ class GTArcExplorer(QMainWindow):
             pass
 
     def _update_progress(self, current: int, total: int):
+        total = max(1, int(total))
+        current = max(0, min(int(current), total))
         self.progress.setRange(0, total)
         self.progress.setValue(current)
-        self.set_status(f"Identifying types {current}/{total}…")
+        label = getattr(self, "_progress_status", None) or "Working"
+        self.set_status(f"{label} {current}/{total}…")
 
     def _on_load_finished(self, success: bool, data):
         QApplication.restoreOverrideCursor()
@@ -1877,8 +1937,8 @@ class GTArcExplorer(QMainWindow):
             return
         super().keyPressEvent(event)
 
-    def show_car_in_viewer(self, data, label="", tex_data=None):
-        viewer.show_car_in_viewer(self,data,label,tex_data=tex_data)
+    def show_car_in_viewer(self, data, label="", tex_data=None, entry_index=None):
+        viewer.show_car_in_viewer(self, data, label, tex_data=tex_data, entry_index=entry_index)
 
     def _on_car_colour_changed(self, index: int) -> None:
         viewer.on_car_colour_changed(self, index)

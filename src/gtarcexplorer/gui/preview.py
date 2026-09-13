@@ -213,6 +213,7 @@ def show_preview(win, idx: int) -> None:
                 data,
                 (f.get("label") or "") + (f.get("ext") or ""),
                 tex_data=tex_data,
+                entry_index=int(f.get("index", -1)),
             )
             win._switch_canvas(CANVAS_VIEWER)
 
@@ -455,6 +456,7 @@ def show_preview(win, idx: int) -> None:
                 data,
                 (f.get("label") or "") + (f.get("ext") or ""),
                 tex_data=tex_data,
+                entry_index=int(f.get("index", -1)),
             )
             win._switch_canvas(CANVAS_VIEWER)
 

@@ -1,9 +1,15 @@
+"""
+GT2 CDO/CNO → GT1 GTCarModel conversion.
+Matches pez2k/gt2tools GT2ModelTool Model.ReadFromCDO / LOD.ReadFromCDO.
+"""
 from __future__ import annotations
+
 import gzip
 import io
 import struct
 from pathlib import Path
 from typing import BinaryIO, List, Optional
+
 from .gtcar import (
     GTCarModel,
     LOD,
@@ -14,28 +20,33 @@ from .gtcar import (
     UVCoordinate,
     WheelPosition,
     Shadow,
+    ShadowVertex,
+    ShadowPolygon,
 )
+
 
 def _u16(f: BinaryIO) -> int:
     return struct.unpack("<H", f.read(2))[0]
 
-def _i16(f: BinaryIO) -> int:
-    return struct.unpack("<h", f.read(2))[0]
 
 def _u32(f: BinaryIO) -> int:
     return struct.unpack("<I", f.read(4))[0]
 
+
 def _i32(f: BinaryIO) -> int:
     return struct.unpack("<i", f.read(4))[0]
 
+
 def _u8(f: BinaryIO) -> int:
     return f.read(1)[0]
+
 
 def _load_bytes(path: Path) -> bytes:
     data = path.read_bytes()
     if data[:2] == b"\x1f\x8b":
         data = gzip.decompress(data)
     return data
+
 
 def _shift_signed(val: int, shift: int, bits: int = 10) -> int:
     mask = (1 << bits) - 1
@@ -45,6 +56,7 @@ def _shift_signed(val: int, shift: int, bits: int = 10) -> int:
         v -= 1 << bits
     return v
 
+
 def _read_normal_cdo(f: BinaryIO) -> Normal:
     i = _u32(f)
     scale = 500.0
@@ -53,18 +65,28 @@ def _read_normal_cdo(f: BinaryIO) -> Normal:
     z = _shift_signed(i, 22) / scale
     return Normal(x=x, y=y, z=z)
 
+
 def _read_vertex_cdo(f: BinaryIO) -> Vertex:
     x, y, z, w = struct.unpack("<hhhh", f.read(8))
     return Vertex(x=x, y=y, z=z, w=w)
 
+
 def _read_uv(f: BinaryIO) -> UVCoordinate:
     return UVCoordinate(x=_u8(f), y=_u8(f))
 
+
+def _nv(verts: List[Vertex], i: int) -> Vertex:
+    return verts[i] if 0 <= i < len(verts) else (verts[0] if verts else Vertex())
+
+
+def _nn(norms: List[Normal], i: int) -> Optional[Normal]:
+    if not norms or i < 0 or i >= len(norms):
+        return norms[0] if norms else None
+    return norms[i]
+
+
 def _read_poly_cdo(f: BinaryIO, is_quad: bool, verts: List[Vertex], norms: List[Normal]) -> Polygon:
-    v0 = _u8(f)
-    v1 = _u8(f)
-    v2 = _u8(f)
-    v3 = _u8(f)
+    v0, v1, v2, v3 = _u8(f), _u8(f), _u8(f), _u8(f)
     order_n0 = _u16(f)
     flags_data = _u16(f)
     normals_data = _i32(f)
@@ -75,108 +97,71 @@ def _read_poly_cdo(f: BinaryIO, is_quad: bool, verts: List[Vertex], norms: List[
     face_type = (face_type_data >> 24) & 0xFF
     face_colour = face_type_data & 0xFFFFFF
 
-    def nv(i: int) -> Vertex:
-        return verts[i] if 0 <= i < len(verts) else (verts[0] if verts else Vertex())
-
-    def nn(i: int) -> Optional[Normal]:
-        if not norms or i < 0 or i >= len(norms):
-            return norms[0] if norms else None
-        return norms[i]
-
     n0 = (order_n0 >> 5) & 0x1FF
     n1 = (normals_data >> 1) & 0x1FF
     n2 = (normals_data >> 10) & 0x1FF
     n3 = (normals_data >> 19) & 0x1FF
 
-    if is_quad:
-        return Polygon(
-            v0=nv(v0), v1=nv(v3), v2=nv(v2), v3=nv(v1),
-            n0=nn(n0), n1=nn(n3), n2=nn(n2), n3=nn(n1),
-            render_order=render_order, render_flags=render_flags,
-            face_type=face_type, face_colour=face_colour,
-        )
     return Polygon(
-        v0=nv(v0), v1=nv(v2), v2=nv(v1), v3=None,
-        n0=nn(n0), n1=nn(n2), n2=nn(n1), n3=None,
-        render_order=render_order, render_flags=render_flags,
-        face_type=face_type, face_colour=face_colour,
+        v0=_nv(verts, v0),
+        v1=_nv(verts, v1),
+        v2=_nv(verts, v2),
+        v3=_nv(verts, v3) if is_quad else None,
+        n0=_nn(norms, n0),
+        n1=_nn(norms, n1),
+        n2=_nn(norms, n2),
+        n3=_nn(norms, n3) if is_quad else None,
+        render_order=render_order,
+        render_flags=render_flags,
+        face_type=face_type,
+        face_colour=face_colour,
     )
 
+
 def _read_uvpoly_cdo(f: BinaryIO, is_quad: bool, verts: List[Vertex], norms: List[Normal]) -> UVPolygon:
-    v0 = _u8(f); v1 = _u8(f); v2 = _u8(f); v3 = _u8(f)
-    order_n0 = _u16(f)
-    flags_data = _u16(f)
-    normals_data = _i32(f)
-    face_type_data = _i32(f)
+    base = _read_poly_cdo(f, is_quad, verts, norms)
     uv0 = _read_uv(f)
     raw_pal = _u16(f)
     palette = (raw_pal >> 4) + (raw_pal & 0x3F)
     uv1 = _read_uv(f)
-    _u8(f); _u8(f)
+    _u8(f)
+    _u8(f)
     uv2 = _read_uv(f)
     uv3 = _read_uv(f)
-
-    render_order = order_n0 & 0x1F
-    render_flags = (flags_data >> 12) & 0xF
-    face_type = (face_type_data >> 24) & 0xFF
-    face_colour = face_type_data & 0xFFFFFF
-
-    def nv(i: int) -> Vertex:
-        return verts[i] if 0 <= i < len(verts) else (verts[0] if verts else Vertex())
-
-    def nn(i: int) -> Optional[Normal]:
-        if not norms or i < 0 or i >= len(norms):
-            return norms[0] if norms else None
-        return norms[i]
-
-    n0 = (order_n0 >> 5) & 0x1FF
-    n1 = (normals_data >> 1) & 0x1FF
-    n2 = (normals_data >> 10) & 0x1FF
-    n3 = (normals_data >> 19) & 0x1FF
-
-    # Reverse winding + matching UVs (CDO vs GT1 view)
-    if is_quad:
-        return UVPolygon(
-            v0=nv(v0), v1=nv(v3), v2=nv(v2), v3=nv(v1),
-            n0=nn(n0), n1=nn(n3), n2=nn(n2), n3=nn(n1),
-            uv0=uv0, uv1=uv3, uv2=uv2, uv3=uv1,
-            render_order=render_order, render_flags=render_flags or 0b1000,
-            face_type=face_type, face_colour=face_colour,
-            palette_index=palette & 0xFF,
-        )
     return UVPolygon(
-        v0=nv(v0), v1=nv(v2), v2=nv(v1), v3=None,
-        n0=nn(n0), n1=nn(n2), n2=nn(n1), n3=None,
-        uv0=uv0, uv1=uv2, uv2=uv1, uv3=UVCoordinate(),
-        render_order=render_order, render_flags=render_flags or 0b1000,
-        face_type=face_type, face_colour=face_colour,
+        v0=base.v0,
+        v1=base.v1,
+        v2=base.v2,
+        v3=base.v3 if is_quad else None,
+        n0=base.n0,
+        n1=base.n1,
+        n2=base.n2,
+        n3=base.n3 if is_quad else None,
+        render_order=base.render_order,
+        render_flags=0b1000,
+        face_type=base.face_type,
+        face_colour=base.face_colour,
+        uv0=uv0,
+        uv1=uv1,
+        uv2=uv2,
+        uv3=uv3 if is_quad else UVCoordinate(),
         palette_index=palette & 0xFF,
     )
+
 
 def _read_lod_cdo(f: BinaryIO) -> LOD:
     vertex_count = _u16(f)
     normal_count = _u16(f)
     triangle_count = _u16(f)
     quad_count = _u16(f)
-    f.read(4)  # two unknown ushorts
+    f.read(4)
     uv_triangle_count = _u16(f)
     uv_quad_count = _u16(f)
-    f.read(4)  # always 0
-    # offsets (uint each) — skip; data follows sequentially after header
-    f.read(4)  # verticesOffset
-    f.read(4)  # unknown
-    f.read(4)  # normalsOffset
-    f.read(4)  # trianglesOffset
-    f.read(4)  # quadsOffset
-    f.read(4)  # unknown
-    f.read(4)  # unknown
-    f.read(4)  # uvTrianglesOffset
-    f.read(4)  # uvQuadsOffset
-    f.read(4)  # unknown
-    # bounds
-    f.read(16)  # 8 shorts
+    f.read(4)
+    f.read(40)
+    f.read(16)
     scale = _u16(f)
-    f.read(2)  # scaleRelatedMaybe
+    f.read(2)
 
     if vertex_count > 4096 or normal_count > 4096:
         raise ValueError(f"Implausible LOD counts verts={vertex_count} norms={normal_count}")
@@ -197,6 +182,117 @@ def _read_lod_cdo(f: BinaryIO) -> LOD:
     lod.uv_quads = uv_quads
     lod.scale = scale if scale else 16
     return lod
+
+
+
+def _read_shadow_cdo(f: BinaryIO, data_len: int) -> Shadow:
+    """Read GT2 CDO shadow; convert indexed quads to CAR sequential verts."""
+    start = f.tell()
+    if data_len - start < 32:
+        return Shadow()
+
+    vertex_count = _u16(f)
+    tri_count = _u16(f)
+    quad_count = _u16(f)
+    _u16(f)
+    if vertex_count > 256 or (tri_count + quad_count) > 128:
+        f.seek(start)
+        return Shadow()
+
+    low_x = struct.unpack("<h", f.read(2))[0]
+    f.read(2)
+    low_z = struct.unpack("<h", f.read(2))[0]
+    f.read(2)
+    high_x = struct.unpack("<h", f.read(2))[0]
+    f.read(2)
+    high_z = struct.unpack("<h", f.read(2))[0]
+    f.read(2)
+    scale = _u16(f)
+    f.read(2)
+
+    need = vertex_count * 4 + (tri_count + quad_count) * 4
+    if f.tell() + need > data_len:
+        # truncate counts to available bytes
+        avail = data_len - f.tell()
+        vertex_count = min(vertex_count, max(0, avail // 4))
+
+    verts: list[ShadowVertex] = []
+    for _ in range(vertex_count):
+        if f.tell() + 4 > data_len:
+            break
+        x, z = struct.unpack("<hh", f.read(4))
+        verts.append(ShadowVertex(x=x, z=z))
+
+    def read_face(is_quad: bool):
+        if f.tell() + 4 > data_len:
+            return None
+        data = struct.unpack("<I", f.read(4))[0]
+        i0 = data & 0x3F
+        i1 = (data >> 6) & 0x3F
+        i2 = (data >> 12) & 0x3F
+        i3 = (data >> 18) & 0x3F
+        if max(i0, i1, i2, i3 if is_quad else 0) >= len(verts):
+            return None
+        if is_quad:
+            return (verts[i0], verts[i1], verts[i2], verts[i3])
+        return (verts[i0], verts[i1], verts[i2], None)
+
+    for _ in range(tri_count):
+        read_face(False)  # CAR has no shadow tris — skip
+
+    car_verts: list[ShadowVertex] = []
+    car_quads: list[ShadowPolygon] = []
+    for _ in range(quad_count):
+        face = read_face(True)
+        if face is None:
+            break
+        v0, v1, v2, v3 = face
+        # duplicate verts per face for sequential CAR layout
+        seq = [
+            ShadowVertex(x=v0.x, z=v0.z),
+            ShadowVertex(x=v1.x, z=v1.z),
+            ShadowVertex(x=v2.x, z=v2.z),
+            ShadowVertex(x=v3.x, z=v3.z),
+        ]
+        base = len(car_verts)
+        car_verts.extend(seq)
+        car_quads.append(ShadowPolygon(v0=seq[0], v1=seq[1], v2=seq[2], v3=seq[3]))
+
+    sh = Shadow()
+    sh.scale = scale if scale else 16
+    sh.vertices = car_verts
+    sh.quads = car_quads
+    sh.low_x, sh.high_x = low_x, high_x
+    sh.low_z, sh.high_z = low_z, high_z
+    if not car_quads:
+        return _make_shadow_from_bounds(low_x, high_x, low_z, high_z, sh.scale)
+    return sh
+
+
+def _make_shadow_from_bounds(lo_x, hi_x, lo_z, hi_z, scale=16) -> Shadow:
+    corners = [
+        ShadowVertex(x=lo_x, z=lo_z),
+        ShadowVertex(x=hi_x, z=lo_z),
+        ShadowVertex(x=hi_x, z=hi_z),
+        ShadowVertex(x=lo_x, z=hi_z),
+    ]
+    sh = Shadow()
+    sh.scale = scale
+    sh.vertices = list(corners)
+    sh.quads = [ShadowPolygon(v0=corners[0], v1=corners[1], v2=corners[2], v3=corners[3])]
+    sh.low_x, sh.high_x = lo_x, hi_x
+    sh.low_z, sh.high_z = lo_z, hi_z
+    return sh
+
+
+def _make_shadow(lod: LOD) -> Shadow:
+    if not lod.vertices:
+        return Shadow()
+    xs = [v.x for v in lod.vertices]
+    zs = [v.z for v in lod.vertices]
+    return _make_shadow_from_bounds(min(xs), max(xs), min(zs), max(zs), 16)
+
+
 
 def read_cdo(path: Path | str) -> GTCarModel:
     path = Path(path)
@@ -220,9 +316,6 @@ def read_cdo(path: Path | str) -> GTCarModel:
             w.menu_x = mx
         wheels.append(w)
 
-    # Skip to LOD table: after wheels, +0x828 then lodCount (uint)
-    # Current position is after 4 wheels from menu fields.
-    # GT2ModelTool: after wheels, stream.Position += 0x828
     f.seek(f.tell() + 0x828)
     lod_count = _u32(f)
     if lod_count < 1 or lod_count > 8:
@@ -231,15 +324,14 @@ def read_cdo(path: Path | str) -> GTCarModel:
             f"File may still be compressed or not a GT2 CDO."
         )
 
-    # LOD distance table
     f.read(2)
-    _u16(f)  # lod0 max distance
-    _u32(f)  # lod0 offset (always 0)
-    f.read(2)
-    _u16(f)  # lod1
+    _u16(f)
     _u32(f)
     f.read(2)
-    _u16(f)  # lod2
+    _u16(f)
+    _u32(f)
+    f.read(2)
+    _u16(f)
     _u32(f)
 
     lods: List[LOD] = []
@@ -254,7 +346,6 @@ def read_cdo(path: Path | str) -> GTCarModel:
     if not lods:
         raise ValueError("No LODs parsed from CDO")
 
-    # GT1 in-memory wheel order matches CAR reorder: [2,3,0,1]
     if len(wheels) == 4:
         wheels = [wheels[2], wheels[3], wheels[0], wheels[1]]
 
@@ -265,9 +356,15 @@ def read_cdo(path: Path | str) -> GTCarModel:
     model.menu_rear_radius = menu_rr
     model.menu_rear_width = menu_rw
     model.lods = lods
-    model.shadow = Shadow()
+    try:
+        model.shadow = _read_shadow_cdo(f, len(data))
+    except Exception:
+        model.shadow = _make_shadow(lods[0]) if lods else Shadow()
+    if not model.shadow.vertices and lods:
+        model.shadow = _make_shadow(lods[0])
     model.raw_size = len(data)
     return model
+
 
 def convert_cdo_to_car(cdo_path: Path | str, car_path: Path | str) -> Path:
     model = read_cdo(cdo_path)

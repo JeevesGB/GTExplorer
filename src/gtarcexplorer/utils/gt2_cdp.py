@@ -1,8 +1,17 @@
+"""
+GT2 CDP/CNP → GT1 TEX (GT-CTEX) conversion.
+
+Layouts from pez2k GT2TextureEditor:
+  CDP: colour_count@0, palettes@0x20 size 0x240/colour, bitmap@0x43A0
+  TEX: header, colour_count@0x0E, flags@0x20, bitmap@0x60 (256x256), palettes@0x8060 size 0x200
+"""
 from __future__ import annotations
+
 import gzip
 import struct
 from pathlib import Path
 from typing import List
+
 from .gttex import (
     GTTex,
     CarColour,
@@ -14,10 +23,12 @@ from .gttex import (
     COLOURS_PER_CLUT,
     ALPHA_BIT,
 )
+
 CDP_COLOUR_COUNT_INDEX = 0
 CDP_PALETTE_START = 0x20
 CDP_PALETTE_SIZE = 0x240
 CDP_BITMAP_START = 0x43A0
+
 
 def _load_bytes(path: Path) -> bytes:
     data = path.read_bytes()
@@ -25,7 +36,9 @@ def _load_bytes(path: Path) -> bytes:
         data = gzip.decompress(data)
     return data
 
+
 def _read_palette_block(data: bytes, base: int) -> tuple[List[Palette], List[BitMask16], List[BitMask16], list]:
+    """Read one CDP colour block (0x240): 16 CLUTs + illum masks + paint masks."""
     palettes: List[Palette] = []
     alpha: list = []
     off = base
@@ -63,15 +76,18 @@ def _read_palette_block(data: bytes, base: int) -> tuple[List[Palette], List[Bit
 
     return palettes, illumination, paint, alpha
 
+
 def read_cdp(path: Path | str) -> GTTex:
     path = Path(path)
     data = _load_bytes(path)
-    if len(data) < CDP_BITMAP_START + (BITMAP_W * BITMAP_H // 2):
+    CDP_H = 224
+    if len(data) < CDP_BITMAP_START + (BITMAP_W * CDP_H // 2):
         raise ValueError(
             f"CDP too small ({len(data)} bytes); need at least "
-            f"{CDP_BITMAP_START + BITMAP_W * BITMAP_H // 2}"
+            f"{CDP_BITMAP_START + BITMAP_W * CDP_H // 2}"
         )
 
+    # colour count: byte at 0 (WriteToGameFile) or ushort
     colour_count = data[CDP_COLOUR_COUNT_INDEX]
     if colour_count == 0:
         colour_count = struct.unpack_from("<H", data, 0)[0]
@@ -96,23 +112,27 @@ def read_cdp(path: Path | str) -> GTTex:
             cc.alpha = alpha
         tex.colours.append(cc)
 
+    # masks only meaningful once for TEX — keep from colour 0
     if len(tex.colours) > 1:
         for i in range(1, len(tex.colours)):
             tex.colours[i].illumination = tex.colours[0].illumination
             tex.colours[i].paint = tex.colours[0].paint
 
+    # bitmap 4bpp at 0x43A0
     off = CDP_BITMAP_START
     tex.pixels = [[0] * BITMAP_H for _ in range(BITMAP_W)]
-    for y in range(BITMAP_H):
+    for y in range(min(224, BITMAP_H)):
         for x in range(0, BITMAP_W, 2):
             if off >= len(data):
                 break
             pair = data[off]
             off += 1
+            # CDP2TIM / CarTexture WriteToGameFile: (x+1 << 4) | x
             tex.pixels[x][y] = pair & 0xF
             tex.pixels[x + 1][y] = (pair >> 4) & 0xF
 
     return tex
+
 
 def convert_cdp_to_tex(cdp_path: Path | str, tex_path: Path | str) -> Path:
     tex = read_cdp(cdp_path)

@@ -645,8 +645,11 @@ def show_car_in_viewer(
     data: bytes,
     label: str = "",
     tex_data: Optional[bytes] = None,
+    entry_index: int | None = None,
 ) -> None:
     win._viewer_mode = "car"
+    if entry_index is not None:
+        win._car_entry_index = int(entry_index)
     win._pack_tims = []
     if hasattr(win, "tim_list"):
         win.tim_list.clear()

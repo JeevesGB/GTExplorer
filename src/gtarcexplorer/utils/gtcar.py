@@ -98,6 +98,31 @@ def _bgr_to_kd(face_colour: int) -> Tuple[float, float, float]:
 # Write-back: pack GT1 .car binary (reverse of read path)
 # ---------------------------------------------------------------------------
 
+
+def _vidx_id(vertices, v) -> int:
+    """Index by object identity (dataclass == matches coords, not instance)."""
+    if v is None:
+        return 0
+    for i, x in enumerate(vertices):
+        if x is v:
+            return i
+    try:
+        return vertices.index(v)
+    except ValueError:
+        return 0
+
+
+def _nidx_id(normals, n) -> int:
+    if n is None or not normals:
+        return 0
+    for i, x in enumerate(normals):
+        if x is n:
+            return i
+    try:
+        return normals.index(n)
+    except ValueError:
+        return 0
+
 def _pack_vertex_refs(v0: int, v1: int, v2: int, v3: int, is_quad: bool) -> bytes:
     """
     Pack four vertex indices into the 6-byte GT1 face vertex block.
@@ -401,24 +426,8 @@ class Polygon:
 
     def write_car(self, f, vertices: List[Vertex], normals: List[Normal], is_quad: bool) -> None:
         """Pack this untextured face into 16 bytes (GT1 CAR layout)."""
-        def vidx(v: Optional[Vertex]) -> int:
-            if v is None:
-                return 0
-            try:
-                return vertices.index(v)
-            except ValueError:
-                return 0
-
-        def nidx(n: Optional[Normal]) -> int:
-            if n is None or not normals:
-                return 0
-            try:
-                return normals.index(n)
-            except ValueError:
-                return 0
-
-        v0, v1, v2, v3 = vidx(self.v0), vidx(self.v1), vidx(self.v2), vidx(self.v3)
-        n0, n1, n2, n3 = nidx(self.n0), nidx(self.n1), nidx(self.n2), nidx(self.n3)
+        v0, v1, v2, v3 = _vidx_id(vertices, self.v0), _vidx_id(vertices, self.v1), _vidx_id(vertices, self.v2), _vidx_id(vertices, self.v3)
+        n0, n1, n2, n3 = _nidx_id(normals, self.n0), _nidx_id(normals, self.n1), _nidx_id(normals, self.n2), _nidx_id(normals, self.n3)
 
         f.write(_pack_vertex_refs(v0, v1, v2, v3, is_quad))
         f.write(_pack_normal_refs(n0, n1, n2, n3, self.render_order))
@@ -486,24 +495,8 @@ class UVPolygon(Polygon):
 
     def write_car(self, f: BinaryIO, vertices: List[Vertex], normals: List[Normal], is_quad: bool) -> None:
         """Pack textured face: 16-byte base + UV/palette block (28 bytes total)."""
-        def vidx(v: Optional[Vertex]) -> int:
-            if v is None:
-                return 0
-            try:
-                return vertices.index(v)
-            except ValueError:
-                return 0
-
-        def nidx(n: Optional[Normal]) -> int:
-            if n is None or not normals:
-                return 0
-            try:
-                return normals.index(n)
-            except ValueError:
-                return 0
-
-        v0, v1, v2, v3 = vidx(self.v0), vidx(self.v1), vidx(self.v2), vidx(self.v3)
-        n0, n1, n2, n3 = nidx(self.n0), nidx(self.n1), nidx(self.n2), nidx(self.n3)
+        v0, v1, v2, v3 = _vidx_id(vertices, self.v0), _vidx_id(vertices, self.v1), _vidx_id(vertices, self.v2), _vidx_id(vertices, self.v3)
+        n0, n1, n2, n3 = _nidx_id(normals, self.n0), _nidx_id(normals, self.n1), _nidx_id(normals, self.n2), _nidx_id(normals, self.n3)
 
         f.write(_pack_vertex_refs(v0, v1, v2, v3, is_quad))
         f.write(_pack_normal_refs(n0, n1, n2, n3, self.render_order))
@@ -822,6 +815,9 @@ class GTCarModel:
     menu_front_width: int = 0
     menu_rear_radius: int = 0
     menu_rear_width: int = 0
+    lod0_max_distance: int = 5
+    lod1_max_distance: int = 15
+    lod2_max_distance: int = 300
     lods: List[LOD] = field(default_factory=list)
     shadow: Optional[Shadow] = None
     raw_size: int = 0
@@ -870,12 +866,18 @@ class GTCarModel:
 
         _skip(f, 4)
         lod_count = _u16(f)
+        # Parse LOD max-distance table inside the 0x42-byte gap
+        gap = f.read(0x42)
+        if len(gap) >= 14:
+            model.lod0_max_distance = gap[4] | (gap[5] << 8)
+            model.lod1_max_distance = gap[12] | (gap[13] << 8)
+        if len(gap) >= 22:
+            model.lod2_max_distance = gap[20] | (gap[21] << 8)
         if lod_count < 1 or lod_count > _MAX_LODS:
             raise ValueError(
                 f"Implausible LOD count {lod_count} (expected 1–{_MAX_LODS}) — "
                 f"file may be truncated or corrupt"
             )
-        _skip(f, 0x42)
 
         model.lods = []
         for i in range(lod_count):
@@ -957,7 +959,21 @@ class GTCarModel:
                               self.menu_rear_radius, self.menu_rear_width))
         buf.write(bytes(4))  # skip
         buf.write(struct.pack("<H", len(self.lods)))
-        buf.write(bytes(0x42))  # skip to first LOD
+        # 0x42-byte gap before LOD0. Stock cars store LOD switch distances here
+        # (defaults 5 / 15 / 300). Zero distances → game never draws body LODs.
+        gap = bytearray(0x42)
+        dists = [
+            int(getattr(self, "lod0_max_distance", 5) or 5),
+            int(getattr(self, "lod1_max_distance", 15) or 15),
+            int(getattr(self, "lod2_max_distance", 300) or 300),
+        ]
+        # layout: 4 bytes pad, then per LOD: u16 dist + 6 bytes pad
+        for i, d in enumerate(dists[:3]):
+            off = 4 + i * 8
+            if off + 2 <= len(gap):
+                gap[off] = d & 0xFF
+                gap[off + 1] = (d >> 8) & 0xFF
+        buf.write(bytes(gap))
 
         for i, lod in enumerate(self.lods):
             lod.write_car(buf)

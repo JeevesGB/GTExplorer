@@ -7,15 +7,16 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QApplication, QMessageBox, 
+    QApplication, QMessageBox,
     QFileDialog, QInputDialog,
-    QDialog, QVBoxLayout, 
+    QDialog, QVBoxLayout,
     QTableWidget, QTableWidgetItem,
-    QDialogButtonBox, QLabel, 
+    QDialogButtonBox, QLabel,
     QAbstractItemView, QTreeWidgetItem,
     QCheckBox, QGroupBox,
     QPushButton, QHBoxLayout,
-    QFormLayout, QLineEdit,   
+    QFormLayout, QLineEdit,
+    QTextEdit, QProgressBar,
 )
 from ..utils.archive import GTArc
 from ..utils.replay import is_replay_save
@@ -71,6 +72,69 @@ def _emit_finished(win, ok: bool, payload) -> bool:
         return True
     except RuntimeError:
         return False
+
+def _emit_log(win, msg: str) -> bool:
+    if not _win_alive(win):
+        return False
+    try:
+        if hasattr(win, "log_signal"):
+            win.log_signal.emit(str(msg))
+            return True
+    except RuntimeError:
+        return False
+    return False
+
+
+class RepackLogDialog(QDialog):
+    """Non-modal log + progress shown while an archive is repacked."""
+
+    def __init__(self, parent=None, title: str = "Repacking archive"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumSize(560, 360)
+        self.setModal(False)
+        lay = QVBoxLayout(self)
+        self.status_lbl = QLabel("Starting…")
+        lay.addWidget(self.status_lbl)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 0)
+        lay.addWidget(self.bar)
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        lay.addWidget(self.log, stretch=1)
+        row = QHBoxLayout()
+        self.btn_close = QPushButton("Close")
+        self.btn_close.setEnabled(False)
+        self.btn_close.clicked.connect(self.accept)
+        row.addStretch(1)
+        row.addWidget(self.btn_close)
+        lay.addLayout(row)
+
+    def append_log(self, msg: str) -> None:
+        self.log.append(msg)
+        sb = self.log.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def set_progress(self, cur: int, total: int) -> None:
+        total = max(1, int(total))
+        cur = max(0, min(int(cur), total))
+        self.bar.setRange(0, total)
+        self.bar.setValue(cur)
+        self.status_lbl.setText(f"Processing {cur} / {total}")
+
+    def mark_done(self, ok: bool, detail: str = "") -> None:
+        self.bar.setRange(0, 1)
+        self.bar.setValue(1)
+        if ok:
+            self.status_lbl.setText("Done")
+            if detail:
+                self.append_log(f"Saved: {detail}")
+        else:
+            self.status_lbl.setText("Failed")
+            if detail:
+                self.append_log(f"ERROR: {detail}")
+        self.btn_close.setEnabled(True)
 
 def last_dir(win, key: str = "last_open_dir") -> str:
     return win.settings.value(key, "", type=str) or ""
@@ -472,8 +536,6 @@ def repack(win) -> None:
     if not ok:
         return
 
-    # Prefer the folder currently open in the tree (Open Folder),
-    # then the last extract_dir, otherwise ask the user.
     folder = None
     if getattr(win, "arc", None) is not None and getattr(win.arc, "kind", None) == "folder":
         p = getattr(win.arc, "path", None)
@@ -529,23 +591,86 @@ def repack(win) -> None:
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
     ) == QMessageBox.StandardButton.Yes
 
+    # Prefer patching into a copy of the original ARC (keeps disc layout).
+    win._repack_template_arc = None
+    use_template = QMessageBox.question(
+        win, "Safe layout",
+        "Patch into a copy of the ORIGINAL archive layout?\n\n"
+        "Yes (recommended) — pick the stock CAR.DAT / GT-ARC; each file "
+        "stays at its original offset (avoids in-game crashes).\n\n"
+        "No — full rebuild with 0x800-aligned packing.",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.Yes,
+    ) == QMessageBox.StandardButton.Yes
+    if use_template:
+        tmpl, _ = QFileDialog.getOpenFileName(
+            win, "Original archive (template)",
+            win._last_dir(),
+            "DAT (*.DAT *.dat);;All (*.*)",
+        )
+        if not tmpl:
+            return
+        win._repack_template_arc = tmpl
+
+    dlg = RepackLogDialog(win, title="Repacking archive")
+    dlg.append_log(f"Source folder: {folder}")
+    dlg.append_log(f"Output: {out}")
+    dlg.append_log(f"Compression level: {level}" + (" (uncompressed)" if force_unc else ""))
+    dlg.append_log("—")
+    dlg.show()
+    win._repack_log_dlg = dlg
+    win._progress_status = "Repacking"
     win.set_status("Repacking…")
+    win.progress.setRange(0, 0)
+
+    def on_log(msg: str):
+        if getattr(win, "_repack_log_dlg", None) is not None:
+            win._repack_log_dlg.append_log(msg)
+
+    def on_prog(cur: int, total: int):
+        win._update_progress(cur, total)
+        if getattr(win, "_repack_log_dlg", None) is not None:
+            win._repack_log_dlg.set_progress(cur, total)
 
     def worker():
         try:
+            def progress_cb(cur, total, name="", action=""):
+                action = action or "pack"
+                name = name or ""
+                _emit_log(win, f"[{cur}/{total}] {action}: {name}")
+                _emit_progress(win, cur, total)
+
+            _emit_log(win, "Scanning folder and building archive…")
+            template = getattr(win, "_repack_template_arc", None)
             result = GTArc.pack_from_folder(
                 str(win.extract_dir), out,
                 force_uncompressed=force_unc,
                 compress_level=level,
+                progress_cb=progress_cb,
+                template_arc=template,
             )
+            _emit_log(win, "Writing aligned GT-ARC complete.")
             _emit_finished(win, True, result)
         except Exception as e:
+            _emit_log(win, f"ERROR: {e}")
             _emit_finished(win, False, str(e))
 
     try:
         win.finished_signal.disconnect()
     except TypeError:
         pass
+    try:
+        win.progress_signal.disconnect()
+    except TypeError:
+        pass
+    if hasattr(win, "log_signal"):
+        try:
+            win.log_signal.disconnect()
+        except TypeError:
+            pass
+        win.log_signal.connect(on_log)
+
+    win.progress_signal.connect(on_prog)
     win.finished_signal.connect(lambda ok, data: on_repack_finished(win, ok, data))
     threading.Thread(target=worker, daemon=True).start()
 
@@ -566,12 +691,36 @@ def on_repack_finished(win, success: bool, data) -> None:
         win.finished_signal.disconnect()
     except TypeError:
         pass
+    try:
+        win.progress_signal.disconnect()
+    except TypeError:
+        pass
+    if hasattr(win, "log_signal"):
+        try:
+            win.log_signal.disconnect()
+        except TypeError:
+            pass
     win.finished_signal.connect(win._on_load_finished)
+    win.progress_signal.connect(win._update_progress)
+
+    win._progress_status = None
+    win.progress.setRange(0, 100)
+    win.progress.setValue(0 if not success else 100)
+
+    dlg = getattr(win, "_repack_log_dlg", None)
+    if dlg is not None:
+        try:
+            dlg.mark_done(success, str(data) if data else "")
+        except Exception:
+            pass
+
     if success:
         win.set_status(f"Repacked → {data}")
         QMessageBox.information(win, "Done", f"Saved:\n{data}")
     else:
+        win.set_status("Repack failed")
         QMessageBox.critical(win, "Repack failed", str(data))
+
 
 def save_selected(win) -> None:
     items = win.tree.selectedItems()
@@ -615,6 +764,216 @@ def save_entry(win, idx: int) -> None:
     Path(path).write_bytes(data)
     win._set_last_dir(path, "last_extract_dir")
     win.set_status(f"Saved → {path}")
+
+
+def replace_selected_entry(win) -> None:
+    """Replace the selected CAR.DAT / GT-ARC entry with a file on disk (in-place).
+
+    Uses the same slot-patch approach as the palette editor so the archive
+    table and offsets stay identical. Falls back to save_preserving if the
+    replacement does not fit the original compressed slot.
+    """
+    items = win.tree.selectedItems()
+    if not items:
+        QMessageBox.information(win, "Nothing selected", "Select a GT-CAR or GT-CTEX entry first.")
+        return
+    try:
+        idx = int(items[0].text(0))
+    except ValueError:
+        QMessageBox.information(win, "Nothing selected", "Select an archive entry.")
+        return
+
+    if not win.arc.files or idx < 0 or idx >= len(win.arc.files):
+        QMessageBox.warning(win, "No archive", "Open a GT-ARC first.")
+        return
+
+    f = win.arc.files[idx]
+    ftype = (f.get("type") or "")
+    ext = (f.get("ext") or "").lower()
+    is_car = ftype == "GT-CAR Model" or ext == ".car"
+    is_tex = ftype in ("GT-CTEX Texture", "GT-CTEX") or ext == ".tex"
+    if not is_car and not is_tex:
+        QMessageBox.information(
+            win, "Unsupported type",
+            "Select a GT-CAR (.car) or GT-CTEX (.tex) entry to replace.",
+        )
+        return
+
+    if is_car:
+        filt = "GT-CAR model (*.car);;All (*.*)"
+        title = f"Replace entry {idx} with .car"
+    else:
+        filt = "GT-CTEX texture (*.tex);;All (*.*)"
+        title = f"Replace entry {idx} with .tex"
+
+    path, _ = QFileDialog.getOpenFileName(win, title, win._last_dir(), filt)
+    if not path:
+        return
+    win._set_last_dir(path)
+
+    data = Path(path).read_bytes()
+    if is_car:
+        if b"GT-CAR" not in data[:16]:
+            QMessageBox.warning(win, "Not a car", "File does not look like a GT-CAR model.")
+            return
+        data = _ensure_car_lod_distances(data)
+    if is_tex and b"GT-CTEX" not in data[:16]:
+        QMessageBox.warning(win, "Not a texture", "File does not look like a GT-CTEX texture.")
+        return
+
+    arc_path = getattr(win.arc, "path", None)
+    kind = getattr(win.arc, "kind", None)
+    f["data"] = data
+    f["decomp_size"] = len(data)
+    f["_dirty"] = True
+
+    if not (arc_path and kind == "gtarc" and Path(arc_path).is_file()):
+        QMessageBox.information(
+            win, "In memory only",
+            f"Updated entry {idx} in memory.\n"
+            "The archive is not a real GT-ARC file path, so it cannot be "
+            "patched on disk. Use Repack with Safe layout to write a DAT.",
+        )
+        win.set_status(f"Entry {idx} replaced in memory ({len(data)} bytes)")
+        return
+
+    try:
+        result = GTArc.patch_file_entry(str(arc_path), idx, data, compress_level=9)
+        f["comp_size"] = result["slot_size"]
+        f["_dirty"] = False
+        # Refresh raw so subsequent reads match disk
+        win.arc.raw = Path(arc_path).read_bytes()
+        win.arc.path = str(arc_path)
+        for i, ent in enumerate(win.arc.files):
+            off, csz, dsz = __import__("struct").unpack_from(
+                "<III", win.arc.raw, 0x10 + i * 12
+            )
+            ent["offset"] = off
+            ent["comp_size"] = csz
+            ent["decomp_size"] = dsz
+        win.set_status(
+            f"Patched entry {idx} in place "
+            f"({result['comp_size']}/{result['slot_size']} bytes compressed)"
+        )
+        QMessageBox.information(
+            win, "Saved",
+            f"Entry {idx} replaced in:\n{arc_path}\n\n"
+            f"Compressed {result['comp_size']} / slot {result['slot_size']} bytes\n"
+            f"Decompressed {result['decomp_size']} bytes",
+        )
+        return
+    except ValueError as e:
+        # Slot too small — try preserving rebuild of dirty entries only
+        reply = QMessageBox.question(
+            win, "Slot too small",
+            f"{e}\n\nRebuild the archive preserving original layout "
+            f"(only dirty entries change)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            out = win.arc.save_preserving(
+                str(arc_path), compress_level=9, pad_to_size=len(win.arc.raw)
+            )
+            f["_dirty"] = False
+            win.set_status(f"Rebuilt archive with entry {idx} → {out}")
+            QMessageBox.information(win, "Saved", f"Archive rebuilt:\n{out}")
+        except Exception as e2:
+            QMessageBox.critical(win, "Save failed", str(e2))
+    except Exception as e:
+        QMessageBox.critical(win, "Replace failed", str(e))
+
+
+def _ensure_car_lod_distances(data: bytes) -> bytes:
+    """Write stock LOD max distances (5/15/300) if the gap is all zeros."""
+    if b"GT-CAR" not in data[:12] or len(data) < 0x80:
+        return data
+    b = bytearray(data)
+    d0 = b[0x42] | (b[0x43] << 8)
+    if d0 == 0:
+        for off, dist in ((0x42, 5), (0x4A, 15), (0x52, 300)):
+            b[off] = dist & 0xFF
+            b[off + 1] = (dist >> 8) & 0xFF
+    return bytes(b)
+
+
+def replace_car_and_texture_pair(win) -> None:
+    """Replace a selected .car entry and optionally its paired .tex neighbour."""
+    items = win.tree.selectedItems()
+    if not items:
+        QMessageBox.information(win, "Nothing selected", "Select a GT-CAR entry first.")
+        return
+    try:
+        idx = int(items[0].text(0))
+    except ValueError:
+        return
+    f = win.arc.files[idx]
+    is_car = f.get("type") == "GT-CAR Model" or (f.get("ext") or "").lower() == ".car"
+    if not is_car:
+        QMessageBox.information(win, "Not a car", "Select a GT-CAR model entry.")
+        return
+
+    car_path, _ = QFileDialog.getOpenFileName(
+        win, f"Replacement .car for entry {idx}", win._last_dir(),
+        "GT-CAR (*.car);;All (*.*)",
+    )
+    if not car_path:
+        return
+    win._set_last_dir(car_path)
+    car_data = _ensure_car_lod_distances(Path(car_path).read_bytes())
+
+    # Guess texture slot: usually tex is car_index - 1 (tex, car, tex, car …)
+    tex_idx = None
+    if idx > 0:
+        prev = win.arc.files[idx - 1]
+        if prev.get("type") in ("GT-CTEX Texture", "GT-CTEX") or (prev.get("ext") or "").lower() == ".tex":
+            tex_idx = idx - 1
+    if tex_idx is None and idx + 1 < len(win.arc.files):
+        nxt = win.arc.files[idx + 1]
+        if nxt.get("type") in ("GT-CTEX Texture", "GT-CTEX") or (nxt.get("ext") or "").lower() == ".tex":
+            tex_idx = idx + 1
+
+    tex_data = None
+    tex_path = None
+    if tex_idx is not None:
+        ans = QMessageBox.question(
+            win, "Also replace texture?",
+            f"Found nearby texture entry {tex_idx}.\n"
+            f"Replace it with a .tex file as well?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if ans == QMessageBox.StandardButton.Yes:
+            tex_path, _ = QFileDialog.getOpenFileName(
+                win, f"Replacement .tex for entry {tex_idx}", win._last_dir(),
+                "GT-CTEX (*.tex);;All (*.*)",
+            )
+            if tex_path:
+                tex_data = Path(tex_path).read_bytes()
+
+    arc_path = getattr(win.arc, "path", None)
+    if not (arc_path and getattr(win.arc, "kind", None) == "gtarc" and Path(arc_path).is_file()):
+        QMessageBox.warning(win, "No DAT path", "Open a real GT-ARC file first.")
+        return
+
+    lines = []
+    try:
+        r = GTArc.patch_file_entry(str(arc_path), idx, car_data, compress_level=9)
+        lines.append(f"Car entry {idx}: {r['comp_size']}/{r['slot_size']} bytes")
+        win.arc.files[idx]["data"] = car_data
+        win.arc.files[idx]["_dirty"] = False
+        if tex_data is not None and tex_idx is not None:
+            r2 = GTArc.patch_file_entry(str(arc_path), tex_idx, tex_data, compress_level=9)
+            lines.append(f"Tex entry {tex_idx}: {r2['comp_size']}/{r2['slot_size']} bytes")
+            win.arc.files[tex_idx]["data"] = tex_data
+            win.arc.files[tex_idx]["_dirty"] = False
+        win.arc.raw = Path(arc_path).read_bytes()
+        win.set_status(f"Replaced entry {idx} in {arc_path}")
+        QMessageBox.information(win, "Saved", "\n".join(lines) + f"\n\n{arc_path}")
+    except Exception as e:
+        QMessageBox.critical(win, "Replace failed", str(e))
+
 
 def export_strings(win) -> None:
     if not win.arc.files:
@@ -1736,3 +2095,189 @@ def pack_folder_to_tpk(win) -> None:
 
     win.set_status(f"Packed {len(tim_list)} TIM(s) → {out}")
     QMessageBox.information(win, "Pack TPK", f"Saved:\n{out}\n\n{len(tim_list)} texture(s)")
+
+def _patch_entry(win, idx: int, data: bytes, label: str = "") -> str:
+    """Patch one GT-ARC entry; return status line."""
+    import struct
+    from pathlib import Path as P
+    arc_path = getattr(win.arc, "path", None)
+    if not (arc_path and getattr(win.arc, "kind", None) == "gtarc" and P(arc_path).is_file()):
+        raise ValueError("Open a real GT-ARC (.DAT) file first")
+    data = bytes(data)
+    if b"GT-CAR" in data[:16]:
+        data = _ensure_car_lod_distances(data)
+    result = GTArc.patch_file_entry(str(arc_path), idx, data, compress_level=9)
+    ent = win.arc.files[idx]
+    ent["data"] = data
+    ent["decomp_size"] = len(data)
+    ent["comp_size"] = result["slot_size"]
+    ent["_dirty"] = False
+    win.arc.raw = P(arc_path).read_bytes()
+    for i, e in enumerate(win.arc.files):
+        off, csz, dsz = struct.unpack_from("<III", win.arc.raw, 0x10 + i * 12)
+        e["offset"] = off
+        e["comp_size"] = csz
+        e["decomp_size"] = dsz
+    return f"{label or f'entry {idx}'}: {result['comp_size']}/{result['slot_size']} bytes"
+
+
+def _find_night_car_index(win, day_idx: int):
+    """Best-effort night model index for a day car entry."""
+    files = win.arc.files
+    day = files[day_idx]
+    name = (day.get("real_name") or day.get("label") or "").lower()
+    stem = name.rsplit(".", 1)[0]
+    for f in files:
+        if f.get("type") != "GT-CAR Model" and (f.get("ext") or "").lower() != ".car":
+            continue
+        n = (f.get("real_name") or f.get("label") or "").lower()
+        s = n.rsplit(".", 1)[0]
+        if s in (stem + "_night", stem + "night", stem + "_n") or n.endswith("_night.car"):
+            return int(f["index"])
+    # common layout: second half mirrors first half
+    n = len(files)
+    half = n // 2
+    cand = day_idx + half if day_idx + half < n else day_idx - half
+    if 0 <= cand < n and cand != day_idx:
+        f = files[cand]
+        if f.get("type") == "GT-CAR Model" or (f.get("ext") or "").lower() == ".car":
+            return cand
+    return None
+
+
+def replace_from_car_viewer(win, mode: str = "all") -> None:
+    """Replace model / texture / night from the car viewer toolbar.
+
+    mode: 'model' | 'tex' | 'night' | 'all'
+    """
+    from pathlib import Path as P
+
+    day_idx = getattr(win, "_car_entry_index", None)
+    if day_idx is None:
+        items = win.tree.selectedItems()
+        if items:
+            try:
+                day_idx = int(items[0].text(0))
+            except ValueError:
+                day_idx = None
+    if day_idx is None:
+        QMessageBox.information(win, "No car", "Open a GT-CAR entry in the viewer first.")
+        return
+
+    tex_idx = getattr(win, "_car_tex_entry_index", None)
+    if tex_idx is None:
+        try:
+            from . import viewer as viewer_mod
+            _, tex_idx = viewer_mod._find_companion_tex_entry(win, win.arc.files[day_idx])
+        except Exception:
+            tex_idx = None
+
+    night_idx = _find_night_car_index(win, day_idx)
+    night_tex_idx = None
+    if night_idx is not None:
+        try:
+            from . import viewer as viewer_mod
+            _, night_tex_idx = viewer_mod._find_companion_tex_entry(win, win.arc.files[night_idx])
+        except Exception:
+            pass
+
+    start_dir = win._last_dir()
+    lines = []
+    paths_info = []
+
+    def pick(title, filt, suggested=""):
+        p, _ = QFileDialog.getOpenFileName(win, title, suggested or start_dir, filt)
+        if p:
+            win._set_last_dir(p)
+        return p
+
+    try:
+        if mode in ("model", "all"):
+            car_path = pick(f"Day model (.car) → entry {day_idx}", "GT-CAR (*.car);;All (*.*)")
+            if not car_path and mode == "model":
+                return
+            if car_path:
+                lines.append(_patch_entry(win, day_idx, P(car_path).read_bytes(), f"Day model [{day_idx}]"))
+                paths_info.append(car_path)
+                # keep viewer in sync
+                win._car_data = P(car_path).read_bytes()
+                if mode == "all":
+                    stem = P(car_path).stem.replace("_night", "")
+                    parent = str(P(car_path).parent)
+                    # auto-find siblings
+                    auto_tex = P(parent) / (stem + ".tex")
+                    auto_ncar = P(parent) / (stem + "_night.car")
+                    auto_ntex = P(parent) / (stem + "_night.tex")
+                    if tex_idx is not None:
+                        tex_path = str(auto_tex) if auto_tex.is_file() else pick(
+                            f"Day texture (.tex) → entry {tex_idx}", "GT-CTEX (*.tex);;All (*.*)", parent
+                        )
+                        if tex_path:
+                            lines.append(_patch_entry(win, tex_idx, P(tex_path).read_bytes(), f"Day tex [{tex_idx}]"))
+                            win._car_tex_data = P(tex_path).read_bytes()
+                    if night_idx is not None:
+                        ncar = str(auto_ncar) if auto_ncar.is_file() else pick(
+                            f"Night model (.car) → entry {night_idx}", "GT-CAR (*.car);;All (*.*)", parent
+                        )
+                        if ncar:
+                            lines.append(_patch_entry(win, night_idx, P(ncar).read_bytes(), f"Night model [{night_idx}]"))
+                        if night_tex_idx is not None:
+                            ntex = str(auto_ntex) if auto_ntex.is_file() else pick(
+                                f"Night texture (.tex) → entry {night_tex_idx}", "GT-CTEX (*.tex);;All (*.*)", parent
+                            )
+                            if ntex:
+                                lines.append(_patch_entry(win, night_tex_idx, P(ntex).read_bytes(), f"Night tex [{night_tex_idx}]"))
+
+        elif mode == "tex":
+            if tex_idx is None:
+                QMessageBox.information(win, "No texture slot", "Could not find a companion .tex entry.")
+                return
+            tex_path = pick(f"Day texture (.tex) → entry {tex_idx}", "GT-CTEX (*.tex);;All (*.*)")
+            if not tex_path:
+                return
+            lines.append(_patch_entry(win, tex_idx, P(tex_path).read_bytes(), f"Day tex [{tex_idx}]"))
+            win._car_tex_data = P(tex_path).read_bytes()
+
+        elif mode == "night":
+            if night_idx is None:
+                QMessageBox.information(
+                    win, "No night slot",
+                    "Could not detect a night model entry. Select it in the tree and use Replace entry.",
+                )
+                return
+            ncar = pick(f"Night model (.car) → entry {night_idx}", "GT-CAR (*.car);;All (*.*)")
+            if not ncar:
+                return
+            lines.append(_patch_entry(win, night_idx, P(ncar).read_bytes(), f"Night model [{night_idx}]"))
+            if night_tex_idx is not None:
+                stem = P(ncar).stem.replace("_night", "")
+                auto = P(ncar).with_name(stem + "_night.tex")
+                ntex = str(auto) if auto.is_file() else pick(
+                    f"Night texture (.tex) → entry {night_tex_idx}", "GT-CTEX (*.tex);;All (*.*)"
+                )
+                if ntex:
+                    lines.append(_patch_entry(win, night_tex_idx, P(ntex).read_bytes(), f"Night tex [{night_tex_idx}]"))
+
+        if not lines:
+            return
+
+        # Refresh viewer
+        try:
+            from . import viewer as viewer_mod
+            from ..utils.gtcar import GTCarModel
+            data = getattr(win, "_car_data", None) or win.arc.get_data(day_idx)
+            tex = getattr(win, "_car_tex_data", None)
+            if tex is None and tex_idx is not None:
+                tex = win.arc.get_data(tex_idx)
+            viewer_mod.show_car_in_viewer(win, data, getattr(win, "_car_label", "") or f"entry {day_idx}", tex_data=tex)
+            win._car_entry_index = day_idx
+            if tex_idx is not None:
+                win._car_tex_entry_index = tex_idx
+        except Exception:
+            pass
+
+        win.set_status("; ".join(lines))
+        QMessageBox.information(win, "Replaced in DAT", "\n".join(lines))
+    except Exception as e:
+        QMessageBox.critical(win, "Replace failed", str(e))
+
