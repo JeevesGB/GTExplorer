@@ -1,15 +1,9 @@
-"""
-GT2 CDO/CNO → GT1 GTCarModel conversion.
-Matches pez2k/gt2tools GT2ModelTool Model.ReadFromCDO / LOD.ReadFromCDO.
-"""
 from __future__ import annotations
-
 import gzip
 import io
 import struct
 from pathlib import Path
 from typing import BinaryIO, List, Optional
-
 from .gtcar import (
     GTCarModel,
     LOD,
@@ -184,9 +178,7 @@ def _read_lod_cdo(f: BinaryIO) -> LOD:
     return lod
 
 
-
 def _read_shadow_cdo(f: BinaryIO, data_len: int) -> Shadow:
-    """Read GT2 CDO shadow; convert indexed quads to CAR sequential verts."""
     start = f.tell()
     if data_len - start < 32:
         return Shadow()
@@ -309,7 +301,6 @@ def _make_shadow(lod: LOD) -> Shadow:
     return _make_shadow_from_bounds(min(xs), max(xs), min(zs), max(zs), 16)
 
 
-
 def read_cdo(path: Path | str) -> GTCarModel:
     path = Path(path)
     data = _load_bytes(path)
@@ -429,3 +420,4 @@ def convert_cdo_to_car(cdo_path: Path | str, car_path: Path | str) -> Path:
     car_path = Path(car_path)
     model.write_car(car_path)
     return car_path
+

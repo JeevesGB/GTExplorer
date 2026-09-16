@@ -16,7 +16,7 @@ except Exception:
 
 from PyQt6.QtCore import Qt, QSize, QSettings, pyqtSignal, QEvent, QTimer
 from PyQt6.QtGui import (
-    QAction, QFont, QIcon, QColor, QKeySequence, QMouseEvent, QWheelEvent, QAction, 
+    QAction, QFont, QIcon, QColor, QKeySequence, QMouseEvent, QWheelEvent,
 )
 from PyQt6.QtWidgets import (
     QFrame, QSizePolicy, QMenu,
@@ -25,8 +25,8 @@ from PyQt6.QtWidgets import (
     QLabel, QToolBar, QToolButton, QStatusBar, QProgressBar, QFileDialog,
     QMessageBox, QCheckBox, QComboBox, QScrollArea, QHeaderView,
     QAbstractItemView, QPushButton, QLineEdit,
-    QMenu, QSizePolicy, QButtonGroup, QStyle, QDialog, QDialogButtonBox,
-    QTabWidget, QTextBrowser,
+    QButtonGroup, QStyle, QDialog, QDialogButtonBox,
+    QTabWidget, QTextBrowser, QListWidget, QListWidgetItem,
 )
 
 try:
@@ -60,6 +60,17 @@ TYPE_COLORS = {
     "Unknown":           "#95a5a6",
 }
 
+TYPE_FILTER_GROUPS = [
+    ("All",      None),
+    ("TIM",      ("TIM Texture", "TIM Pack", "GT Menu Image", "SLT")),
+    ("Models",   ("GT-PS Model", "GT-CAR Model", "GT-CTEX")),
+    ("Audio",    ("Sound", "Engine Sound")),
+    ("Archives", ("Nested GT-ARC",)),
+    ("Text",     ("Filename List", "Text / Messages", "GT HTML")),
+    ("Saves",    ("GT Replay Save",)),
+    ("Other",    ("Unknown",)),
+]
+
 CANVAS_PREVIEW = 0
 CANVAS_STRUCTURE = 1
 CANVAS_VIEWER = 2
@@ -67,6 +78,7 @@ CANVAS_CAR_DB = 3
 CANVAS_SAVE_EDITOR = 4
 CANVAS_MENU = 5
 CANVAS_GT2 = 6
+CANVAS_HEX = 7
 
 class GTArcExplorer(QMainWindow):
     progress_signal = pyqtSignal(int, int)
@@ -91,6 +103,8 @@ class GTArcExplorer(QMainWindow):
         self.extract_dir: Path | None = None
         self._custom_filelist_path: str | None = None
         self._theme = "dark"
+        self._type_filter = None  # None = All
+        self._tim_view_mode = "list"  # list | grid
 
         self._car_name_map: dict[str, str] = {}
         self._load_car_names()
@@ -398,6 +412,7 @@ class GTArcExplorer(QMainWindow):
         self.act_view_save = QAction("Save Editor", self)
         self.act_view_menu = QAction("Menu Editor", self)
         self.act_view_gt2 = QAction("GT2 Converter", self)
+        self.act_view_hex = QAction("Hex Editor", self)
         m_view.addAction(self.act_view_preview)
         m_view.addAction(self.act_view_structure)
         m_view.addAction(self.act_view_viewer)
@@ -405,6 +420,7 @@ class GTArcExplorer(QMainWindow):
         m_view.addAction(self.act_view_save)
         m_view.addAction(self.act_view_menu)
         m_view.addAction(self.act_view_gt2)
+        m_view.addAction(self.act_view_hex)
 
         self.act_user_guide = QAction("User Guide", self)
         self.act_user_guide.setShortcut(QKeySequence("F1"))
@@ -467,6 +483,7 @@ class GTArcExplorer(QMainWindow):
             ("Save Editor",         "save",      style.StandardPixmap.SP_DialogSaveButton),
             ("Menu Editor",         "menu",      style.StandardPixmap.SP_DirHomeIcon),
             ("GT2 Converter",       "convert",   style.StandardPixmap.SP_ArrowForward),
+            ("Hex Editor",          "hex",       style.StandardPixmap.SP_FileDialogContentsView),
         ]
         for i, (tip, icon_name, fallback) in enumerate(rail_defs):
             btn = QToolButton()
@@ -506,6 +523,15 @@ class GTArcExplorer(QMainWindow):
         self.filter_edit.setPlaceholderText("Filter by name or type…  (Ctrl+F)")
         self.filter_edit.setClearButtonEnabled(True)
         left_lay.addWidget(self.filter_edit)
+
+        # Type filter chips hidden (text filter still works; logic kept for optional re-enable)
+        self.filter_count_label = QLabel("")
+        self.filter_count_label.setObjectName("filterCountLabel")
+        self.filter_count_label.setVisible(False)
+        self.type_filter_bar = QWidget()
+        self.type_filter_bar.setObjectName("typeFilterBar")
+        self.type_filter_bar.setVisible(False)
+        self._type_filter = None
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["#", "Name", "Type", "Ext", "Size", "%", "Compressed"])
@@ -564,13 +590,46 @@ class GTArcExplorer(QMainWindow):
 
         prev_page = QWidget()
         prev_lay = QVBoxLayout(prev_page)
+        prev_lay.setContentsMargins(4, 4, 4, 4)
+        prev_lay.setSpacing(4)
         self.preview_info = QLabel("Open a .DAT, nested .ARC, or extract folder to begin.")
         self.preview_info.setWordWrap(True)
         prev_lay.addWidget(self.preview_info)
+
+        self.preview_tabs = QTabWidget()
+        self.preview_tabs.setObjectName("previewTabs")
+
         self.preview_text = QTextEdit()
         self.preview_text.setReadOnly(True)
         self.preview_text.setFont(QFont("Consolas", 9))
-        prev_lay.addWidget(self.preview_text)
+        self.preview_tabs.addTab(self.preview_text, "Summary")
+
+        from .hex_editor import HexEditorWidget
+        self.hex_editor = HexEditorWidget()
+        self.hex_editor.set_editable(False)
+        hex_page = QWidget()
+        hex_lay = QVBoxLayout(hex_page)
+        hex_lay.setContentsMargins(0, 0, 0, 0)
+        hex_lay.setSpacing(2)
+        hex_toolbar = QHBoxLayout()
+        self.hex_offset_label = QLabel("Offset: 00000000")
+        self.hex_offset_label.setObjectName("hexOffsetLabel")
+        hex_toolbar.addWidget(self.hex_offset_label)
+        hex_toolbar.addStretch(1)
+        self.hex_goto_edit = QLineEdit()
+        self.hex_goto_edit.setPlaceholderText("Go to offset (hex)")
+        self.hex_goto_edit.setFixedWidth(140)
+        self.hex_goto_edit.setClearButtonEnabled(True)
+        hex_toolbar.addWidget(self.hex_goto_edit)
+        self.btn_hex_goto = QPushButton("Go")
+        self.btn_hex_goto.setProperty("class", "secondary")
+        self.btn_hex_goto.setFixedWidth(40)
+        hex_toolbar.addWidget(self.btn_hex_goto)
+        hex_lay.addLayout(hex_toolbar)
+        hex_lay.addWidget(self.hex_editor, stretch=1)
+        self.preview_tabs.addTab(hex_page, "Hex")
+
+        prev_lay.addWidget(self.preview_tabs, stretch=1)
         self.canvas_stack.addWidget(prev_page)
 
         struct_page = QWidget()
@@ -614,11 +673,20 @@ class GTArcExplorer(QMainWindow):
             return line
 
         # Single compact toolbar
+        # Vertical tool rail on the RIGHT of the viewport
         self.viewer_tools_bar = QWidget()
         self.viewer_tools_bar.setObjectName("viewerToolsBar")
-        vt = QHBoxLayout(self.viewer_tools_bar)
-        vt.setContentsMargins(4, 2, 4, 2)
-        vt.setSpacing(3)
+        self.viewer_tools_bar.setFixedWidth(128)
+        vt = QVBoxLayout(self.viewer_tools_bar)
+        vt.setContentsMargins(6, 6, 6, 6)
+        vt.setSpacing(4)
+
+        def _vsep():
+            line = QFrame()
+            line.setFrameShape(QFrame.Shape.HLine)
+            line.setFrameShadow(QFrame.Shadow.Sunken)
+            line.setFixedHeight(8)
+            return line
 
         # Camera presets as one menu button
         self.btn_view_menu = _tool_btn("View ▾", tip="Camera presets (1–5)")
@@ -632,7 +700,6 @@ class GTArcExplorer(QMainWindow):
         self.act_view_reset = self._view_menu.addAction("Reset\tR")
         self.btn_view_menu.setMenu(self._view_menu)
         self.btn_view_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        # Keep legacy names as aliases to menu actions (for any external refs)
         self.btn_view_front = self.act_view_front
         self.btn_view_side = self.act_view_side
         self.btn_view_rear = self.act_view_rear
@@ -648,14 +715,12 @@ class GTArcExplorer(QMainWindow):
 
         self.shade_combo = QComboBox()
         self.shade_combo.setToolTip("Shading mode (W)")
-        self.shade_combo.setFixedWidth(100)
         self.shade_combo.addItem("Textured", "textured")
         self.shade_combo.addItem("Solid", "solid")
         self.shade_combo.addItem("Wire", "wireframe")
 
         self.lod_combo = QComboBox()
         self.lod_combo.setToolTip("Level of detail")
-        self.lod_combo.setMinimumWidth(88)
         self.lod_combo.setVisible(False)
         self.lod_label = QLabel("LOD")
         self.lod_label.setVisible(False)
@@ -671,14 +736,13 @@ class GTArcExplorer(QMainWindow):
         self.chk_shadow = QCheckBox("Shadow")
         self.chk_shadow.setToolTip("Show shadow mesh")
 
-        # Car-specific cluster (hidden until a car is shown)
+        # Car-specific cluster (hidden until a car is shown) — also vertical
         self.car_tools = QWidget()
-        car_l = QHBoxLayout(self.car_tools)
+        car_l = QVBoxLayout(self.car_tools)
         car_l.setContentsMargins(0, 0, 0, 0)
-        car_l.setSpacing(3)
+        car_l.setSpacing(4)
         self.car_colour_label = QLabel("Paint")
         self.car_colour_combo = QComboBox()
-        self.car_colour_combo.setMinimumWidth(100)
         self.car_colour_combo.setToolTip("Paint colour / CTEX palette set")
         self.btn_edit_colours = _tool_btn("Edit…", tip="Palette editor")
         self.chk_hide_wheels = QCheckBox("No wheels")
@@ -686,7 +750,7 @@ class GTArcExplorer(QMainWindow):
         self.btn_pal_minus = _tool_btn("Pal−", tip="Previous palette / CLUT")
         self.btn_pal_plus = _tool_btn("Pal+", tip="Next palette / CLUT")
         self.btn_replace_car = _tool_btn(
-            "Replace in DAT…",
+            "Replace…",
             tip="Replace this car’s day/night model + textures in the open CAR.DAT",
         )
         for w in (self.car_colour_label, self.car_colour_combo, self.btn_edit_colours,
@@ -701,33 +765,101 @@ class GTArcExplorer(QMainWindow):
         self.btn_shot = _tool_btn("Save", tip="Save screenshot")
         self.btn_copy_view = _tool_btn("Copy", tip="Copy view to clipboard")
 
+        # Make text buttons fill the rail width
+        for b in (
+            self.btn_view_menu, self.btn_spin, self.btn_zoom_out, self.btn_fit,
+            self.btn_zoom_in, self.btn_1to1, self.btn_edit_colours,
+            self.btn_pal_minus, self.btn_pal_plus, self.btn_replace_car,
+            self.btn_shot, self.btn_copy_view,
+        ):
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.shade_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.lod_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.car_colour_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        zoom_row = QHBoxLayout()
+        zoom_row.setSpacing(4)
+        zoom_row.addWidget(self.btn_zoom_out)
+        zoom_row.addWidget(self.btn_fit)
+        zoom_row.addWidget(self.btn_zoom_in)
+
         for w in (
-            self.btn_view_menu, self.btn_spin, _sep(),
-            self.btn_zoom_out, self.btn_fit, self.btn_zoom_in, self.btn_1to1, _sep(),
-            self.shade_combo, self.lod_label, self.lod_combo, _sep(),
-            self.chk_grid, self.chk_ortho, self.chk_shadow, _sep(),
+            self.btn_view_menu, self.btn_spin, _vsep(),
         ):
             vt.addWidget(w)
+        vt.addLayout(zoom_row)
+        vt.addWidget(self.btn_1to1)
+        vt.addWidget(_vsep())
+        vt.addWidget(self.shade_combo)
+        vt.addWidget(self.lod_label)
+        vt.addWidget(self.lod_combo)
+        vt.addWidget(_vsep())
+        vt.addWidget(self.chk_grid)
+        vt.addWidget(self.chk_ortho)
+        vt.addWidget(self.chk_shadow)
+        vt.addWidget(_vsep())
         vt.addWidget(self.car_tools)
         vt.addStretch(1)
         vt.addWidget(self.btn_shot)
         vt.addWidget(self.btn_copy_view)
 
         self.viewer_tools_bar.setVisible(False)
-        # added under the viewport further below
 
         vbody = QSplitter(Qt.Orientation.Horizontal)
         left_v = QWidget()
         left_v.setObjectName("timPackPanel")
         left_v_lay = QVBoxLayout(left_v)
-        left_v_lay.setContentsMargins(0, 0, 4, 0)
-        left_v_lay.addWidget(QLabel("Textures in pack"))
+        left_v_lay.setContentsMargins(4, 4, 6, 4)
+        left_v_lay.setSpacing(6)
+
+        pack_hdr = QHBoxLayout()
+        pack_hdr.addWidget(QLabel("Textures in pack"))
+        pack_hdr.addStretch(1)
+        mode_bar = QWidget()
+        mode_bar.setObjectName("timViewModeBar")
+        mode_lay = QHBoxLayout(mode_bar)
+        mode_lay.setContentsMargins(0, 0, 0, 0)
+        mode_lay.setSpacing(4)
+        self.btn_tim_list = QToolButton()
+        self.btn_tim_list.setText("List")
+        self.btn_tim_list.setCheckable(True)
+        self.btn_tim_list.setChecked(True)
+        self.btn_tim_list.setToolTip("List view")
+        self.btn_tim_grid = QToolButton()
+        self.btn_tim_grid.setText("Grid")
+        self.btn_tim_grid.setCheckable(True)
+        self.btn_tim_grid.setToolTip("Thumbnail grid view")
+        self._tim_mode_group = QButtonGroup(self)
+        self._tim_mode_group.setExclusive(True)
+        self._tim_mode_group.addButton(self.btn_tim_list, 0)
+        self._tim_mode_group.addButton(self.btn_tim_grid, 1)
+        mode_lay.addWidget(self.btn_tim_list)
+        mode_lay.addWidget(self.btn_tim_grid)
+        pack_hdr.addWidget(mode_bar)
+        left_v_lay.addLayout(pack_hdr)
+
+        self._tim_view_stack = QStackedWidget()
         self.tim_list = QTreeWidget()
         self.tim_list.setHeaderLabels(["Name", "Size"])
         self.tim_list.setRootIsDecorated(False)
-        left_v_lay.addWidget(self.tim_list)
+        self.tim_list.setUniformRowHeights(True)
+        self._tim_view_stack.addWidget(self.tim_list)
+
+        self.tim_grid = QListWidget()
+        self.tim_grid.setObjectName("timGridList")
+        self.tim_grid.setViewMode(QListWidget.ViewMode.IconMode)
+        self.tim_grid.setIconSize(QSize(96, 96))
+        self.tim_grid.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.tim_grid.setMovement(QListWidget.Movement.Static)
+        self.tim_grid.setSpacing(8)
+        self.tim_grid.setUniformItemSizes(True)
+        self.tim_grid.setWordWrap(True)
+        self.tim_grid.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._tim_view_stack.addWidget(self.tim_grid)
+        left_v_lay.addWidget(self._tim_view_stack)
+
         self._tim_pack_panel = left_v
-        left_v.setVisible(False)  # only for TIM packs
+        left_v.setVisible(False)
         vbody.addWidget(left_v)
 
         self.viewer_label = QLabel()
@@ -760,9 +892,14 @@ class GTArcExplorer(QMainWindow):
                 self.gl_viewer = None
         vbody.addWidget(self._viewer_stack)
         vbody.setSizes([0, 1000])
-        # Viewport takes all free space; tools dock under the model
-        viewer_lay.addWidget(vbody, stretch=1)
-        viewer_lay.addWidget(self.viewer_tools_bar, stretch=0)
+
+        # Viewport + vertical tools rail on the right
+        viewer_row = QHBoxLayout()
+        viewer_row.setContentsMargins(0, 0, 0, 0)
+        viewer_row.setSpacing(4)
+        viewer_row.addWidget(vbody, stretch=1)
+        viewer_row.addWidget(self.viewer_tools_bar, stretch=0)
+        viewer_lay.addLayout(viewer_row, stretch=1)
         self.canvas_stack.addWidget(viewer_page)
 
         # Car Database canvas page
@@ -784,6 +921,10 @@ class GTArcExplorer(QMainWindow):
         from .gt2_converter import GT2ConverterWidget
         self.gt2_converter_page = GT2ConverterWidget()
         self.canvas_stack.addWidget(self.gt2_converter_page)
+
+        from .hex_editor import HexEditorPage
+        self.hex_page = HexEditorPage()
+        self.canvas_stack.addWidget(self.hex_page)
 
         left.setMinimumWidth(280)
         canvas_container.setMinimumWidth(280)
@@ -841,6 +982,11 @@ class GTArcExplorer(QMainWindow):
                     self.main_splitter.setSizes(sizes)
             except Exception:
                 pass
+        self._restore_tree_header_state()
+        mode = self.settings.value("tim_view_mode", "list")
+        if mode in ("list", "grid"):
+            self._tim_view_mode = mode
+            self._set_tim_view_mode(mode, persist=False)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -854,6 +1000,8 @@ class GTArcExplorer(QMainWindow):
             self.settings.setValue("geometry", self.saveGeometry())
             self.settings.setValue("splitter", self.main_splitter.sizes())
             self.settings.setValue("theme", self._theme)
+            self.settings.setValue("tim_view_mode", self._tim_view_mode)
+            self._save_tree_header_state()
         except Exception:
             pass
         super().closeEvent(event)
@@ -895,6 +1043,7 @@ class GTArcExplorer(QMainWindow):
         self.act_view_menu.triggered.connect(self.open_menu_editor)
         self.act_gt2_converter.triggered.connect(self.open_gt2_converter)
         self.act_view_gt2.triggered.connect(self.open_gt2_converter)
+        self.act_view_hex.triggered.connect(self.open_hex_editor)
         self.act_save_editor.triggered.connect(self.open_save_editor)
         self.act_repack.triggered.connect(self.repack)
         self.act_folder.triggered.connect(self.open_extract_folder)
@@ -904,6 +1053,9 @@ class GTArcExplorer(QMainWindow):
         self.filelist_combo.currentTextChanged.connect(self.on_filelist_changed)
         self.tree.itemSelectionChanged.connect(self.on_select)
         self.tim_list.itemSelectionChanged.connect(self.on_tim_list_select)
+        self.tim_grid.itemSelectionChanged.connect(self.on_tim_grid_select)
+        self.btn_tim_list.clicked.connect(lambda: self._set_tim_view_mode("list"))
+        self.btn_tim_grid.clicked.connect(lambda: self._set_tim_view_mode("grid"))
         self.btn_zoom_in.clicked.connect(lambda: self.viewer_zoom(1.25))
         self.btn_zoom_out.clicked.connect(lambda: self.viewer_zoom(0.8))
         self.btn_fit.clicked.connect(self.viewer_fit)
@@ -932,6 +1084,11 @@ class GTArcExplorer(QMainWindow):
         self.chk_ortho.toggled.connect(self._view_ortho_toggled)
         self.chk_shadow.toggled.connect(self._view_shadow_toggled)
         self.filter_edit.textChanged.connect(self._apply_tree_filter)
+        if hasattr(self, "hex_editor"):
+            self.hex_editor.cursor_moved.connect(self._on_hex_cursor)
+        if hasattr(self, "btn_hex_goto"):
+            self.btn_hex_goto.clicked.connect(self._hex_goto)
+            self.hex_goto_edit.returnPressed.connect(self._hex_goto)
         self.act_focus_filter.triggered.connect(lambda: self.filter_edit.setFocus())
         self.rail_group.idClicked.connect(self._switch_canvas)
         self.act_save_sel.triggered.connect(self.save_selected)
@@ -1032,15 +1189,103 @@ class GTArcExplorer(QMainWindow):
         self.progress.setMaximum(maximum)
         self.progress.setValue(value)
 
+    def _on_type_chip(self, match) -> None:
+        self._type_filter = match
+        self._apply_tree_filter()
+
+    def _type_matches(self, type_str: str) -> bool:
+        tf = self._type_filter
+        if tf is None:
+            return True
+        t = (type_str or "").lower()
+        for key in tf:
+            if key.lower() in t or t in key.lower():
+                return True
+        if tf == ("Unknown",):
+            known = set(TYPE_COLORS.keys())
+            return type_str not in known or type_str == "Unknown"
+        return False
+
     def _apply_tree_filter(self, text: str = ""):
         text = (text or self.filter_edit.text()).strip().lower()
-        for i in range(self.tree.topLevelItemCount()):
+        tokens = [tok for tok in text.split() if tok]
+        visible = 0
+        total = self.tree.topLevelItemCount()
+        for i in range(total):
             item = self.tree.topLevelItem(i)
-            if not text:
+            type_str = item.text(2)
+            if not self._type_matches(type_str):
+                item.setHidden(True)
+                continue
+            if not tokens:
                 item.setHidden(False)
+                visible += 1
                 continue
             hay = " ".join(item.text(c).lower() for c in range(item.columnCount()))
-            item.setHidden(text not in hay)
+            ok = all(tok in hay for tok in tokens)
+            item.setHidden(not ok)
+            if ok:
+                visible += 1
+        if hasattr(self, "filter_count_label"):
+            if total == 0:
+                self.filter_count_label.setText("")
+            elif visible == total and not tokens and self._type_filter is None:
+                self.filter_count_label.setText(str(total))
+            else:
+                self.filter_count_label.setText(f"{visible}/{total}")
+
+    def _save_tree_header_state(self) -> None:
+        try:
+            hdr = self.tree.header()
+            self.settings.setValue("tree_header", hdr.saveState())
+            self.settings.setValue("tree_sort_col", hdr.sortIndicatorSection())
+            order = hdr.sortIndicatorOrder()
+            self.settings.setValue(
+                "tree_sort_order",
+                int(order.value) if hasattr(order, "value") else int(order),
+            )
+        except Exception:
+            pass
+
+    def _restore_tree_header_state(self) -> None:
+        try:
+            state = self.settings.value("tree_header")
+            if state is not None:
+                self.tree.header().restoreState(state)
+            col = self.settings.value("tree_sort_col")
+            order = self.settings.value("tree_sort_order")
+            if col is not None and order is not None:
+                try:
+                    self.tree.sortByColumn(int(col), Qt.SortOrder(int(order)))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _set_tim_view_mode(self, mode: str, persist: bool = True) -> None:
+        mode = "grid" if mode == "grid" else "list"
+        self._tim_view_mode = mode
+        if hasattr(self, "_tim_view_stack"):
+            self._tim_view_stack.setCurrentIndex(1 if mode == "grid" else 0)
+        if hasattr(self, "btn_tim_list"):
+            self.btn_tim_list.blockSignals(True)
+            self.btn_tim_grid.blockSignals(True)
+            self.btn_tim_list.setChecked(mode == "list")
+            self.btn_tim_grid.setChecked(mode == "grid")
+            self.btn_tim_list.blockSignals(False)
+            self.btn_tim_grid.blockSignals(False)
+        if persist:
+            self.settings.setValue("tim_view_mode", mode)
+        if mode == "grid" and getattr(self, "_pack_tims", None):
+            try:
+                from . import viewer as v
+                v.populate_tim_grid(self)
+            except Exception:
+                pass
+
+    def on_tim_grid_select(self) -> None:
+        from . import viewer as v
+        v.on_tim_grid_select(self)
 
     def eventFilter(self, obj, event):
         if obj is self.viewer_label and getattr(self, "_viewer_mode", None) in ("model", "car"):
@@ -1108,6 +1353,7 @@ class GTArcExplorer(QMainWindow):
         menu = QMenu(self)
 
         act_preview = menu.addAction("Preview")
+        act_hex = menu.addAction("Hex view")
         act_extract = menu.addAction("Extract Selected")
         act_save = menu.addAction("Save this file…")
         menu.addSeparator()
@@ -1159,6 +1405,15 @@ class GTArcExplorer(QMainWindow):
 
         if chosen is act_preview:
             self.show_preview(idx)
+        elif chosen is act_hex:
+            try:
+                data = self.arc.get_data(idx)
+                f = self.arc.files[idx]
+                name = self._display_name(f)
+            except Exception:
+                data, name = b"", ""
+            self.load_hex_data(data, label=name, index=idx)
+            self._switch_canvas(CANVAS_HEX)
             self._switch_canvas(CANVAS_PREVIEW)
         elif chosen is act_extract:
             self.extract_selected()
@@ -1803,6 +2058,10 @@ class GTArcExplorer(QMainWindow):
         self.set_status(status)
         self.preview_text.clear()
         self.preview_info.setText("Select a file to preview")
+        if hasattr(self, "hex_editor"):
+            self.hex_editor.clear()
+        if hasattr(self, "hex_page"):
+            self.hex_page.clear()
 
     def populate_tree(self):
         self.tree.setSortingEnabled(False)
@@ -1857,8 +2116,56 @@ class GTArcExplorer(QMainWindow):
             except ValueError:
                 pass
 
+    def _on_hex_cursor(self, offset: int) -> None:
+        if hasattr(self, "hex_offset_label"):
+            self.hex_offset_label.setText(f"Offset: {offset:08X}  ({offset:,})")
+
+    def _hex_goto(self) -> None:
+        if not hasattr(self, "hex_editor"):
+            return
+        raw = (self.hex_goto_edit.text() or "").strip().lower().replace("0x", "")
+        if not raw:
+            return
+        try:
+            off = int(raw, 16)
+        except ValueError:
+            try:
+                off = int(raw, 10)
+            except ValueError:
+                return
+        self.hex_editor.goto_offset(off)
+
+    def load_hex_data(self, data: bytes | None, *, label: str = "", index=None) -> None:
+        data = data or b""
+        if hasattr(self, "hex_editor"):
+            self.hex_editor.set_data(data, editable=False)
+        if hasattr(self, "hex_page"):
+            self.hex_page.load_entry(data, label=label, index=index)
+
+    def open_hex_editor(self) -> None:
+        self._switch_canvas(CANVAS_HEX)
+        # Refresh from current tree selection if any
+        items = self.tree.selectedItems()
+        if items:
+            try:
+                idx = int(items[0].text(0))
+                data = self.arc.get_data(idx)
+                f = self.arc.files[idx]
+                name = self._display_name(f)
+                self.load_hex_data(data, label=name, index=idx)
+            except Exception:
+                pass
+
     def show_preview(self, idx: int):
         preview.show_preview(self, idx)
+        # Keep hex views in sync with the selected entry
+        try:
+            data = self.arc.get_data(idx)
+            f = self.arc.files[idx]
+            name = self._display_name(f)
+        except Exception:
+            data, name = b"", ""
+        self.load_hex_data(data, label=name, index=idx)
 
     def _hex_dump(self, chunk: bytes):
         preview.hex_dump(self, chunk)

@@ -1,13 +1,13 @@
 from __future__ import annotations
 from typing import Optional
 try:
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QImage, QPixmap
-    from PyQt6.QtWidgets import QTreeWidgetItem
+    from PyQt6.QtCore import Qt, QSize
+    from PyQt6.QtGui import QImage, QPixmap, QIcon
+    from PyQt6.QtWidgets import QTreeWidgetItem, QListWidgetItem
 except ImportError:
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtGui import QImage, QPixmap
-    from PyQt5.QtWidgets import QTreeWidgetItem
+    from PyQt5.QtCore import Qt, QSize
+    from PyQt5.QtGui import QImage, QPixmap, QIcon
+    from PyQt5.QtWidgets import QTreeWidgetItem, QListWidgetItem
 from ..utils.gtps import GTPSModel, render_qimage_faces
 # OpenGL path (optional — falls back to software if unavailable)
 _GL_AVAILABLE = False
@@ -142,6 +142,58 @@ def tim_to_image(data: bytes):
     img, _info = decode_tim(data)
     return img
 
+def _pack_entry(ent, i):
+    if isinstance(ent, (list, tuple)) and len(ent) >= 2:
+        name, tim_data = ent[0], ent[1]
+    else:
+        name = (ent.get("name") if hasattr(ent, "get") else None) or f"tim_{i:03d}"
+        tim_data = (ent.get("data") if hasattr(ent, "get") else b"") or b""
+    return str(name), tim_data
+
+
+def _thumb_from_tim(tim_data: bytes, size: int = 96) -> QIcon:
+    try:
+        from ..utils.tim_image import tim_to_image
+        im = tim_to_image(tim_data)
+        if im is None:
+            return QIcon()
+        if im.mode != "RGBA":
+            im = im.convert("RGBA")
+        # Letterbox into square
+        im.thumbnail((size, size))
+        canvas = im
+        if im.size != (size, size):
+            from PIL import Image as PILImage
+            canvas = PILImage.new("RGBA", (size, size), (0, 0, 0, 0))
+            ox = (size - im.width) // 2
+            oy = (size - im.height) // 2
+            canvas.paste(im, (ox, oy))
+        data = canvas.tobytes("raw", "RGBA")
+        qimg = QImage(data, canvas.width, canvas.height, QImage.Format.Format_RGBA8888)
+        return QIcon(QPixmap.fromImage(qimg.copy()))
+    except Exception:
+        return QIcon()
+
+
+def populate_tim_grid(win) -> None:
+    """Rebuild thumbnail grid from win._pack_tims."""
+    grid = getattr(win, "tim_grid", None)
+    if grid is None:
+        return
+    grid.blockSignals(True)
+    grid.clear()
+    entries = getattr(win, "_pack_tims", None) or []
+    for i, ent in enumerate(entries):
+        name, tim_data = _pack_entry(ent, i)
+        item = QListWidgetItem(name)
+        item.setData(Qt.ItemDataRole.UserRole, i)
+        item.setIcon(_thumb_from_tim(tim_data, 96))
+        item.setToolTip(f"{name}  ({len(tim_data)} bytes)")
+        item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        grid.addItem(item)
+    grid.blockSignals(False)
+
+
 def show_pack_in_viewer(win, data: bytes) -> None:
     win._viewer_mode = "pack"
     win._viewer_image = None
@@ -160,21 +212,26 @@ def show_pack_in_viewer(win, data: bytes) -> None:
         _clear_viewer(win, f"TIM Pack error: {e}")
         if hasattr(win, "tim_list"):
             win.tim_list.clear()
+        if hasattr(win, "tim_grid"):
+            win.tim_grid.clear()
         return
 
     win._pack_tims = entries
     if hasattr(win, "tim_list"):
         win.tim_list.clear()
         for i, ent in enumerate(entries):
-            if isinstance(ent, (list, tuple)) and len(ent) >= 2:
-                name, tim_data = ent[0], ent[1]
-            else:
-                name = (ent.get("name") if hasattr(ent, "get") else None) or f"tim_{i:03d}"
-                tim_data = (ent.get("data") if hasattr(ent, "get") else b"") or b""
+            name, tim_data = _pack_entry(ent, i)
             size = len(tim_data)
             item = QTreeWidgetItem([str(name), str(size)])
             item.setData(0, Qt.ItemDataRole.UserRole, i)
             win.tim_list.addTopLevelItem(item)
+
+    populate_tim_grid(win)
+
+    # Restore preferred view mode
+    mode = getattr(win, "_tim_view_mode", "list")
+    if hasattr(win, "_set_tim_view_mode"):
+        win._set_tim_view_mode(mode, persist=False)
 
     if hasattr(win, "viewer_info"):
         win.viewer_info.setText(
@@ -182,7 +239,37 @@ def show_pack_in_viewer(win, data: bytes) -> None:
         )
 
     if entries:
+        # Select first in both widgets
+        if hasattr(win, "tim_list") and win.tim_list.topLevelItemCount():
+            win.tim_list.setCurrentItem(win.tim_list.topLevelItem(0))
+        if hasattr(win, "tim_grid") and win.tim_grid.count():
+            win.tim_grid.setCurrentRow(0)
         on_tim_list_select(win)
+
+
+def on_tim_grid_select(win) -> None:
+    grid = getattr(win, "tim_grid", None)
+    if grid is None:
+        return
+    items = grid.selectedItems()
+    if not items:
+        return
+    idx = items[0].data(Qt.ItemDataRole.UserRole)
+    pack = getattr(win, "_pack_tims", None) or []
+    if idx is None or idx < 0 or idx >= len(pack):
+        return
+    # Keep list selection in sync
+    if hasattr(win, "tim_list"):
+        win.tim_list.blockSignals(True)
+        for i in range(win.tim_list.topLevelItemCount()):
+            it = win.tim_list.topLevelItem(i)
+            if it.data(0, Qt.ItemDataRole.UserRole) == idx:
+                win.tim_list.setCurrentItem(it)
+                break
+        win.tim_list.blockSignals(False)
+    name, data = _pack_entry(pack[idx], idx)
+    show_in_viewer(win, data, name, keep_pack=True)
+    win._viewer_mode = "pack"
 
 def on_tim_list_select(win) -> None:
     if not hasattr(win, "tim_list"):
@@ -194,12 +281,17 @@ def on_tim_list_select(win) -> None:
     pack = getattr(win, "_pack_tims", None) or []
     if idx is None or idx < 0 or idx >= len(pack):
         return
-    ent = pack[idx]
-    if isinstance(ent, (list, tuple)) and len(ent) >= 2:
-        name, data = ent[0], ent[1]
-    else:
-        data = (ent.get("data") if hasattr(ent, "get") else b"") or b""
-        name = (ent.get("name") if hasattr(ent, "get") else None) or f"tim_{idx:03d}"
+    # Keep grid selection in sync
+    grid = getattr(win, "tim_grid", None)
+    if grid is not None:
+        grid.blockSignals(True)
+        for i in range(grid.count()):
+            it = grid.item(i)
+            if it and it.data(Qt.ItemDataRole.UserRole) == idx:
+                grid.setCurrentItem(it)
+                break
+        grid.blockSignals(False)
+    name, data = _pack_entry(pack[idx], idx)
     show_in_viewer(win, data, name, keep_pack=True)
     win._viewer_mode = "pack"
 
@@ -216,6 +308,8 @@ def show_ctex_in_viewer(win, data: bytes, label: str = "") -> None:
     win._pack_tims = []
     if hasattr(win, "tim_list"):
         win.tim_list.clear()
+    if hasattr(win, "tim_grid"):
+        win.tim_grid.clear()
     btn = getattr(win, "btn_edit_colours", None)
     if btn is not None:
         btn.setVisible(True)
@@ -261,6 +355,8 @@ def show_slt_in_viewer(win, data: bytes, label: str = "") -> None:
     win._pack_tims = []
     if hasattr(win, "tim_list"):
         win.tim_list.clear()
+    if hasattr(win, "tim_grid"):
+        win.tim_grid.clear()
     try:
         from ..utils.slt import decode_slt_page
         im, info = decode_slt_page(data)
@@ -358,6 +454,8 @@ def show_model_in_viewer(win, data: bytes, label: str = "") -> None:
     win._pack_tims = []
     if hasattr(win, "tim_list"):
         win.tim_list.clear()
+    if hasattr(win, "tim_grid"):
+        win.tim_grid.clear()
     win._viewer_image = None
     win._car_model = None
 
@@ -653,6 +751,8 @@ def show_car_in_viewer(
     win._pack_tims = []
     if hasattr(win, "tim_list"):
         win.tim_list.clear()
+    if hasattr(win, "tim_grid"):
+        win.tim_grid.clear()
     win._viewer_image = None
     win._model = None
     win._car_data = data

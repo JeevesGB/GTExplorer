@@ -949,3 +949,98 @@ QLabel:disabled {
 QLabel[class="success"] { color: #1E7B4D; }
 QLabel[class="warning"] { color: #8F5A08; }
 QLabel[class="error"]   { color: #8E1E1E; }
+
+
+/* ---- GTExplorer layout extras (chips / TIM grid) ---- */
+#typeFilterBar QToolButton {
+    background-color: #333138;
+    color: #BFBFBF;
+    border: 1px solid #3C3C3C;
+    border-radius: 11px;
+    padding: 4px 12px;
+    font-size: 9pt;
+    min-height: 20px;
+}
+#typeFilterBar QToolButton:hover {
+    background-color: #3C3C3C;
+    color: #FFFFFA;
+}
+#typeFilterBar QToolButton:checked {
+    background-color: #D42622;
+    color: #FFFFFF;
+    border-color: #D42622;
+}
+#timViewModeBar QToolButton {
+    background-color: transparent;
+    color: #BFBFBF;
+    border: 1px solid #3C3C3C;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 9pt;
+}
+#timViewModeBar QToolButton:checked {
+    background-color: #D42622;
+    color: #FFFFFF;
+    border-color: #D42622;
+}
+#timGridList {
+    background-color: #1E1D1E;
+    border: 1px solid #3C3C3C;
+    border-radius: 4px;
+}
+#timGridList::item {
+    background-color: #262525;
+    border: 1px solid #3C3C3C;
+    border-radius: 4px;
+    padding: 4px;
+    margin: 2px;
+    color: #FFFFFA;
+}
+#timGridList::item:selected {
+    background-color: #3C2828;
+    border-color: #D42622;
+}
+#filterCountLabel {
+    color: #888888;
+    font-size: 8.5pt;
+    padding: 0 4px;
+}
+
+
+/* Stacked type filter buttons */
+#typeFilterBar QToolButton {
+    text-align: left;
+    padding: 5px 10px;
+    border-radius: 6px;
+}
+
+/* Vertical viewer tools rail (right side) */
+#viewerToolsBar {
+    background-color: transparent;
+    border-left: 1px solid #3C3C3C;
+}
+#viewerToolsBar QToolButton {
+    text-align: center;
+    padding: 5px 6px;
+    min-height: 22px;
+}
+#viewerToolsBar QComboBox {
+    min-height: 24px;
+}
+#viewerToolsBar QCheckBox {
+    spacing: 6px;
+    padding: 2px 0;
+}
+
+#hexEditor {
+    background-color: #1E1D1E;
+    border: 1px solid #3C3C3C;
+}
+#hexOffsetLabel {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 9pt;
+    color: #BFBFBF;
+}
+#previewTabs::pane {
+    border: 1px solid #3C3C3C;
+}
