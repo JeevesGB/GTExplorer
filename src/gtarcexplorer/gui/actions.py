@@ -26,7 +26,13 @@ from ..utils.user_paths import UserPaths
 from ..utils.tim_pack import parse_tim_pack, build_tim_pack
 from . import names
 
-ARCHIVE_GLOBS = ("*.dat", "*.DAT", "*.arc", "*.ARC")
+ARCHIVE_GLOBS = (
+    "*.dat", "*.DAT",
+    "*.arc", "*.ARC",
+    "*.exe", "*.EXE",
+    "SCES_*", "SLES_*", "SLUS_*", "SCUS_*",
+    "SCPS_*", "SLPS_*", "SIPS_*",
+)
 
 def _win_alive(win) -> bool:
     try:
@@ -158,7 +164,8 @@ def open_archive(win) -> None:
     path, _ = QFileDialog.getOpenFileName(
         win, "Open GT archive or extracted file",
         win._last_dir(),
-        "GT archives (*.dat *.DAT *.arc *.ARC);;"
+        "GT archives / EXE (*.dat *.DAT *.arc *.ARC *.exe *.EXE);;"
+        "PS1 product codes (SCES_* SLES_* SLUS_* SCUS_*);;"
         "Extracted files (*.tim *.TIM *.seq *.SEQ *.ins *.INS "
         "*.es *.ES *.tex *.TEX *.ps *.PS *.bin *.BIN *.htm *.HTM "
         "*.idx *.IDX *.usedcar);;"

@@ -1,6 +1,7 @@
 import struct
 from .replay import detect_replay
 from .slt import is_slt_page, is_slt_index
+
 # (magic_bytes, type_name, extension)
 # Order matters: longer / more specific magics first where needed.
 _PREFIX_MAGICS = [
@@ -14,7 +15,6 @@ _PREFIX_MAGICS = [
     (b"@(#)GTHTML", "GT HTML", ".gthtml"),
     (b"@(#)GTENV", "GT-ENV System Config", ".gtenv"),
     # Car / tuning part tables (CARINF-style)
-    # Longer / more specific tags first
     (b"@(#)AEROPAT", "Aero Parts", ".aeropat"),
     (b"@(#)ADJUST", "Align Adjustment", ".adjust"),
     (b"@(#)BALANCE", "Balance Weight", ".balance"),
@@ -39,16 +39,17 @@ _PREFIX_MAGICS = [
     (b"@(#)STABILZ", "Stabilizer", ".stabilz"),
     (b"@(#)SUSPENS", "Suspension", ".suspens"),
     (b"@(#)TIRECMP", "Tire Compound", ".tirecmp"),
-    (b"@(#)TIRESIZ", "Tire Size", ".tiresiz"),  # alternate spelling
+    (b"@(#)TIRESIZ", "Tire Size", ".tiresiz"),
     (b"@(#)TIRESZ", "Tire Size", ".tiresz"),
     (b"@(#)TIRE", "Tire", ".tire"),
     (b"@(#)TURBINE", "Turbo / Turbine", ".turbine"),
     (b"@(#)WHEELSZ", "Wheel Size", ".wheelsz"),
-    # Sound / sequence (4-byte)
+    # Sound / sequence
     (b"INST", "Sound Instrument", ".ins"),
     (b"ENGN", "Engine Sound", ".es"),
     (b"SEQG", "Sequence", ".seq"),
 ]
+
 
 def detect_type(data: bytes) -> tuple:
     if not data:
@@ -58,13 +59,19 @@ def detect_type(data: bytes) -> tuple:
     if r is not None:
         return r
 
+    # PS-X EXE (Gran Turismo .EXE / SCES_*.84 etc.)
+    if data.startswith(b"PS-X EXE"):
+        return ("PS-X Executable", ".exe")
+
     for magic, name, ext in _PREFIX_MAGICS:
         if data.startswith(magic):
             return (name, ext)
 
+    # TIM Texture (standard PS1)
     if len(data) >= 8 and data[0] == 0x10 and data[1] == 0x00 and data[2] == 0x00 and data[3] == 0x00:
         return ("TIM Texture", ".tim")
 
+    # TIM Pack
     if len(data) >= 24:
         count = struct.unpack_from("<I", data, 0)[0]
         if 1 <= count <= 512:
@@ -78,6 +85,7 @@ def detect_type(data: bytes) -> tuple:
     if is_slt_index(data) and not data.startswith(b"@(#)"):
         return ("SLT Index (32B)", ".slt")
 
+    # Filename lists
     if len(data) < 2_000_000:
         sample = data[:4096]
         printable = sum(1 for b in sample if 32 <= b < 127 or b in (9, 10, 13))
@@ -102,32 +110,11 @@ def detect_type(data: bytes) -> tuple:
     if b".tim\n" in data[:200] or b".seq\n" in data[:200] or b".htm\n" in data[:200]:
         return ("Filename List", ".idx")
 
+    # Mostly printable → text
     sample = data[:64]
     printable = sum(1 for b in sample if (32 <= b < 127) or b in (0, 9, 10, 13))
     if len(sample) >= 16 and printable >= len(sample) * 0.85:
         if b".tim" not in sample and b"@(#)" not in sample:
             return ("Text / Messages", ".txt")
-
-    return ("Unknown", ".bin")
-
-    
-    if len(data) >= 8 and data[0] == 0x10 and data[1] == 0x00 and data[2] == 0x00 and data[3] == 0x00:
-        return ("TIM Texture", ".tim")
-
-    if len(data) >= 24:
-        count = struct.unpack_from("<I", data, 0)[0]
-        if 1 <= count <= 512:
-            name = data[4:20].split(b"\0")[0]
-            if b".tim" in name.lower():
-                return ("TIM Pack", ".tpk")
-
-    sample = data[:64]
-    printable = sum(1 for b in sample if (32 <= b < 127) or b in (0, 9, 10, 13))
-    if len(sample) >= 16 and printable >= len(sample) * 0.85:
-        if b".tim" not in sample and b"@(#)" not in sample:
-            return ("Text / Messages", ".txt")
-
-    if b".tim\n" in data[:200] or b".seq\n" in data[:200] or b".htm\n" in data[:200]:
-        return ("Filename List", ".lst")
 
     return ("Unknown", ".bin")
