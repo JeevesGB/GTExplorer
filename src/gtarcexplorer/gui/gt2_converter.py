@@ -1,11 +1,5 @@
-"""
-GT2 → GT1 model + texture converter canvas widget for GTExplorer.
-Supports day (.cdo/.cdp) and night (.cno/.cnp) in one pass.
-"""
 from __future__ import annotations
-
 from pathlib import Path
-
 try:
     from PyQt6.QtCore import pyqtSignal
     from PyQt6.QtWidgets import (
