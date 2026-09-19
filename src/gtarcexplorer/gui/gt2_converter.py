@@ -272,6 +272,12 @@ class GT2ConverterWidget(QWidget):
             from gtarcexplorer.utils.gt2_cdo import read_cdo
         self._append(f"Model: reading {cdo_path.name}…")
         model = read_cdo(cdo_path)
+        for i, lod in enumerate(model.lods):
+            self._append(
+                f"  LOD{i}: {len(lod.vertices)} verts, "
+                f"{len(lod.normals)} norms, "
+                f"{len(lod.uv_triangles)+len(lod.uv_quads)+len(lod.triangles)+len(lod.quads)} faces"
+            )
         if hasattr(model, "summary"):
             self._append(model.summary())
         model.write_car(car_path)

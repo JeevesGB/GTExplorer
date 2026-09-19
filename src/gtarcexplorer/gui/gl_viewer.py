@@ -1,10 +1,7 @@
 from __future__ import annotations
-
 import math
 from typing import Optional, Tuple, List
-
 import numpy as np
-
 try:
     from PyQt6.QtCore import Qt, QPoint, pyqtSignal
     from PyQt6.QtGui import (
